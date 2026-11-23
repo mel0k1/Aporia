@@ -1,0 +1,45 @@
+{
+  lib,
+  stdenvNoCC,
+  callPackage,
+  hostPlatform,
+  testSuite ? "ltp",
+  workDir ? "/tmp",
+  testSelector ? "",
+  smp ? 1,
+}:
+rec {
+  inherit testSuite;
+  gvisor = callPackage ./gvisor { };
+  kselftest = callPackage ./kselftest.nix { };
+  ltp = callPackage ./ltp.nix { };
+
+  conformanceSrc = lib.fileset.toSource {
+    root = ./../../src/conformance;
+    fileset = ./../../src/conformance;
+  };
+  pjdfstest = callPackage ./pjdfstest.nix { inherit conformanceSrc; };
+  xfstests = callPackage ./xfstests.nix { inherit conformanceSrc; };
+
+  package = stdenvNoCC.mkDerivation {
+    pname = "conformance";
+    version = "0.1.0";
+    src = conformanceSrc;
+    buildCommand = ''
+      cd $src
+      mkdir -p $out
+      export INITRAMFS=$out
+      export CONFORMANCE_TEST_SUITE=${testSuite}
+      export CONFORMANCE_TEST_WORKDIR=${workDir}
+      export CONFORMANCE_TEST_SELECTOR=${testSelector}
+      export SMP=${toString smp}
+      export HOST_PLATFORM=${hostPlatform.system}
+      ${lib.optionalString (testSuite == "ltp") "export LTP_PREBUILT_DIR=${ltp}"}
+      ${lib.optionalString (testSuite == "gvisor") "export GVISOR_PREBUILT_DIR=${gvisor}"}
+      ${lib.optionalString (testSuite == "kselftest") "export KSELFTEST_PREBUILT_DIR=${kselftest}"}
+      ${lib.optionalString (testSuite == "pjdfstest") "export PJDFSTEST_PREBUILT_DIR=${pjdfstest}"}
+      ${lib.optionalString (testSuite == "xfstests") "export XFSTESTS_PREBUILT_DIR=${xfstests}"}
+      make
+    '';
+  };
+}

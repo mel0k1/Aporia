@@ -1,0 +1,129 @@
+// SPDX-License-Identifier: MPL-2.0
+
+#![short_vis_path::add(netlink)]
+
+use align_ext::AlignExt;
+
+use super::{
+    SegmentBody,
+    header::{CMsgSegHdr, GetRequestFlags},
+};
+use crate::{
+    net::socket::netlink::message::{
+        ContinueRead, NLMSG_ALIGN,
+        attr::{AttrValidation, Attribute},
+    },
+    prelude::*,
+    util::{MultiRead, MultiWrite},
+};
+
+#[derive(Debug)]
+pub(crate) struct SegmentCommon<Body, Attr> {
+    header: CMsgSegHdr,
+    body: Body,
+    attrs: Vec<Attr>,
+}
+
+impl<Body, Attr> SegmentCommon<Body, Attr> {
+    const HEADER_LEN: usize = size_of::<CMsgSegHdr>();
+
+    pub(in netlink) fn header(&self) -> &CMsgSegHdr {
+        &self.header
+    }
+
+    pub(in netlink) fn header_mut(&mut self) -> &mut CMsgSegHdr {
+        &mut self.header
+    }
+
+    pub(in netlink) fn body(&self) -> &Body {
+        &self.body
+    }
+
+    pub(in netlink) fn attrs(&self) -> &Vec<Attr> {
+        &self.attrs
+    }
+}
+
+impl<Body: SegmentBody, Attr: Attribute> SegmentCommon<Body, Attr> {
+    const BODY_LEN: usize = size_of::<Body>();
+
+    pub(in netlink) fn new(header: CMsgSegHdr, body: Body, attrs: Vec<Attr>) -> Self {
+        let mut res = Self {
+            header,
+            body,
+            attrs,
+        };
+        res.header.len = res.total_len() as u32;
+        res
+    }
+
+    pub(in netlink) fn read_from(
+        header: &CMsgSegHdr,
+        reader: &mut dyn MultiRead,
+        strict_check: bool,
+    ) -> Result<ContinueRead<Self>> {
+        let segment = Self::read_payload(header, reader, strict_check)?;
+
+        // Message padding is outside the payload;
+        // even invalid messages must leave the reader at the next header.
+        let len = header.len as usize;
+        reader.skip_some(len.align_up(NLMSG_ALIGN) - len);
+
+        Ok(segment)
+    }
+
+    fn read_payload(
+        header: &CMsgSegHdr,
+        reader: &mut dyn MultiRead,
+        strict_check: bool,
+    ) -> Result<ContinueRead<Self>> {
+        let (body, remain_len) =
+            match <Body as SegmentBody>::read_from(header, reader, strict_check)? {
+                ContinueRead::Parsed(parsed) => parsed,
+                ContinueRead::SkippedInvalid(err) => return Ok(ContinueRead::SkippedInvalid(err)),
+            };
+
+        let attr_validation = if strict_check {
+            AttrValidation::Strict
+        } else if GetRequestFlags::from_bits_truncate(header.flags).contains(GetRequestFlags::DUMP)
+        {
+            AttrValidation::LegacyDump
+        } else {
+            AttrValidation::LegacyQuery
+        };
+        let attrs = match Attr::read_all_from(reader, remain_len, attr_validation)? {
+            ContinueRead::Parsed(attrs) => attrs,
+            ContinueRead::SkippedInvalid(err) => return Ok(ContinueRead::SkippedInvalid(err)),
+        };
+
+        Ok(ContinueRead::Parsed(Self {
+            header: *header,
+            body,
+            attrs,
+        }))
+    }
+
+    pub(in netlink) fn write_to(&self, writer: &mut dyn MultiWrite) -> Result<()> {
+        writer.write_val_trunc(&self.header)?;
+
+        SegmentBody::write_to(&self.body, writer)?;
+        for attr in self.attrs.iter() {
+            attr.write_to(writer)?;
+        }
+
+        Ok(())
+    }
+
+    fn total_len(&self) -> usize {
+        Self::HEADER_LEN + Self::BODY_LEN + self.attrs_len()
+    }
+}
+
+impl<Body, Attr: Attribute> SegmentCommon<Body, Attr> {
+    fn attrs_len(&self) -> usize {
+        self.attrs
+            .iter()
+            .map(|attr| attr.total_len_with_padding())
+            .sum()
+    }
+}
