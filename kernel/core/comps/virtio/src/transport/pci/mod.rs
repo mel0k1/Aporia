@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 mod capability;
 mod common_cfg;
 mod device;
@@ -15,7 +13,6 @@ use ostd::sync::SpinLock;
 use self::driver::VirtioPciDriver;
 use crate::transport::VirtioTransport;
 
-// Transports await functional initialization after PCI driver registration.
 static TRANSPORTS: SpinLock<VecDeque<Box<dyn VirtioTransport>>> = SpinLock::new(VecDeque::new());
 
 fn push_device_transport(transport: Box<dyn VirtioTransport>) {

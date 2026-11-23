@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use aster_util::safe_ptr::SafePtr;
 use ostd::{Result, io::IoMem};
 
@@ -35,11 +33,6 @@ impl VirtioPciCommonCfg {
     }
 }
 
-/// A 64-bit Virtio PCI configuration field with 32-bit accesses.
-///
-/// Virtio 1.3 section 4.1.3.1 requires aligned 32-bit accesses
-/// to 64-bit PCI configuration fields.
-/// See <https://docs.oasis-open.org/virtio/virtio/v1.3/virtio-v1.3.html#x1-1370001>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
 pub(super) struct VirtioPciCfgU64 {
@@ -47,13 +40,10 @@ pub(super) struct VirtioPciCfgU64 {
     high: u32,
 }
 
-/// Accesses a 64-bit Virtio PCI configuration field in two 32-bit halves.
 pub(super) trait VirtioPciCfgU64Ext {
-    /// Writes the low half followed by the high half.
     fn write_u64(&self, val: u64) -> Result<()>;
 
-    /// Reads the low half followed by the high half, without an atomic snapshot.
-    #[expect(dead_code)] // For future reads of 64-bit PCI configuration fields.
+    #[expect(dead_code)]
     fn read_u64(&self) -> Result<u64>;
 }
 

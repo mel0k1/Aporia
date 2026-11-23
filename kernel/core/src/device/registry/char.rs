@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! A subsystem for character devices (or char devices for short).
-
 use core::ops::Range;
 
 use device_id::{DeviceId, MajorId};
@@ -14,7 +10,6 @@ use crate::{
 
 static DEVICE_REGISTRY: Mutex<BTreeMap<u32, Arc<dyn Device>>> = Mutex::new(BTreeMap::new());
 
-/// Registers a new char device.
 pub fn register(device: Arc<dyn Device>) -> Result<()> {
     let mut registry = DEVICE_REGISTRY.lock();
     let id = device.id().to_raw();
@@ -33,7 +28,6 @@ pub fn register(device: Arc<dyn Device>) -> Result<()> {
     Ok(())
 }
 
-/// Unregisters an existing char device, returning the device if found.
 pub fn unregister(id: DeviceId) -> Result<Arc<dyn Device>> {
     let mut registry = DEVICE_REGISTRY.lock();
     let device = registry
@@ -52,27 +46,16 @@ pub fn unregister(id: DeviceId) -> Result<Arc<dyn Device>> {
     Ok(device)
 }
 
-/// Looks up a char device of a given device ID.
 pub(super) fn lookup(id: DeviceId) -> Option<Arc<dyn Device>> {
     DEVICE_REGISTRY.lock().get(&id.to_raw()).cloned()
 }
 
-/// The maximum value of the major device ID of a char device.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.13/source/fs/char_dev.c#L104>.
 pub(crate) const MAX_MAJOR: u16 = 511;
 
-/// The ranges of free char majors.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.13/source/include/linux/fs.h#L2840>.
 const DYNAMIC_MAJOR_ID_RANGES: [Range<u16>; 2] = [234..255, 384..512];
 
 static MAJORS: Mutex<BTreeSet<u16>> = Mutex::new(BTreeSet::new());
 
-/// Acquires a major ID.
-///
-/// The returned `MajorIdOwner` object represents the ownership to the major ID.
-/// Until the object is dropped, this major ID cannot be acquired via `acquire_major` or `allocate_major` again.
 pub(crate) fn acquire_major(major: MajorId) -> Result<MajorIdOwner> {
     if major.get() > MAX_MAJOR {
         return Err(errno!(EINVAL, "the major ID is invalid"));
@@ -85,10 +68,6 @@ pub(crate) fn acquire_major(major: MajorId) -> Result<MajorIdOwner> {
     }
 }
 
-/// Allocates a major ID.
-///
-/// The returned `MajorIdOwner` object represents the ownership to the major ID.
-/// Until the object is dropped, this major ID cannot be acquired via `acquire_major` or `allocate_major` again.
 #[expect(dead_code)]
 pub(crate) fn allocate_major() -> Result<MajorIdOwner> {
     let mut majors = MAJORS.lock();
@@ -105,13 +84,9 @@ pub(crate) fn allocate_major() -> Result<MajorIdOwner> {
     Err(errno!(ENOSPC, "no more major IDs are available"))
 }
 
-/// An owned major ID.
-///
-/// Each instances of this type will unregister the major ID when dropped.
 pub(crate) struct MajorIdOwner(MajorId);
 
 impl MajorIdOwner {
-    /// Returns the major ID.
     pub(crate) fn get(&self) -> MajorId {
         self.0
     }

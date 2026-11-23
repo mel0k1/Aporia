@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! The util of Asterinas.
 #![no_std]
 #![deny(unsafe_code)]
 

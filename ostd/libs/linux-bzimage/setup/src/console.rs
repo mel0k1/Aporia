@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! A serial console.
-
 use core::fmt::{self, Write};
 
 use uart_16550::SerialPort;
@@ -14,7 +10,6 @@ struct Stdout {
 
 impl Stdout {
     fn new() -> Self {
-        // FIXME: Is it safe to assume that the serial port always exists?
         let mut serial_port = unsafe { SerialPort::new(0x3F8) };
         serial_port.init();
 
@@ -31,23 +26,19 @@ impl Write for Stdout {
 
 static STDOUT: Mutex<Option<Stdout>> = Mutex::new(None);
 
-/// Prints a format string and its arguments to the standard output.
 pub(crate) fn print_fmt(args: fmt::Arguments) {
     let mut stdout = STDOUT.lock();
 
-    // Fast path: The standard output has been initialized.
     if let Some(inner) = stdout.as_mut() {
         inner.write_fmt(args).unwrap();
         return;
     }
 
-    // Initialize the standard output and print the string.
     let mut inner = Stdout::new();
     inner.write_fmt(args).unwrap();
     *stdout = Some(inner);
 }
 
-/// Prints to the standard output, with a newline.
 #[macro_export]
 macro_rules! println {
     ($fmt:literal $($arg:tt)*) => {

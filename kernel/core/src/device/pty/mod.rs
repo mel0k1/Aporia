@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use crate::{fs::devpts::Ptmx, prelude::*};
 
 mod driver;

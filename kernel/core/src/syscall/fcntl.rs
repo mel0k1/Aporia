@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd::mm::VmIo;
 
 use super::SyscallReturn;
@@ -160,9 +158,6 @@ fn handle_setlk(
     if lock.type_() == RangeLockType::Unlock {
         return Ok(SyscallReturn::Return(0));
     }
-    // A concurrent close will release the range locks for this owner and inode
-    // but may miss the new one. If it happens, release the new lock to prevent
-    // it from leaking forever.
     let file_is_still_open = file_table.read_with(|table| {
         table
             .get_file(fd)
@@ -188,8 +183,6 @@ fn handle_getown(fd: FileDesc, ctx: &Context) -> Result<SyscallReturn> {
 }
 
 fn handle_setown(fd: FileDesc, arg: u64, ctx: &Context) -> Result<SyscallReturn> {
-    // A process ID is specified as a positive value; a process group ID is specified as a negative value.
-    // TODO: Support process groups instead of falling back to processes.
     let pid = (arg as i32).unsigned_abs();
     if pid.cast_signed() < 0 {
         return Err(errno!(EINVAL, "negative PIDs are not valid"));
@@ -263,20 +256,14 @@ enum RangeLockWhence {
     SEEK_END = 2,
 }
 
-/// C struct for a file range lock in Libc
 #[padding_struct]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 struct c_flock {
-    /// Type of lock: F_RDLCK, F_WRLCK, or F_UNLCK
     pub l_type: u16,
-    /// Where `l_start' is relative to
     pub l_whence: u16,
-    /// Offset where the lock begins
     pub l_start: off_t,
-    /// Size of the locked area, 0 means until EOF
     pub l_len: off_t,
-    /// Process holding the lock
     pub l_pid: Pid,
 }
 
@@ -296,7 +283,6 @@ impl c_flock {
     }
 }
 
-/// Create the file range through C flock and opened file reference
 fn from_c_flock_and_file(lock: &c_flock, file: &dyn FileLike) -> Result<FileRange> {
     let start = {
         let whence = RangeLockWhence::try_from(lock.l_whence)?;
@@ -326,7 +312,6 @@ fn from_c_flock_and_file(lock: &c_flock, file: &dyn FileLike) -> Result<FileRang
         0 => (start as usize, OFFSET_MAX),
         len if len < 0 => {
             let end = start;
-            // `start + len` won't overflow because `start >= 0` and `len < 0`.
             let new_start = start + len;
             if new_start < 0 {
                 return Err(errno!(EINVAL, "invalid len"));

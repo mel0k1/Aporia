@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::arch::global_asm;
 
 use multiboot2::{BootInformation, BootInformationHeader, MemoryAreaType};
@@ -18,7 +16,6 @@ global_asm!(include_str!("header.S"));
 unsafe fn make_str_vaddr_static(str: &str) -> &'static str {
     let vaddr = paddr_to_vaddr(str.as_ptr() as Paddr);
 
-    // SAFETY: The safety is upheld by the caller.
     let bytes = unsafe { core::slice::from_raw_parts(vaddr as *const u8, str.len()) };
 
     core::str::from_utf8(bytes).unwrap()
@@ -52,20 +49,12 @@ impl ToEarlyBootInfo for BootInformation<'_> {
             return "Unknown Multiboot2 Loader";
         };
 
-        // SAFETY:
-        // 1. The bootloader name is safe to read because of the contract with the loader.
-        // 2. We reserve the bootloader-name region in `memory_regions`, so it will live as an
-        //    immutable reference for `'static`.
         unsafe { make_str_vaddr_static(name) }
     }
 
     fn kernel_commandline(&self) -> Option<&'static str> {
         let cmdline = self.command_line_tag()?.cmdline().ok()?;
 
-        // SAFETY:
-        // 1. The command line is safe to read because of the contract with the loader.
-        // 2. We reserve the command-line region in `finish_memory_regions`, so it will live as an
-        //    immutable reference for `'static`.
         Some(unsafe { make_str_vaddr_static(cmdline) })
     }
 
@@ -74,10 +63,6 @@ impl ToEarlyBootInfo for BootInformation<'_> {
 
         let initramfs_ptr = paddr_to_vaddr(module_tag.start_address() as usize);
         let initramfs_len = module_tag.module_size() as usize;
-        // SAFETY:
-        // 1. The initramfs is safe to read because of the contract with the loader.
-        // 2. We reserve the initramfs region in `memory_regions`, so it will live as an immutable
-        //    reference for `'static`.
         let initramfs =
             unsafe { core::slice::from_raw_parts(initramfs_ptr as *const u8, initramfs_len) };
 
@@ -86,10 +71,8 @@ impl ToEarlyBootInfo for BootInformation<'_> {
 
     fn acpi_arg(&self) -> BootloaderAcpiArg {
         if let Some(v2_tag) = self.rsdp_v2_tag() {
-            // Check for RSDP v2
             BootloaderAcpiArg::Xsdt(v2_tag.xsdt_address())
         } else if let Some(v1_tag) = self.rsdp_v1_tag() {
-            // Fall back to RSDP v1
             BootloaderAcpiArg::Rsdt(v1_tag.rsdt_address())
         } else if is_efi_boot(self) {
             BootloaderAcpiArg::NotProvided
@@ -117,7 +100,6 @@ impl ToEarlyBootInfo for BootInformation<'_> {
     ) -> MemoryRegionArray {
         let mut regions = MemoryRegionArray::new();
 
-        // Add the regions returned by Grub.
         let memory_regions_tag = self
             .memory_map_tag()
             .expect("No memory regions are found in the Multiboot2 header!");
@@ -134,7 +116,6 @@ impl ToEarlyBootInfo for BootInformation<'_> {
                 .unwrap();
         }
 
-        // Add the boot loader name region since Grub does not specify it.
         if let Some(name) = self.boot_loader_name_tag().and_then(|tag| tag.name().ok()) {
             regions
                 .push(MemoryRegion::new(
@@ -149,14 +130,6 @@ impl ToEarlyBootInfo for BootInformation<'_> {
     }
 }
 
-/// The entry point of the Rust code portion of Asterinas (with multiboot2 parameters).
-///
-/// # Safety
-///
-/// - This function must be called only once at a proper timing in the BSP's boot assembly code.
-/// - The caller must follow C calling conventions and put the right arguments in registers.
-/// - If this function is called, entry points of other boot protocols must never be called.
-// SAFETY: The name does not collide with other symbols.
 #[unsafe(no_mangle)]
 unsafe extern "sysv64" fn __multiboot2_entry(boot_magic: u32, boot_params: u64) -> ! {
     assert_eq!(boot_magic, multiboot2::MAGIC);
@@ -167,7 +140,5 @@ unsafe extern "sysv64" fn __multiboot2_entry(boot_magic: u32, boot_params: u64) 
 
     EARLY_INFO.call_once(|| mb2_info.to_early_boot_info());
 
-    // SAFETY: The safety is guaranteed by the safety preconditions and the fact that we call it
-    // once after setting up necessary resources.
     unsafe { start_kernel() };
 }

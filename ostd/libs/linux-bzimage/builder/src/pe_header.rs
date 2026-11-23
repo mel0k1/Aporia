@@ -1,13 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Big zImage PE/COFF header generation.
-//!
-//! The definition of the PE/COFF header is in the Microsoft PE/COFF specification:
-//! <https://learn.microsoft.com/en-us/windows/win32/debug/pe-format>
-//!
-//! The reference to the Linux PE header definition:
-//! <https://github.com/torvalds/linux/blob/master/include/linux/pe.h>
-
 use std::vec;
 
 use align_ext::AlignExt;
@@ -16,20 +6,16 @@ use zerocopy::IntoBytes;
 
 use crate::mapping::{LEGACY_SETUP_SEC_SIZE, SetupFileOffset, SetupVA};
 
-// The MS-DOS header.
-const MZ_MAGIC: u16 = 0x5a4d; // "MZ"
+const MZ_MAGIC: u16 = 0x5a4d;
 
-// The `magic` field in PE header.
 const PE_MAGIC: u32 = 0x00004550;
 
-// The `machine` field choices in PE header. Not exhaustive.
 #[repr(u16)]
 #[derive(Clone, Copy, Serialize)]
 enum PeMachineType {
     Amd64 = 0x8664,
 }
 
-// The `flags` field choices in PE header.
 bitflags::bitflags! {
     #[derive(Clone, Copy, Debug)]
     struct PeFlags: u16 {
@@ -54,20 +40,18 @@ bitflags::bitflags! {
 #[repr(C, packed)]
 #[derive(Clone, Copy, Pod, Serialize)]
 struct PeHdr {
-    magic: u32,        // PE magic
-    machine: u16,      // machine type
-    sections: u16,     // number of sections
-    timestamp: u32,    // time_t
-    symbol_table: u32, // symbol table offset
-    symbols: u32,      // number of symbols
-    opt_hdr_size: u16, // size of optional header
-    flags: u16,        // flags
+    magic: u32,
+    machine: u16,
+    sections: u16,
+    timestamp: u32,
+    symbol_table: u32,
+    symbols: u32,
+    opt_hdr_size: u16,
+    flags: u16,
 }
 
-// The `magic` field in the PE32+ optional header.
 const PE32PLUS_OPT_HDR_MAGIC: u16 = 0x020b;
 
-// The `subsys` field choices in the PE32+ optional header. Not exhaustive.
 #[repr(u16)]
 #[derive(Clone, Copy, Serialize)]
 enum PeImageSubsystem {
@@ -77,41 +61,40 @@ enum PeImageSubsystem {
 #[repr(C, packed)]
 #[derive(Clone, Copy, Pod, Serialize)]
 struct Pe32PlusOptHdr {
-    magic: u16,          // file type
-    ld_major: u8,        // linker major version
-    ld_minor: u8,        // linker minor version
-    text_size: u32,      // size of text section(s)
-    data_size: u32,      // size of data section(s)
-    bss_size: u32,       // size of bss section(s)
-    entry_point: u32,    // file offset of entry point
-    code_base: u32,      // relative code addr in ram
-    image_base: u64,     // preferred load address
-    section_align: u32,  // alignment in bytes
-    file_align: u32,     // file alignment in bytes
-    os_major: u16,       // major OS version
-    os_minor: u16,       // minor OS version
-    image_major: u16,    // major image version
-    image_minor: u16,    // minor image version
-    subsys_major: u16,   // major subsystem version
-    subsys_minor: u16,   // minor subsystem version
-    win32_version: u32,  // reserved, must be 0
-    image_size: u32,     // image size
-    header_size: u32,    // header size rounded up to file_align
-    csum: u32,           // checksum
-    subsys: u16,         // subsystem
-    dll_flags: u16,      // more flags!
-    stack_size_req: u64, // amt of stack requested
-    stack_size: u64,     // amt of stack required
-    heap_size_req: u64,  // amt of heap requested
-    heap_size: u64,      // amt of heap required
-    loader_flags: u32,   // reserved, must be 0
-    data_dirs: u32,      // number of data dir entries
+    magic: u16,
+    ld_major: u8,
+    ld_minor: u8,
+    text_size: u32,
+    data_size: u32,
+    bss_size: u32,
+    entry_point: u32,
+    code_base: u32,
+    image_base: u64,
+    section_align: u32,
+    file_align: u32,
+    os_major: u16,
+    os_minor: u16,
+    image_major: u16,
+    image_minor: u16,
+    subsys_major: u16,
+    subsys_minor: u16,
+    win32_version: u32,
+    image_size: u32,
+    header_size: u32,
+    csum: u32,
+    subsys: u16,
+    dll_flags: u16,
+    stack_size_req: u64,
+    stack_size: u64,
+    heap_size_req: u64,
+    heap_size: u64,
+    loader_flags: u32,
+    data_dirs: u32,
 }
 
 #[repr(C, packed)]
 #[derive(Clone, Copy, Pod, Serialize)]
 struct Pe32PlusOptDataDirEnt {
-    /// The RVA is the address of the table relative to the base address of the image when the table is loaded.
     rva: u32,
     size: u32,
 }
@@ -122,11 +105,6 @@ impl Pe32PlusOptDataDirEnt {
     }
 }
 
-/// The data directories in the PE32+ optional header.
-///
-/// The `data_dirs` number field in the PE32+ optional header is just an illusion that you can choose to have a
-/// subset of the data directories. The actual number of data directories is fixed to 16 and you can only ignore
-/// data directories at the end of the list. We ignore data directories after the 8th as what Linux do.
 #[repr(C, packed)]
 #[derive(Clone, Copy, Pod, Serialize)]
 struct Pe32PlusOptDataDirs {
@@ -144,8 +122,6 @@ impl Pe32PlusOptDataDirs {
     }
 }
 
-// The `flags` field choices in the PE section header.
-// Excluding the alignment flags, which is not bitflags.
 bitflags::bitflags! {
     #[derive(Clone, Copy, Debug)]
     struct PeSectionHdrFlags: u32 {
@@ -171,15 +147,15 @@ bitflags::bitflags! {
 #[repr(C, packed)]
 #[derive(Clone, Copy, Pod, Serialize)]
 struct PeSectionHdr {
-    name: [u8; 8],        // name or "/12\0" string tbl offset
-    virtual_size: u32,    // size of loaded section in RAM
-    virtual_address: u32, // relative virtual address
-    raw_data_size: u32,   // size of the section
-    data_addr: u32,       // file pointer to first page of sec
-    relocs: u32,          // file pointer to relocation entries
-    line_numbers: u32,    // line numbers!
-    num_relocs: u16,      // number of relocations
-    num_lin_numbers: u16, // srsly.
+    name: [u8; 8],
+    virtual_size: u32,
+    virtual_address: u32,
+    raw_data_size: u32,
+    data_addr: u32,
+    relocs: u32,
+    line_numbers: u32,
+    num_relocs: u16,
+    num_lin_numbers: u16,
     flags: u32,
 }
 
@@ -190,14 +166,13 @@ pub(crate) fn make_pe_coff_header(setup_elf: &[u8]) -> Vec<u8> {
     let elf = xmas_elf::ElfFile::new(setup_elf).unwrap();
     let mut bin = Vec::<u8>::new();
 
-    // PE header
     let mut pe_hdr = PeHdr {
         magic: PE_MAGIC,
         machine: PeMachineType::Amd64 as u16,
-        sections: 0, // this field will be modified later
+        sections: 0,
         timestamp: 0,
         symbol_table: 0,
-        symbols: 1, // I don't know why, Linux header.S says it's 1
+        symbols: 1,
         opt_hdr_size: (size_of::<Pe32PlusOptHdr>() + size_of::<Pe32PlusOptDataDirs>()) as u16,
         flags: (PeFlags::EXECUTABLE_IMAGE | PeFlags::DEBUG_STRIPPED | PeFlags::LINE_NUMS_STRIPPED)
             .bits(),
@@ -205,14 +180,13 @@ pub(crate) fn make_pe_coff_header(setup_elf: &[u8]) -> Vec<u8> {
 
     let sec_hdrs = build_pe_sec_headers_from(&elf);
 
-    // PE32+ optional header
     let pe_opt_hdr = Pe32PlusOptHdr {
         magic: PE32PLUS_OPT_HDR_MAGIC,
-        ld_major: 0x02, // there's no linker to this extent, we do linking by ourselves
+        ld_major: 0x02,
         ld_minor: 0x14,
         text_size: sec_hdrs.text.raw_data_size,
         data_size: sec_hdrs.rodata.raw_data_size + sec_hdrs.data.raw_data_size,
-        bss_size: 0, // bss size is irrelevant
+        bss_size: 0,
         entry_point: (elf.header.pt2.entry_point() - sec_hdrs.base as u64) as u32,
         code_base: sec_hdrs.text.virtual_address,
         image_base: 0,
@@ -220,7 +194,7 @@ pub(crate) fn make_pe_coff_header(setup_elf: &[u8]) -> Vec<u8> {
         file_align: FILE_ALIGNMENT as u32,
         os_major: 0,
         os_minor: 0,
-        image_major: 0x3, // see linux/pe.h for more info
+        image_major: 0x3,
         image_minor: 0,
         subsys_major: 0,
         subsys_minor: 0,
@@ -229,7 +203,7 @@ pub(crate) fn make_pe_coff_header(setup_elf: &[u8]) -> Vec<u8> {
         header_size: LEGACY_SETUP_SEC_SIZE as u32,
         csum: 0,
         subsys: PeImageSubsystem::EfiApplication as u16,
-        dll_flags: 0x100, // NX compatible
+        dll_flags: 0x100,
         stack_size_req: 0,
         stack_size: 0,
         heap_size_req: 0,
@@ -247,7 +221,6 @@ pub(crate) fn make_pe_coff_header(setup_elf: &[u8]) -> Vec<u8> {
         base_relocation_table: Pe32PlusOptDataDirEnt::none(),
     };
 
-    // PE section headers
     let AllPeSectionHdrs {
         base: _,
         text,
@@ -256,20 +229,14 @@ pub(crate) fn make_pe_coff_header(setup_elf: &[u8]) -> Vec<u8> {
     } = sec_hdrs;
     let sec_hdr_vec = vec![text, rodata, data];
 
-    // Write the MS-DOS header
     bin.extend_from_slice(&MZ_MAGIC.to_le_bytes());
-    // Write the MS-DOS stub at 0x3c
     bin.extend_from_slice(&[0x0; 0x3c - 0x2]);
-    // Write the PE header offset, the header is right after the offset field
     bin.extend_from_slice(&(0x3cu32 + size_of::<u32>() as u32).to_le_bytes());
 
-    // Write the PE header
     pe_hdr.sections = sec_hdr_vec.len() as u16;
     bin.extend_from_slice(pe_hdr.as_bytes());
-    // Write the PE32+ optional header
     bin.extend_from_slice(pe_opt_hdr.as_bytes());
     bin.extend_from_slice(pe_opt_hdr_data_dirs.as_bytes());
-    // Write the PE section headers
     for sec_hdr in sec_hdr_vec {
         bin.extend_from_slice(sec_hdr.as_bytes());
     }
@@ -346,11 +313,6 @@ impl PeSectionHdr {
 }
 
 struct AllPeSectionHdrs {
-    /// The base for all virtual addresses in the PE/COFF header.
-    ///
-    /// We need this because we want to set `image_base` in `Pe32PlusOptHdr` to zero. Otherwise
-    /// some UEFI firmware will refuse to load the image. (FIXME: This is what Linux does, but I
-    /// can't find any specification that says we have to do this).
     base: usize,
     text: PeSectionHdr,
     rodata: PeSectionHdr,
@@ -382,7 +344,6 @@ fn build_pe_sec_headers_from(elf: &xmas_elf::ElfFile) -> AllPeSectionHdrs {
 
     let segments = elf.program_iter().collect::<Vec<_>>();
 
-    // There should be four segments: "header", "text", "rodata", and "data".
     assert_eq!(segments.len(), 4, "there must be four segments");
     assert!(
         segments[1].flags().is_execute(),
@@ -396,8 +357,6 @@ fn build_pe_sec_headers_from(elf: &xmas_elf::ElfFile) -> AllPeSectionHdrs {
         segments[3].flags().is_write(),
         "the data segment must be writable",
     );
-
-    // The "header" segment won't be loaded. See the linker script for details.
 
     let base = segments[1].virtual_addr() as usize - SECTION_ALIGNMENT;
     AllPeSectionHdrs {

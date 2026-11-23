@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::vec;
 use core::any::Any;
 
@@ -14,79 +12,14 @@ use crate::{
     prelude::*,
 };
 
-/// A cryptographically-protected log of user data blocks.
-///
-/// `CryptoLog<L>`, which is backed by an untrusted block log (`L`),
-/// serves as a secure log file that supports random reads and append-only
-/// writes of data blocks. `CryptoLog<L>` encrypts the data blocks and
-/// protects them with a Merkle Hash Tree (MHT), which itself is also encrypted.
-///
-/// # Security
-///
-/// Each instance of `CryptoLog<L>` is assigned a randomly-generated root key
-/// upon its creation. The root key is used to encrypt the root MHT block only.
-/// Each new version of the root MHT block is encrypted with the same key, but
-/// different random IVs. This arrangement ensures the confidentiality of
-/// the root block.
-///
-/// After flushing a `CryptoLog<L>`, a new root MHT (as well as other MHT nodes)
-/// shall be appended to the backend block log (`L`).
-/// The metadata of the root MHT, including its position, encryption
-/// key, IV, and MAC, must be kept by the user of `CryptoLog<L>` so that
-/// he or she can use the metadata to re-open the `CryptoLog`.
-/// The information contained in the metadata is sufficient to verify the
-/// integrity and freshness of the root MHT node, and thus the whole `CryptoLog`.
-///
-/// Other MHT nodes as well as data nodes are encrypted with randomly-generated,
-/// unique keys. Their metadata, including its position, encryption key, IV, and
-/// MAC, are kept securely in their parent MHT nodes, which are also encrypted.
-/// Thus, the confidentiality and integrity of non-root nodes are protected.
-///
-/// # Performance
-///
-/// Thanks to its append-only nature, `CryptoLog<L>` avoids MHT's high
-/// performance overheads under the workload of random writes
-/// due to "cascades of updates".
-///
-/// Behind the scene, `CryptoLog<L>` keeps a cache for nodes so that frequently
-/// or lately accessed nodes can be found in the cache, avoiding the I/O
-/// and decryption cost incurred when re-reading these nodes.
-/// The cache is also used for buffering new data so that multiple writes to
-/// individual nodes can be merged into a large write to the underlying block log.
-/// Therefore, `CryptoLog<L>` is efficient for both reads and writes.
-///
-/// # Disk space
-///
-/// One consequence of using an append-only block log (`L`) as the backend is
-/// that `CryptoLog<L>` cannot do in-place updates to existing MHT nodes.
-/// This means the new version of MHT nodes are appended to the underlying block
-/// log and the invalid blocks occupied by old versions are not reclaimed.
-///
-/// But lucky for us, this block reclamation problem is not an issue in practice.
-/// This is because a `CryptoLog<L>` is created for one of the following two
-/// use cases.
-///
-/// 1. Write-once-then-read-many. In this use case, all the content of a
-///    `CryptoLog` is written in a single run.
-///    Writing in a single run won't trigger any updates to MHT nodes and thus
-///    no waste of disk space.
-///    After the writing is done, the `CryptoLog` becomes read-only.
-///
-/// 2. Write-many-then-read-once. In this use case, the content of a
-///    `CryptoLog` may be written in many runs. But the number of `CryptoLog`
-///    under such workloads is limited and their lengths are also limited.
-///    So the disk space wasted by such `CryptoLog` is bounded.
-///    And after such `CryptoLog`s are done writing, they will be read once and
-///    then discarded.
 pub(crate) struct CryptoLog<L> {
     mht: RwLock<Mht<L>>,
 }
 
-type Lbid = BlockId; // Logical block position, in terms of user
-type Pbid = BlockId; // Physical block position, in terms of underlying log
-type Height = u8; // The height of the MHT
+type Lbid = BlockId;
+type Pbid = BlockId;
+type Height = u8;
 
-/// A Merkle-Hash Tree (MHT).
 struct Mht<L> {
     root: Option<(RootMhtMeta, Arc<MhtNode>)>,
     root_key: Key,
@@ -94,14 +27,12 @@ struct Mht<L> {
     storage: Arc<MhtStorage<L>>,
 }
 
-/// Storage medium for MHT, including both in-memory and persistent.
 struct MhtStorage<L> {
     block_log: L,
     node_cache: Arc<dyn NodeCache>,
     crypt_buf: Mutex<CryptBuf>,
 }
 
-/// The metadata of the root MHT node of a `CryptoLog`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct RootMhtMeta {
     pub pos: Pbid,
@@ -109,8 +40,6 @@ pub(crate) struct RootMhtMeta {
     pub iv: Iv,
 }
 
-/// The Merkle-Hash Tree (MHT) node (internal).
-/// It contains a header for node metadata and a bunch of entries for managing children nodes.
 #[padding_struct]
 #[repr(C)]
 #[derive(Clone, Copy, Pod)]
@@ -120,21 +49,15 @@ struct MhtNode {
 }
 const_assert!(size_of::<MhtNode>() <= BLOCK_SIZE);
 
-/// The header contains metadata of the current MHT node.
 #[padding_struct]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
 struct MhtNodeHeader {
-    // The height of the MHT whose root is this node
     height: Height,
-    // The total number of valid data nodes covered by this node
     num_data_nodes: u32,
-    // The number of valid entries (children) within this node
     num_valid_entries: u16,
 }
 
-/// The entry of the MHT node, which contains the
-/// metadata of the child MHT/data node.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 struct MhtNodeEntry {
@@ -143,21 +66,17 @@ struct MhtNodeEntry {
     mac: Mac,
 }
 
-// Number of branches of one MHT node. (102 for now)
 const MHT_NBRANCHES: usize = (BLOCK_SIZE - size_of::<MhtNodeHeader>()) / size_of::<MhtNodeEntry>();
 
-/// The data node (leaf). It contains a block of data.
 #[repr(C)]
 #[derive(Clone, Copy, Pod)]
 struct DataNode([u8; BLOCK_SIZE]);
 
-/// Builder for MHT.
 struct TreeBuilder<'a, L> {
     previous_build: Option<PreviousBuild<'a, L>>,
     storage: &'a MhtStorage<L>,
 }
 
-/// Builder for one specific level of MHT.
 struct LevelBuilder {
     level_entries: Vec<MhtNodeEntry>,
     total_data_nodes: usize,
@@ -165,23 +84,16 @@ struct LevelBuilder {
     previous_incomplete_node: Option<Arc<MhtNode>>,
 }
 
-/// It encloses necessary information of the previous build of MHT.
 struct PreviousBuild<'a, L> {
     root: Arc<MhtNode>,
     height: Height,
-    // Each level at most have one incomplete node at end
     internal_incomplete_nodes: HashMap<Height, Arc<MhtNode>>,
     storage: &'a MhtStorage<L>,
 }
 
-/// The node cache used by `CryptoLog`. User-defined node cache
-/// can achieve TX-awareness.
 pub(crate) trait NodeCache: Send + Sync {
-    /// Gets an owned value from cache corresponding to the position.
     fn get(&self, pos: Pbid) -> Option<Arc<dyn Any + Send + Sync>>;
 
-    /// Puts a position-value pair into cache. If the value of that position
-    /// already exists, updates it and returns the old value. Otherwise, `None` is returned.
     fn put(
         &self,
         pos: Pbid,
@@ -189,7 +101,6 @@ pub(crate) trait NodeCache: Send + Sync {
     ) -> Option<Arc<dyn Any + Send + Sync>>;
 }
 
-/// Context for a search request.
 struct SearchCtx<'a> {
     pub pos: Lbid,
     pub data_buf: BufMut<'a>,
@@ -198,27 +109,18 @@ struct SearchCtx<'a> {
     pub is_completed: bool,
 }
 
-/// Prepares buffer for node cryption.
 struct CryptBuf {
     pub plain: Buf,
     pub cipher: Buf,
 }
 
 impl<L: BlockLog> CryptoLog<L> {
-    /// Creates a new `CryptoLog`.
-    ///
-    /// A newly-created instance won't occupy any space on the `block_log`
-    /// until the first flush, which triggers writing the root MHT node.
     pub(crate) fn new(block_log: L, root_key: Key, node_cache: Arc<dyn NodeCache>) -> Self {
         Self {
             mht: RwLock::new(Mht::new(block_log, root_key, node_cache)),
         }
     }
 
-    /// Opens an existing `CryptoLog` backed by a `block_log`.
-    ///
-    /// The given key and the metadata of the root MHT are sufficient to
-    /// load and verify the root node of the `CryptoLog`.
     pub(crate) fn open(
         block_log: L,
         root_key: Key,
@@ -230,14 +132,10 @@ impl<L: BlockLog> CryptoLog<L> {
         })
     }
 
-    /// Gets the root key.
     pub(crate) fn root_key(&self) -> Key {
         self.mht.read().root_key
     }
 
-    /// Gets the metadata of the root MHT node.
-    ///
-    /// Returns `None` if there hasn't been any appends or flush.
     pub(crate) fn root_meta(&self) -> Option<RootMhtMeta> {
         self.mht.read().root_meta()
     }
@@ -246,12 +144,10 @@ impl<L: BlockLog> CryptoLog<L> {
         self.mht.read().root_node().cloned()
     }
 
-    /// Gets the number of data nodes (blocks).
     pub(crate) fn nblocks(&self) -> usize {
         self.mht.read().total_data_nodes()
     }
 
-    /// Reads one or multiple data blocks at a specified position.
     pub(crate) fn read(&self, pos: Lbid, buf: BufMut) -> Result<()> {
         let mut search_ctx = SearchCtx::new(pos, buf);
         self.mht.read().search(&mut search_ctx)?;
@@ -260,7 +156,6 @@ impl<L: BlockLog> CryptoLog<L> {
         Ok(())
     }
 
-    /// Appends one or multiple data blocks at the end.
     pub(crate) fn append(&self, buf: BufRef) -> Result<()> {
         let data_nodes: Vec<Arc<DataNode>> = buf
             .iter()
@@ -274,11 +169,6 @@ impl<L: BlockLog> CryptoLog<L> {
         self.mht.write().append_data_nodes(data_nodes)
     }
 
-    /// Ensures that all new data are persisted.
-    ///
-    /// Each successful flush triggers writing a new version of the root MHT
-    /// node to the underlying block log. The metadata of the latest root MHT
-    /// can be obtained via the `root_meta` method.
     pub(crate) fn flush(&self) -> Result<()> {
         self.mht.write().flush()
     }
@@ -289,7 +179,6 @@ impl<L: BlockLog> CryptoLog<L> {
 }
 
 impl<L: BlockLog> Mht<L> {
-    // Buffer capacity for appended data nodes.
     const APPEND_BUF_CAPACITY: usize = 2048;
 
     pub(crate) fn new(block_log: L, root_key: Key, node_cache: Arc<dyn NodeCache>) -> Self {
@@ -345,13 +234,11 @@ impl<L: BlockLog> Mht<L> {
             return_errno_with_msg!(InvalidArgs, "search out of MHT capacity");
         }
 
-        // Search the append data buffer first
         self.data_buf.search_data_nodes(search_ctx)?;
         if search_ctx.is_completed {
             return Ok(());
         }
 
-        // Search the MHT if needed
         self.search_hierarchy(vec![root_node.clone()], root_node.height(), search_ctx)
     }
 
@@ -366,8 +253,6 @@ impl<L: BlockLog> Mht<L> {
         );
         let num_data_nodes = search_ctx.num;
 
-        // Calculate two essential values for searching the current level:
-        // how many nodes to skip and how many nodes we need
         let (nodes_skipped, nodes_needed) = {
             let pos = &mut search_ctx.pos;
             let next_level_max_num_data_nodes = MhtNode::max_num_data_nodes(curr_height - 1);
@@ -384,7 +269,6 @@ impl<L: BlockLog> Mht<L> {
             .skip(nodes_skipped)
             .take(nodes_needed);
 
-        // Search down to the leaves, ready to collect data nodes
         if MhtNode::is_lowest_level(curr_height) {
             debug_assert_eq!(num_data_nodes, nodes_needed);
             for entry in target_entries {
@@ -396,7 +280,6 @@ impl<L: BlockLog> Mht<L> {
             return Ok(());
         }
 
-        // Prepare target MHT nodes for the lower level
         let next_level_targets = {
             let mut targets = Vec::with_capacity(nodes_needed);
             for entry in target_entries {
@@ -411,7 +294,6 @@ impl<L: BlockLog> Mht<L> {
             targets
         };
 
-        // Search the lower level
         curr_height -= 1;
         self.search_hierarchy(next_level_targets, curr_height, search_ctx)
     }
@@ -428,8 +310,6 @@ impl<L: BlockLog> Mht<L> {
     pub(crate) fn flush(&mut self) -> Result<()> {
         let data_node_entries = self.data_buf.flush()?;
         self.do_build(data_node_entries)?;
-        // FIXME: Should we sync the storage here?
-        // self.storage.flush()?;
         Ok(())
     }
 
@@ -595,18 +475,14 @@ impl MhtNode {
         self.header.num_valid_entries as _
     }
 
-    // Lowest level MHT node's children are data nodes
     pub(crate) fn is_lowest_level(height: Height) -> bool {
         height == 1
     }
 
     pub(crate) fn max_num_data_nodes(height: Height) -> usize {
-        // Also correct when height equals 0
         MHT_NBRANCHES.pow(height as _)
     }
 
-    // A complete node indicates that all children are valid and
-    // all covered with maximum number of data nodes
     pub(crate) fn is_incomplete(&self) -> bool {
         self.num_data_nodes() != Self::max_num_data_nodes(self.height())
     }
@@ -666,9 +542,7 @@ impl<'a, L: BlockLog> TreeBuilder<'a, L> {
         mut curr_height: Height,
         target_height: Height,
     ) -> Result<Arc<MhtNode>> {
-        // Build the MHT nodes of current level
         let mut new_mht_nodes = {
-            // Previous built incomplete node of same level should participate in the building
             let previous_incomplete_node = self
                 .previous_build
                 .as_ref()
@@ -680,14 +554,11 @@ impl<'a, L: BlockLog> TreeBuilder<'a, L> {
         };
 
         if curr_height == target_height {
-            // The root MHT node has been built
             debug_assert_eq!(new_mht_nodes.len(), 1);
             return Ok(new_mht_nodes.pop().unwrap());
         }
 
-        // Prepare MHT node entries for the higher level
         let next_level_entries = self.storage.append_mht_nodes(&new_mht_nodes)?;
-        // Build the higher level
         curr_height += 1;
         self.build_hierarchy(
             next_level_entries,
@@ -732,8 +603,6 @@ impl LevelBuilder {
     pub(crate) fn build(&self) -> Vec<Arc<MhtNode>> {
         let all_level_entries: Vec<&MhtNodeEntry> =
             if let Some(pre_node) = self.previous_incomplete_node.as_ref() {
-                // If there exists a previous built node (same height),
-                // its complete entries should participate in the building
                 pre_node
                     .entries
                     .iter()
@@ -746,7 +615,6 @@ impl LevelBuilder {
 
         let num_build = align_up(all_level_entries.len(), MHT_NBRANCHES) / MHT_NBRANCHES;
         let mut new_mht_nodes = Vec::with_capacity(num_build);
-        // Each iteration builds a new MHT node
         for (nth, entries_per_node) in all_level_entries.chunks(MHT_NBRANCHES).enumerate() {
             if nth == num_build - 1 {
                 let last_new_node = self.build_last_node(entries_per_node);
@@ -770,8 +638,6 @@ impl LevelBuilder {
         new_mht_nodes
     }
 
-    // Building last MHT node of the level can be complicated, since
-    // the last node may be incomplete
     fn build_last_node(&self, entries: &[&MhtNodeEntry]) -> Arc<MhtNode> {
         let num_data_nodes = {
             let max_data_nodes = MhtNode::max_num_data_nodes(self.height);
@@ -795,7 +661,6 @@ impl LevelBuilder {
             *entry = if i < num_valid_entries {
                 *entries[i]
             } else {
-                // Padding invalid entries to the rest
                 MhtNodeEntry::new_zeroed()
             };
         }
@@ -849,7 +714,6 @@ impl<'a, L: BlockLog> PreviousBuild<'a, L> {
                 break;
             }
 
-            // Incomplete nodes only appear in the last node of each level
             lookup_node = {
                 let entry = lookup_node.entries[lookup_node.num_valid_entries() - 1];
                 self.storage
@@ -886,18 +750,16 @@ impl CryptBuf {
     }
 }
 
-/// A buffer that contains appended data.
 struct AppendDataBuf<L> {
     node_queue: Vec<Arc<DataNode>>,
     node_queue_cap: usize,
-    entry_queue: Vec<MhtNodeEntry>, // Also cache the data node entries
+    entry_queue: Vec<MhtNodeEntry>,
     entry_queue_cap: usize,
     start_pos: Lbid,
     storage: Arc<MhtStorage<L>>,
 }
 
 impl<L: BlockLog> AppendDataBuf<L> {
-    // Maximum capacity of entries indicates a complete MHT (height equals 3)
     const MAX_ENTRY_QUEUE_CAP: usize = MHT_NBRANCHES.pow(3);
 
     pub(crate) fn new(capacity: usize, start_pos: Lbid, storage: Arc<MhtStorage<L>>) -> Self {
@@ -917,7 +779,6 @@ impl<L: BlockLog> AppendDataBuf<L> {
     }
 
     pub(crate) fn is_full(&self) -> bool {
-        // Returns whether the data node entry queue is at capacity
         self.entry_queue.len() >= self.entry_queue_cap
     }
 
@@ -928,7 +789,6 @@ impl<L: BlockLog> AppendDataBuf<L> {
 
         self.node_queue.extend(nodes);
         if self.node_queue.len() >= self.node_queue_cap {
-            // If node queue is full, flush nodes to the entry queue
             self.flush_node_queue()?;
         }
         Ok(())
@@ -952,7 +812,6 @@ impl<L: BlockLog> AppendDataBuf<L> {
         };
         debug_assert!(end_nth <= self.num_append());
 
-        // Read from entry queue first if needed
         for entry in self
             .entry_queue
             .iter()
@@ -966,7 +825,6 @@ impl<L: BlockLog> AppendDataBuf<L> {
             offset += 1;
         }
 
-        // Read from node queue if needed
         for node in self
             .node_queue
             .iter()
@@ -1002,7 +860,6 @@ impl<L: BlockLog> AppendDataBuf<L> {
     }
 
     fn calc_queue_cap(capacity: usize, append_pos: Lbid) -> (usize, usize) {
-        // Half for data nodes, half for data node entries
         let node_queue_cap = capacity / 2;
         let entry_queue_cap = {
             let max_cap = Self::MAX_ENTRY_QUEUE_CAP - append_pos;
@@ -1052,11 +909,9 @@ impl Debug for DataNode {
 struct MhtDisplayer<'a, L>(&'a Mht<L>);
 
 impl<L: BlockLog> Debug for MhtDisplayer<'_, L> {
-    // A heavy implementation to display the whole MHT.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut debug_struct = f.debug_struct("Mht");
 
-        // Display root MHT node
         let root_meta = self.0.root_meta();
         debug_struct.field("\nroot_meta", &root_meta);
         if root_meta.is_none() {
@@ -1069,7 +924,6 @@ impl<L: BlockLog> Debug for MhtDisplayer<'_, L> {
             return debug_struct.finish();
         }
 
-        // Display internal MHT nodes hierarchically
         let mut level_entries: Vec<MhtNodeEntry> = root_mht_node
             .entries
             .into_iter()

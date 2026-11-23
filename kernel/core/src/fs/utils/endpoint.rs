@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::{
@@ -8,10 +6,6 @@ use crate::{
     process::signal::{PollHandle, Pollee},
 };
 
-/// One of two connected endpoints.
-///
-/// There is a `T` on the local endpoint and another `T` on the remote endpoint. This type allows
-/// users to access the local and remote `T`s from both endpoints.
 pub(crate) struct Endpoint<T> {
     inner: Arc<Inner<T>>,
     location: Location,
@@ -28,11 +22,6 @@ struct Inner<T> {
 }
 
 impl<T> Endpoint<T> {
-    /// Creates an instance pair with two `T`s on the two endpoints.
-    ///
-    /// For the first instance, `this` is on the local endpoint and `peer` is on the remote
-    /// endpoint; for the second instance, `this` is on the remote endpoint and `peer` is on the
-    /// local endpoint.
     pub(crate) fn new_pair(this: T, peer: T) -> (Endpoint<T>, Endpoint<T>) {
         let inner = Arc::new(Inner {
             client: this,
@@ -51,7 +40,6 @@ impl<T> Endpoint<T> {
         (client, server)
     }
 
-    /// Returns a reference to the `T` on the local endpoint.
     pub(crate) fn this_end(&self) -> &T {
         match self.location {
             Location::Client => &self.inner.client,
@@ -59,7 +47,6 @@ impl<T> Endpoint<T> {
         }
     }
 
-    /// Returns a reference to the `T` on the remote endpoint.
     pub(crate) fn peer_end(&self) -> &T {
         match self.location {
             Location::Client => &self.inner.server,
@@ -68,26 +55,12 @@ impl<T> Endpoint<T> {
     }
 }
 
-/// An [`Endpoint`] state that helps end-to-end data communication.
-///
-/// The state contains a [`Pollee`] that will be notified when new data or the buffer becomes
-/// available. Additionally, this state tracks whether communication has been shut down, i.e.,
-/// whether further data writing is disallowed.
-///
-/// By having [`EndpointState`] as a part of the endpoint data (i.e., `T` in [`Endpoint`] should
-/// implement [`AsRef<EndpointState>`]), methods like [`Endpoint::read_with`],
-/// [`Endpoint::write_with`], and [`Endpoint::poll_with`] are available for performing data
-/// transmission and registering event observers.
-///
-/// The data communication can be unidirectional, such as pipes, or bidirectional, such as UNIX
-/// sockets.
 pub(crate) struct EndpointState {
     pollee: Pollee,
     is_shutdown: AtomicBool,
 }
 
 impl EndpointState {
-    /// Creates with the [`Pollee`] and the shutdown status.
     pub(crate) fn new(pollee: Pollee, is_shutdown: bool) -> Self {
         Self {
             pollee,
@@ -95,15 +68,6 @@ impl EndpointState {
         }
     }
 
-    /// Clones and returns the [`Pollee`].
-    ///
-    /// Do not use this method to perform cheap operations on the [`Pollee`] (e.g.,
-    /// [`Pollee::notify`]). Use the methods below, such as [`read_with`]/[`write_with`], instead.
-    /// This method is deliberately designed to force the [`Pollee`] to be cloned to avoid such
-    /// misuse.
-    ///
-    /// [`read_with`]: Endpoint::read_with
-    /// [`write_with`]: Endpoint::read_with
     pub(crate) fn cloned_pollee(&self) -> Pollee {
         self.pollee.clone()
     }
@@ -122,18 +86,10 @@ impl AsRef<EndpointState> for EndpointState {
 }
 
 impl<T: AsRef<EndpointState>> Endpoint<T> {
-    /// Reads from the endpoint.
-    ///
-    /// Note that if `read` returns `Ok(0)`, it is assumed that there is no data to read and an
-    /// [`Errno::EAGAIN`] error will be returned instead.
-    ///
-    /// However, if the remote endpoint has shut down, this method will return `Ok(0)` to indicate
-    /// the end-of-file (EOF).
     pub(crate) fn read_with<F>(&self, read: F) -> Result<usize>
     where
         F: FnOnce() -> Result<usize>,
     {
-        // This must be recorded before the actual operation to avoid race conditions.
         let is_shutdown = self.is_peer_shutdown();
 
         let read_len = read()?;
@@ -147,13 +103,6 @@ impl<T: AsRef<EndpointState>> Endpoint<T> {
         }
     }
 
-    /// Writes to the endpoint.
-    ///
-    /// Note that if `write` returns `Ok(0)`, it is assumed that there is no space to write and an
-    /// [`Errno::EAGAIN`] error will be returned instead.
-    ///
-    /// If the local endpoint has shut down, this method will return an [`Errno::EPIPE`] error
-    /// directly without calling the `write` closure.
     pub(crate) fn write_with<F>(&self, write: F) -> Result<usize>
     where
         F: FnOnce() -> Result<usize>,
@@ -171,19 +120,16 @@ impl<T: AsRef<EndpointState>> Endpoint<T> {
         Ok(written_len)
     }
 
-    /// Notifies the local/remote [`Pollee`]s that data have been read.
     pub(crate) fn notify_read(&self) {
         self.peer_end().as_ref().pollee.notify(IoEvents::OUT);
         self.this_end().as_ref().pollee.invalidate();
     }
 
-    /// Notifies the local/remote [`Pollee`]s that data have been written.
     pub(crate) fn notify_write(&self) {
         self.peer_end().as_ref().pollee.notify(IoEvents::IN);
         self.this_end().as_ref().pollee.invalidate();
     }
 
-    /// Polls the I/O events in the local [`Pollee`].
     pub(crate) fn poll_with<F>(
         &self,
         mask: IoEvents,
@@ -199,10 +145,6 @@ impl<T: AsRef<EndpointState>> Endpoint<T> {
             .poll_with(mask, poller, check)
     }
 
-    /// Shuts down the local endpoint.
-    ///
-    /// After this method, data cannot be written to from the local endpoint
-    /// until it is activated again.
     pub(crate) fn shutdown(&self) {
         let this_end = self.this_end().as_ref();
         let peer_end = self.peer_end().as_ref();
@@ -210,10 +152,6 @@ impl<T: AsRef<EndpointState>> Endpoint<T> {
         Self::shutdown_impl(this_end, peer_end);
     }
 
-    /// Shuts down the remote endpoint.
-    ///
-    /// After this method, data cannot be written to from the remote endpoint
-    /// until it is activated again.
     pub(crate) fn peer_shutdown(&self) {
         let this_end = self.this_end().as_ref();
         let peer_end = self.peer_end().as_ref();
@@ -231,7 +169,6 @@ impl<T: AsRef<EndpointState>> Endpoint<T> {
             .notify(IoEvents::HUP | IoEvents::ERR | IoEvents::OUT);
     }
 
-    /// Activates the local endpoint.
     pub(in crate::fs) fn activate(&self) {
         self.this_end()
             .as_ref()
@@ -240,7 +177,6 @@ impl<T: AsRef<EndpointState>> Endpoint<T> {
         self.this_end().as_ref().pollee.invalidate();
     }
 
-    /// Activates the remote endpoint.
     pub(in crate::fs) fn peer_activate(&self) {
         self.peer_end()
             .as_ref()
@@ -249,12 +185,10 @@ impl<T: AsRef<EndpointState>> Endpoint<T> {
         self.peer_end().as_ref().pollee.invalidate();
     }
 
-    /// Returns whether the local endpoint has shut down.
     pub(crate) fn is_shutdown(&self) -> bool {
         self.this_end().as_ref().is_shutdown.load(Ordering::Relaxed)
     }
 
-    /// Returns whether the remote endpoint has shut down.
     pub(crate) fn is_peer_shutdown(&self) -> bool {
         self.peer_end().as_ref().is_shutdown.load(Ordering::Relaxed)
     }

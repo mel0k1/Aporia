@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd::mm::VmIo;
 
 use super::SyscallReturn;
@@ -21,9 +19,7 @@ pub(super) fn sys_capget(
     let cap_user_header = user_space.read_val::<CUserCapHeader>(cap_user_header_addr)?;
 
     if cap_user_header.version != LINUX_CAPABILITY_VERSION_3 {
-        // Write the supported version back to userspace.
         user_space.write_val(cap_user_header_addr, &LINUX_CAPABILITY_VERSION_3)?;
-        // If the data pointer is null, return success per Linux behavior.
         if cap_user_data_addr == 0 {
             return Ok(SyscallReturn::Return(0));
         }
@@ -56,8 +52,6 @@ pub(super) fn sys_capget(
     let effective_capset = credentials.effective_capset();
     let inheritable_capset = credentials.inheritable_capset();
 
-    // 64-bit capabilities are exposed as two sets of 32-bit fields,
-    // so we need to split the capability values up.
     let caps_lo = CUserCapData {
         effective: effective_capset.to_lo_hi().0,
         permitted: permitted_capset.to_lo_hi().0,

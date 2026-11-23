@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Handles trap.
-
 #[expect(clippy::module_inception)]
 mod trap;
 
@@ -15,26 +11,12 @@ use crate::{
     irq::call_irq_callback_functions,
 };
 
-/// Initializes trap handling on LoongArch.
-///
-/// This function will:
-/// - Set `ecfg`'s VS bit to zero.
-/// - Set `eentry` to the trap entry.
-///
-/// # Safety
-///
-/// On the current CPU, this function must be called
-/// - only once and
-/// - before any trap can occur.
 pub(crate) unsafe fn init_on_cpu() {
-    // SAFETY: The caller ensures the safety conditions.
     unsafe {
         trap::init_on_cpu();
     }
 }
 
-/// Handle traps (only from kernel).
-// SAFETY: The name does not collide with other symbols.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn trap_handler(f: &mut TrapFrame) {
     let cause = estat::read().cause();
@@ -76,33 +58,30 @@ unsafe extern "C" fn trap_handler(f: &mut TrapFrame) {
             Exception::FloatingPointUnavailable => todo!(),
             Exception::TLBRFill => unreachable!(),
         },
-        Trap::Interrupt(interrupt) => {
-            match interrupt {
-                Interrupt::SWI0 => todo!(),
-                Interrupt::SWI1 => todo!(),
-                Interrupt::HWI0
-                | Interrupt::HWI1
-                | Interrupt::HWI2
-                | Interrupt::HWI3
-                | Interrupt::HWI4
-                | Interrupt::HWI5
-                | Interrupt::HWI6
-                | Interrupt::HWI7 => {
-                    crate::debug!("Handling hardware interrupt: {:?}", interrupt);
-                    while let Some(irq_num) = crate::arch::irq::chip::claim() {
-                        // Call the IRQ callback functions for the claimed interrupt
-                        call_irq_callback_functions(
-                            f,
-                            &HwIrqLine::new(irq_num),
-                            PrivilegeLevel::Kernel,
-                        );
-                    }
+        Trap::Interrupt(interrupt) => match interrupt {
+            Interrupt::SWI0 => todo!(),
+            Interrupt::SWI1 => todo!(),
+            Interrupt::HWI0
+            | Interrupt::HWI1
+            | Interrupt::HWI2
+            | Interrupt::HWI3
+            | Interrupt::HWI4
+            | Interrupt::HWI5
+            | Interrupt::HWI6
+            | Interrupt::HWI7 => {
+                crate::debug!("Handling hardware interrupt: {:?}", interrupt);
+                while let Some(irq_num) = crate::arch::irq::chip::claim() {
+                    call_irq_callback_functions(
+                        f,
+                        &HwIrqLine::new(irq_num),
+                        PrivilegeLevel::Kernel,
+                    );
                 }
-                Interrupt::PMI => todo!(),
-                Interrupt::Timer => todo!(),
-                Interrupt::IPI => todo!(),
             }
-        }
+            Interrupt::PMI => todo!(),
+            Interrupt::Timer => todo!(),
+            Interrupt::IPI => todo!(),
+        },
         Trap::MachineError(machine_error) => panic!(
             "Machine error: {machine_error:?}, badv: {badv:#x?}, badi: {badi:#x?}, era: {era:#x?}"
         ),

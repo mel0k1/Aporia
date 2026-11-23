@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! MSI-X capability support.
-
 use alloc::{sync::Arc, vec::Vec};
 use core::{
     mem::offset_of,
@@ -17,7 +13,6 @@ use crate::{
     common_device::PciCommonDevice,
 };
 
-/// Raw information about MSI-X capability.
 #[derive(Debug)]
 pub(crate) struct RawCapabilityMsix {
     cap_ptr: u16,
@@ -44,18 +39,12 @@ impl RawCapabilityMsix {
     }
 }
 
-/// MSI-X capability.
-///
-/// Owns exclusive access to the MSI-X table and its IRQ lines.
-/// Dropping it masks all vectors and disables MSI-X before releasing the IRQ lines.
 #[derive(Debug)]
 pub struct CapabilityMsixData {
     device: Arc<PciDevice>,
     ptr: u16,
     table_size: u16,
-    /// BAR containing the MSI-X table of [`Entry`] records.
     table_bar: IoMem,
-    /// Pending bits table.
     #[expect(dead_code)]
     pending_table_bar: IoMem,
     table_offset: usize,
@@ -102,7 +91,6 @@ impl CapabilityMsixData {
             return Err(Error::AccessDenied);
         }
 
-        // Construct the owner before programming the table so `Drop` runs if initialization unwinds.
         let msix = Self {
             device: Arc::clone(device),
             ptr: raw_cap.cap_ptr,
@@ -114,7 +102,6 @@ impl CapabilityMsixData {
             irqs: (0..table_size).map(|_| None).collect(),
         };
 
-        // Set the message address and disable all MSI-X vectors.
         let message_address = MSIX_DEFAULT_MSG_ADDR;
         let message_upper_address = 0u32;
         for i in 0..table_size {
@@ -132,13 +119,11 @@ impl CapabilityMsixData {
                 .write_once(entry_offset + offset_of!(Entry, ctrl), &Entry::CTRL_MASKED)
                 .unwrap();
         }
-        // Flush table writes before enabling MSI-X.
         msix.table_bar
             .read_once::<u32>(table_offset + offset_of!(Entry, ctrl))
             .unwrap();
 
         msix.set_enabled(true);
-        // Disable INTx. Enable bus master.
         loc.write16(
             PciCommonCfgOffset::Command as u16,
             loc.read16(PciCommonCfgOffset::Command as u16)
@@ -148,14 +133,10 @@ impl CapabilityMsixData {
         Ok(Some(msix))
     }
 
-    /// Returns the size of the MSI-X Table.
     pub fn table_size(&self) -> u16 {
         self.table_size
     }
 
-    /// Enables an interrupt line.
-    ///
-    /// If the interrupt line has already been enabled, the old [`IrqLine`] will be replaced.
     pub fn set_interrupt_vector(&mut self, irq: IrqLine, index: u16) {
         if index >= self.table_size {
             return;
@@ -163,7 +144,6 @@ impl CapabilityMsixData {
 
         let entry_offset = self.entry_offset(index);
 
-        // If interrupt remapping is enabled, then we need to change the value of the message address.
         if let Some(remapping_index) = irq.remapping_index() {
             let address = construct_remappable_msix_address(remapping_index as u32);
 
@@ -180,7 +160,6 @@ impl CapabilityMsixData {
         }
 
         let _old_irq = self.irqs[index as usize].replace(irq);
-        // Enable this MSI-X vector.
         self.table_bar
             .write_once(
                 entry_offset + offset_of!(Entry, ctrl),
@@ -189,14 +168,10 @@ impl CapabilityMsixData {
             .unwrap();
     }
 
-    /// Returns a mutable reference to the [`IrqLine`].
-    ///
-    /// Users can register callbacks using the returned [`IrqLine`] reference.
     pub fn irq_mut(&mut self, index: usize) -> Option<&mut IrqLine> {
         self.irqs[index].as_mut()
     }
 
-    /// Returns whether the MSI-X Enable bit is set.
     pub fn is_enabled(&self) -> bool {
         let loc = self.device.location();
         let msg_ctrl = MsgCtrl(loc.read16(self.ptr + offset_of!(Cap, msg_ctrl) as u16));
@@ -223,7 +198,6 @@ impl CapabilityMsixData {
 
 impl Drop for CapabilityMsixData {
     fn drop(&mut self) {
-        // Mask all vectors and flush the writes before disabling MSI-X.
         for i in 0..self.table_size {
             let entry_offset = self.entry_offset(i);
             self.table_bar
@@ -234,13 +208,11 @@ impl Drop for CapabilityMsixData {
             .read_once::<u32>(self.table_offset + offset_of!(Entry, ctrl))
             .unwrap();
 
-        // Disable MSI-X and read back the control register before releasing IRQ lines.
         self.set_enabled(false);
         let _ = self.is_enabled();
 
         self.irqs.clear();
 
-        // A new owner must not configure the table until cleanup is complete.
         self.device
             .raw_msix_capability()
             .unwrap()
@@ -249,7 +221,6 @@ impl Drop for CapabilityMsixData {
     }
 }
 
-/// MSI-X capability layout in PCI configuration space.
 #[repr(C)]
 struct Cap {
     cap_id: u8,
@@ -259,7 +230,6 @@ struct Cap {
     pba_info: u32,
 }
 
-/// MSI-X Message Control register.
 #[derive(Clone, Copy, Debug)]
 struct MsgCtrl(u16);
 
@@ -268,7 +238,6 @@ impl MsgCtrl {
     const TABLE_SIZE_MASK: u16 = 0x07ff;
 
     fn table_size(self) -> u16 {
-        // The field encodes the number of entries minus one.
         (self.0 & Self::TABLE_SIZE_MASK) + 1
     }
 
@@ -277,7 +246,6 @@ impl MsgCtrl {
     }
 }
 
-/// BAR index and byte offset of the MSI-X table or pending bit array.
 #[derive(Clone, Copy, Debug)]
 struct BarInfo(u32);
 
@@ -293,7 +261,6 @@ impl BarInfo {
     }
 }
 
-/// MSI-X table entry layout.
 #[repr(C)]
 struct Entry {
     addr: u32,
@@ -303,7 +270,6 @@ struct Entry {
 }
 
 impl Entry {
-    // Whether the MSI-X vector is masked or unmasked.
     const CTRL_MASKED: u32 = 1;
     const CTRL_UNMASKED: u32 = 0;
 }

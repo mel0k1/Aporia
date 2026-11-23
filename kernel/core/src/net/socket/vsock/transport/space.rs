@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use aster_softirq::BottomHalfDisabled;
 use aster_virtio::device::socket::{
     device::SocketDevice,
@@ -21,8 +19,6 @@ use crate::{
     process::signal::Pollee,
 };
 
-// We currently support only one vsock device.
-// TODO: Add support for multiple vsock devices and the loopback vsock device.
 pub(super) struct VsockSpace {
     device: Arc<SocketDevice>,
     ports: SpinLock<PortTable, BottomHalfDisabled>,
@@ -59,7 +55,6 @@ impl VsockSpace {
     }
 }
 
-// Connection and listener management.
 impl VsockSpace {
     pub(super) fn new_connection(
         &self,
@@ -71,8 +66,6 @@ impl VsockSpace {
 
         let mut sockets = self.sockets.lock();
 
-        // Note that we should query the guest CID (part of `from_port_and_remote`) after locking
-        // `sockets` to avoid race conditions with `process_transport_event`.
         let conn_id = ConnId::from_port_and_remote(&bound_port, remote_addr);
         let Entry::Vacant(entry) = sockets.connections.entry(conn_id) else {
             return Err((
@@ -87,10 +80,6 @@ impl VsockSpace {
         Ok(Connection::new(inner))
     }
 
-    /// Removes a connection.
-    ///
-    /// This method should not be called with the socket state lock held. We need to lock the
-    /// sockets before locking the socket state.
     pub(super) fn remove_connection(&self, connection: &Arc<ConnectionInner>) {
         use alloc::collections::btree_map::Entry;
 
@@ -98,8 +87,6 @@ impl VsockSpace {
 
         let conn_id = connection.conn_id();
 
-        // The following early returns may reach due to some race conditions between user
-        // operations and incoming packets. But we can safely ignore this case if it happens.
         let Entry::Occupied(occupied) = sockets.connections.entry(conn_id) else {
             return;
         };
@@ -134,10 +121,6 @@ impl VsockSpace {
         Ok(Listener::new(inner))
     }
 
-    /// Removes a listener.
-    ///
-    /// This method should not be called with the socket state lock held. We need to lock the
-    /// sockets before locking the socket state.
     pub(super) fn remove_listener(&self, listener: &Arc<ListenerInner>) {
         use alloc::collections::btree_map::Entry;
 
@@ -155,8 +138,6 @@ impl VsockSpace {
         for connection in connections.into_iter() {
             let conn_id = connection.conn_id();
 
-            // The following `continue`s may reach due to some race conditions between user
-            // operations and incoming packets. But we can safely ignore this case if it happens.
             let Entry::Occupied(occupied) = sockets.connections.entry(conn_id) else {
                 continue;
             };
@@ -167,16 +148,12 @@ impl VsockSpace {
             occupied.remove();
 
             connection.active_rst();
-            // No need to notify the pollee since the connection isn't even accepted.
         }
     }
 }
 
-// RX packet and transport event processing.
 impl VsockSpace {
     pub(super) fn process_rx(&self) {
-        // Lock order: device RX -> sockets -> socket state -> device TX
-
         let mut rx = self.device.lock_rx();
         let mut sockets = self.sockets.lock();
 
@@ -278,12 +255,9 @@ impl VsockSpace {
 
     fn send_raw_rst(&self, header: &VirtioVsockHdr) {
         if header.op == VirtioVsockOp::Rst as u16 {
-            // Do not send an RST packet in response to an RST packet. Otherwise, we may loop.
             return;
         }
 
-        // We do not use `VirtioVsockHdr::new` here because we want to specify the `type_` field. It
-        // may not be `VirtioVsockType::Stream`.
         let rst_header = VirtioVsockHdr {
             src_cid: header.dst_cid,
             dst_cid: header.src_cid,
@@ -300,14 +274,7 @@ impl VsockSpace {
     }
 
     pub(super) fn process_transport_event(&self) {
-        // Lock order: sockets -> socket state
-
         let mut sockets = self.sockets.lock();
-
-        // As stated in the specification, we only need to deal with the connections:
-        // "The driver shuts down established connections and the guest_cid configuration field is
-        // fetched again. Existing listen sockets remain but their CID is updated to reflect the
-        // current guest_cid."
 
         let connections = core::mem::take(&mut sockets.connections);
         for connection in connections.into_values() {
@@ -315,14 +282,11 @@ impl VsockSpace {
             Self::notify_removed_connection(connection);
         }
 
-        // The reload of the guest CID is protectd by the `sockets` lock.
         self.device.reload_guest_id();
     }
 
     pub(super) fn process_timer_events(&self, events: Vec<TimerEvent>) {
         use alloc::collections::btree_map::Entry;
-
-        // Lock order: sockets -> socket state
 
         let mut sockets = self.sockets.lock();
 
@@ -345,28 +309,13 @@ impl VsockSpace {
     }
 
     fn notify_removed_connection(connection: Arc<ConnectionInner>) {
-        // A reset connection may still be in the listener's accept queue. This is a deliberate
-        // design choice, as we currently lack the means to efficiently locate the listener. This
-        // should be harmless to the user space because a connection can always be reset just after
-        // being accepted.
-        //
-        // FIXME: This may not be consistent with Linux behavior.
-
         let pollee = connection.pollee().clone();
         drop(connection);
 
-        // Notify the pollee after dropping the connection. This ensures the connection's reference
-        // count is one, allowing the socket layer to use the `Connection::into_result` method.
         pollee
             .notify(IoEvents::IN | IoEvents::OUT | IoEvents::RDHUP | IoEvents::HUP | IoEvents::ERR);
     }
 
-    /// Sends a control packet which does not carry payload.
-    ///
-    /// This method may be called while holding the socket state lock.
-    //
-    // TODO: This method may fail if memory allocation fails. For now, we will ignore the error in
-    // most cases. If possible, we should find better ways to handle the error.
     #[must_use]
     pub(super) fn send_packet(&self, header: &VirtioVsockHdr) -> bool {
         let Ok(builder) = TxPacket::new_builder() else {
@@ -375,15 +324,10 @@ impl VsockSpace {
         };
         let packet = builder.build(header);
 
-        // Lock order: socket state -> device TX
-
         let mut tx = self.device.lock_tx();
         match tx.try_send(packet) {
             Ok(()) => (),
             Err(pending) => {
-                // TODO: Ideally, we should limit the number of in-flight packets. This will prevent
-                // the peer endpoint from exhausting a large amount of memory by triggering too many
-                // packets but never processing them.
                 pending.push_pending(None);
             }
         }

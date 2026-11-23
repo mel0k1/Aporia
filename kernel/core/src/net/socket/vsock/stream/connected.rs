@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use crate::{
     events::IoEvents,
     net::socket::{

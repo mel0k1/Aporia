@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! System call dispatch in the x86 architecture.
-
 use super::{
     accept::{sys_accept, sys_accept4},
     access::{sys_access, sys_faccessat, sys_faccessat2},

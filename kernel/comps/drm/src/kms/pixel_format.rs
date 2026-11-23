@@ -1,22 +1,9 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use aster_core::prelude::*;
 
-/// Encodes four bytes as a Linux DRM FOURCC pixel-format identifier.
-///
-/// Each byte occupies eight bits of the resulting value,
-/// with the first byte placed in the least-significant bits.
 const fn fourcc_code(a: u8, b: u8, c: u8, d: u8) -> u32 {
     (a as u32) | ((b as u32) << 8) | ((c as u32) << 16) | ((d as u32) << 24)
 }
 
-/// A DRM framebuffer pixel format supported by the kernel.
-///
-/// Each discriminant is a Linux DRM FOURCC identifier exposed through the userspace API.
-/// The numeric values must remain compatible with the corresponding `DRM_FORMAT_*` definitions.
-/// This enum contains only the currently supported subset of DRM pixel formats.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm_fourcc.h#L113>.
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DrmPixelFormat {

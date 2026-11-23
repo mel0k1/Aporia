@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::{
     fmt::Debug,
     sync::atomic::{AtomicU8, AtomicUsize, Ordering},
@@ -39,8 +37,6 @@ mod ioctl_defs {
         util::ioctl::{InData, IoctlEnum, OutData},
     };
 
-    // Reference: <https://elixir.bootlin.com/linux/v6.18/source/include/uapi/linux/input.h>
-
     pub(super) type GetDriverVer  = ioc!(EVIOCGVERSION, b'E', 0x01, OutData<i32>);
     pub(super) type GetInputId    = ioc!(EVIOCGID,      b'E', 0x02, OutData<InputId>);
     pub(super) type GetDeviceName = ioc!(EVIOCGNAME,    b'E', 0x06, OutData<[u8]>);
@@ -51,11 +47,9 @@ mod ioctl_defs {
     pub(super) type GetSwState    = ioc!(EVIOCGSW,      b'E', 0x1B, OutData<[u8]>);
     pub(super) type SetClockId    = ioc!(EVIOCSCLOCKID, b'E', 0xA0, InData<i32>);
 
-    /// The `EVIOCGBIT` ioctl enum.
     pub(super) type GetEventBits = IoctlEnum<b'E', 0x20, 0x1F, OutData<[u8]>>;
 }
 
-// Reference: <https://elixir.bootlin.com/linux/v6.17.9/source/include/uapi/linux/input.h#L28>
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(super) struct EvdevEvent {
@@ -79,7 +73,6 @@ impl EvdevEvent {
     }
 }
 
-// Reference: <https://elixir.bootlin.com/linux/v6.17.9/source/drivers/input/evdev.c#L181-L189>
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, TryFromInt)]
 enum EvdevClock {
@@ -115,23 +108,15 @@ impl TryFrom<ClockId> for EvdevClock {
     }
 }
 
-/// An opened file from an evdev device ([`EvdevDevice`]).
 pub(super) struct EvdevFile {
-    /// Inner data (shared with the device).
     inner: Arc<EvdevFileInner>,
-    /// Weak reference to the evdev device that owns this evdev file.
     evdev: Weak<EvdevDevice>,
 }
 
-/// An opened evdev file's inner data (shared with its [`EvdevDevice`]).
 pub(super) struct EvdevFileInner {
-    /// Consumer for reading events.
     consumer: Mutex<RbConsumer<EvdevEvent>>,
-    /// Clock ID for this opened evdev file.
     clock_id: AtomicEvdevClock,
-    /// Number of complete event packets available (ended with `SYN_REPORT`).
     packet_count: AtomicUsize,
-    /// Pollee for event notification.
     pollee: Pollee,
 }
 
@@ -161,7 +146,6 @@ impl EvdevFileInner {
             return;
         };
 
-        // Note that the following two operations are racy unless we hold the producer's lock.
         consumer.clear();
         self.packet_count.store(0, Ordering::Relaxed);
         self.pollee.invalidate();
@@ -172,9 +156,6 @@ impl EvdevFileInner {
         consumer: &mut RbConsumer<EvdevEvent>,
         producer: &mut RbProducer<EvdevEvent>,
     ) {
-        // Note that the following operations are race-free because both the consumer and the
-        // producer locks have been held.
-
         if consumer.is_empty() {
             return;
         }
@@ -190,18 +171,15 @@ impl EvdevFileInner {
         self.pollee.notify(IoEvents::IN);
     }
 
-    /// Checks if buffer has complete event packets.
     pub(self) fn has_complete_packets(&self) -> bool {
         self.packet_count.load(Ordering::Relaxed) > 0
     }
 
-    /// Increments the packet count.
     pub(super) fn increment_packet_count(&self) {
         self.packet_count.fetch_add(1, Ordering::Relaxed);
         self.pollee.notify(IoEvents::IN);
     }
 
-    /// Decrements the packet count.
     pub(self) fn decrement_packet_count(&self) {
         if self.packet_count.fetch_sub(1, Ordering::Relaxed) == 1 {
             self.pollee.invalidate();
@@ -233,9 +211,6 @@ impl EvdevFile {
         &self.inner
     }
 
-    /// Processes events and writes them to the writer.
-    ///
-    /// Returns the total number of bytes written, or [`Errno::EAGAIN`] if no events are available.
     fn process_events(&self, max_events: usize, writer: &mut VmWriter) -> Result<usize> {
         const EVENT_SIZE: usize = size_of::<EvdevEvent>();
 
@@ -247,12 +222,10 @@ impl EvdevFile {
                 break;
             };
 
-            // Update the counter since the event has been consumed.
             if is_syn_report_event(&event) || is_syn_dropped_event(&event) {
                 self.inner.decrement_packet_count();
             }
 
-            // Write the event to the writer.
             writer.write_val(&event)?;
             event_count += 1;
         }
@@ -265,8 +238,6 @@ impl EvdevFile {
     }
 
     fn check_io_events(&self) -> IoEvents {
-        // TODO: Report `IoEvents::HUP` if the device has been disconnected.
-
         if self.inner.has_complete_packets() {
             IoEvents::IN
         } else {
@@ -281,7 +252,6 @@ impl EvdevFile {
     }
 
     fn set_clock(&self, clock: EvdevClock) -> Result<()> {
-        // Lock the mutex in advance to avoid race conditions.
         let mut consumer = self.inner.consumer.lock();
 
         if self.inner.clock_id.load(Ordering::Relaxed) == clock {
@@ -299,12 +269,10 @@ impl EvdevFile {
     }
 }
 
-/// Checks if the event is a `SYN_REPORT` event.
 pub(super) fn is_syn_report_event(event: &EvdevEvent) -> bool {
     event.type_ == EventTypes::SYN.as_index() && event.code == SynEvent::Report as u16
 }
 
-/// Checks if the event is a `SYN_DROPPED` event.
 pub(super) fn is_syn_dropped_event(event: &EvdevEvent) -> bool {
     event.type_ == EventTypes::SYN.as_index() && event.code == SynEvent::Dropped as u16
 }
@@ -339,10 +307,6 @@ fn handle_get_bit(evdev: &Arc<EvdevDevice>, event_type: u8, writer: &mut VmWrite
             || t == EventTypes::FF.as_index()
             || t == EventTypes::SND.as_index() =>
         {
-            // TODO: We do not support these uncommon event types yet, but
-            // returning an error would cause `libevdev` to crash. So we report
-            // a zeroed bitmap here. See
-            // <https://cgit.freedesktop.org/libevdev/tree/libevdev/libevdev.c?h=libevdev-1.13.6#n459>.
             writer.fill_zeros(writer.avail())?;
         }
         _ => {
@@ -374,17 +338,12 @@ impl FileOps for EvdevFile {
             return Err(errno!(EINVAL, "the buffer is too short"));
         }
 
-        // TODO: Return `ENODEV` if the device has been disconnected.
-
         let is_nonblocking = status_flags.contains(StatusFlags::O_NONBLOCK);
 
-        // If we're in non-blocking mode, we won't bother the user space with an incomplete packet.
-        // Note that this aligns to the behavior of `check_io_events`.
         if is_nonblocking && !self.inner.has_complete_packets() {
             return Err(errno!(EAGAIN, "the evdev file has no packets"));
         }
 
-        // Even if `max_events` is zero, the above checks are still needed.
         if max_events == 0 {
             return Ok(0);
         }
@@ -404,7 +363,6 @@ impl FileOps for EvdevFile {
         _reader: &mut VmReader,
         _status_flags: StatusFlags,
     ) -> Result<usize> {
-        // TODO: In Linux, writing to evdev files is permitted and will inject input events.
         Err(errno!(
             ENOSYS,
             "writing to evdev files is not supported yet"
@@ -465,36 +423,24 @@ impl PerOpenFileOps for EvdevFile {
                     .with_writer(|mut writer| handle_get_bit(&evdev, event_type, &mut writer))?;
             }
             cmd @ GetKeyState => {
-                // TODO: We need to track whether the key is currently pressed and report that state
-                // here. If we report states, we need to flush the queue to avoid interfering with the
-                // user space's state tracking. See the Linux implementation at:
-                // <https://elixir.bootlin.com/linux/v6.15/source/drivers/input/evdev.c#L872-L876>.
-                //
-                // Currently, no key state tracking is supported. So we report zeros as key states here.
                 cmd.with_writer(|mut writer| {
                     writer.fill_zeros(writer.avail())?;
                     Ok(())
                 })?;
             }
             cmd @ GetLedState => {
-                // No LED events are supported. So we can report zeros as LED states here.
                 cmd.with_writer(|mut writer| {
                     writer.fill_zeros(writer.avail())?;
                     Ok(())
                 })?;
             }
             cmd @ GetSwState => {
-                // No switch events are supported. So we can report zeros as switch states here.
                 cmd.with_writer(|mut writer| {
                     writer.fill_zeros(writer.avail())?;
                     Ok(())
                 })?;
             }
             _ => {
-                // Most ioctl implementations return `ENOTTY` for invalid ioctl commands, representing "The
-                // specified operation does not apply". However, according to the Linux implementation,
-                // evdev files return `EINVAL` in this case.
-                // Reference: <https://elixir.bootlin.com/linux/v6.17.8/source/drivers/input/evdev.c#L1251>
                 return Err(errno!(
                     EINVAL,
                     "the ioctl command is not supported by evdev files"

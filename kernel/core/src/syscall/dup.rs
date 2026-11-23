@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::SyscallReturn;
 use crate::{
     fs::file::file_table::{FdFlags, FileDesc, RawFileDesc, get_file_fast},

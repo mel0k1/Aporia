@@ -1,22 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Testing configfs by adding to it a top-level directory called `demo_set`,
-//! whose structure is illustrated as follows:
-//!
-//! ```
-//! configfs/
-//!     demo_set/
-//!         demo_foo/
-//!              attr_a
-//!              attr_b
-//!         demo_bar/
-//!              attr_a
-//!              attr_b
-//! ```
-//!
-//! The `demo_set` is initially empty. One can create directories to trigger creating an in-kernel object
-//! that represents a new demo. Each demo has two attributes called `attr_a` and `attr_b`.
-
 use alloc::{string::ToString, sync::Arc};
 use core::{
     fmt::Debug,
@@ -44,7 +25,6 @@ use crate::{
     time::clocks::init_for_ktest as time_init_for_ktest,
 };
 
-/// A demo subsystem for testing configfs functionality.
 #[derive(Debug)]
 struct DemoSet {
     fields: BranchNodeFields<DemoObject, Self>,
@@ -77,9 +57,6 @@ inherit_sys_branch_node!(DemoSet, fields, {
     }
 });
 
-/// A demo object that can be created dynamically in the configfs.
-///
-/// Each demo object has two configurable attributes: `attr_a` and `attr_b`.
 #[derive(Debug)]
 struct DemoObject {
     fields: NormalNodeFields<Self>,
@@ -145,8 +122,6 @@ inherit_sys_leaf_node!(DemoObject, fields, {
     }
 });
 
-// --- Test Setup ---
-
 static DEMO_SET_SUBSYSTEM: Once<Arc<DemoSet>> = Once::new();
 
 fn init_demo_subsystem() {
@@ -186,18 +161,13 @@ fn config_fs() {
     init_demo_subsystem();
     let config_fs = super::fs::ConfigFs::singleton();
 
-    // Access the root of configfs: /sys/kernel/config
     let root_inode = config_fs.root_inode();
 
-    // --- Navigate to demo_set directory ---
-    // path: /sys/kernel/config/demo_set
     let demo_set_inode = root_inode
         .lookup("demo_set")
         .expect("lookup demo_set failed");
     let demo_set_dentry = Dentry::new_root(demo_set_inode.clone());
 
-    // --- Create demo objects ---
-    // path: /sys/kernel/config/demo_set/demo_foo
     let demo_foo = demo_set_inode
         .create(
             &demo_set_dentry,
@@ -207,8 +177,6 @@ fn config_fs() {
         )
         .expect("creating demo 'demo_foo' fails");
 
-    // --- Verify the parent directory entry of demo_foo ---
-    // path: /sys/kernel/config/demo_set/demo_foo/.. -> /sys/kernel/config/demo_set
     let mut visitor = ParentDirentVisitor::default();
     demo_foo
         .readdir_at(0, &mut visitor)
@@ -219,7 +187,6 @@ fn config_fs() {
         "the .. dirent must report the parent directory's inode number"
     );
 
-    // path: /sys/kernel/config/demo_set/demo_bar
     let demo_bar = demo_set_inode
         .create(
             &demo_set_dentry,
@@ -229,13 +196,11 @@ fn config_fs() {
         )
         .expect("creating demo 'demo_bar' fails");
 
-    // --- Test attribute access for demo_foo ---
     let attr_a_foo = demo_foo.lookup("attr_a").expect("lookup attr_a failed");
     let attr_b_foo = demo_foo.lookup("attr_b").expect("lookup attr_b failed");
 
     let mut read_buffer: u32 = 0;
 
-    // Test attr_a read/write on demo_foo
     assert!(
         attr_a_foo
             .read_bytes_at(0, read_buffer.as_mut_bytes())
@@ -256,7 +221,6 @@ fn config_fs() {
     );
     assert_eq!(read_buffer, 42);
 
-    // Test attr_b read/write on demo_foo
     assert!(
         attr_b_foo
             .read_bytes_at(0, read_buffer.as_mut_bytes())
@@ -277,16 +241,14 @@ fn config_fs() {
     );
     assert_eq!(read_buffer, 100);
 
-    // --- Test attribute access for demo_bar ---
     let attr_a_bar = demo_bar.lookup("attr_a").expect("lookup attr_a failed");
 
-    // Verify that demo_bar has independent state from demo_foo
     assert!(
         attr_a_bar
             .read_bytes_at(0, read_buffer.as_mut_bytes())
             .is_ok()
     );
-    assert_eq!(read_buffer, 0); // Should be 0, not 42 like demo_foo
+    assert_eq!(read_buffer, 0);
 
     let write_value_bar: u32 = 200;
     assert!(
@@ -301,7 +263,6 @@ fn config_fs() {
     );
     assert_eq!(read_buffer, 200);
 
-    // Verify demo_foo's attr_a is still 42
     assert!(
         attr_a_foo
             .read_bytes_at(0, read_buffer.as_mut_bytes())

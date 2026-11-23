@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Four-level Intel extended page tables with tracked 4-KiB backing frames.
-
 use crate::mm::{
     Paddr, PageProperty, PagingConstsTrait, PagingLevel, PodOnce,
     page_prop::{CachePolicy, PageFlags, PageTableFlags, PrivilegedPageFlags as PrivFlags},
@@ -27,14 +23,11 @@ bitflags::bitflags! {
         const WRITABLE   = 1 << 1;
         const EXECUTABLE = 1 << 2;
 
-        // Ignore the guest PAT and use the EPT memory type if CR0.CD is clear.
         const IGNORE_PAT = 1 << 6;
 
         const ACCESSED   = 1 << 8;
         const DIRTY      = 1 << 9;
 
-        // Bits 11 and 56:52 are ignored by EPT hardware (Intel SDM, Vol. 3C,
-        // Section 29.3.2). Preserve OSTD metadata without granting access.
         const PRESENT    = 1 << 11;
         const AVAIL2     = 1 << 52;
         const USER       = 1 << 53;
@@ -45,7 +38,6 @@ bitflags::bitflags! {
     }
 }
 
-/// Parses a bit-flag bits `val` in the representation of `from` to `to` in bits.
 macro_rules! parse_flags {
     ($val:expr, $from:expr, $to:expr) => {
         (($val as usize & $from.bits() as usize) >> $from.bits().ilog2() << $to.bits().ilog2())
@@ -140,10 +132,6 @@ impl PageTableEntry {
 
 impl PodOnce for PageTableEntry {}
 
-// SAFETY: The implementation is safe because:
-//  - `from_usize` and `into_usize` are not overridden;
-//  - `from_repr` and `repr` are correctly implemented;
-//  - a zeroed PTE represents an absent entry.
 unsafe impl PteTrait for PageTableEntry {
     fn from_repr(repr: &PteScalar, level: PagingLevel) -> Self {
         match repr {

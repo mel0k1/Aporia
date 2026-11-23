@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 #![short_vis_path::add(vsock)]
 
 use core::sync::atomic::Ordering;
@@ -24,16 +22,11 @@ use crate::{
 };
 
 impl Connection {
-    /// Copies data from `reader` into TX packets and queues them for transmission.
-    ///
-    /// The method respects both peer receive credit and the connection's pending-byte budget. It
-    /// may return `EAGAIN` when either resource is exhausted.
     pub(in vsock) fn try_send(
         &mut self,
         reader: &mut dyn MultiRead,
         _flags: SendFlags,
     ) -> Result<usize> {
-        // See the comments in `try_recv` to know why we use a packet-pool approach here.
         let mut packet_pool = [const { None }; 8];
 
         let num_bytes = self.alloc_send_buffers(&mut packet_pool[..], reader.sum_lens())?;
@@ -41,12 +34,6 @@ impl Connection {
             return Ok(0);
         }
 
-        // TODO: If the user sends too many small packets, we'll exhaust a large amount of kernel
-        // memory. We need to support merging small packets to avoid this.
-
-        // Packets can only be sending to a `&mut connection`. Therefore, releasing the state
-        // lock does not cause race conditions. We need to release the lock in order to copy from
-        // userspace.
         Self::copy_to_send_buffers(&mut packet_pool[..], reader, num_bytes)?;
 
         self.build_and_send_tx_packets(&mut packet_pool[..])?;

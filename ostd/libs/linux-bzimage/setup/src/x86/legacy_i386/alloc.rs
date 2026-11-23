@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::{mem::MaybeUninit, ops::Range};
 
 use crate::sync::Mutex;
@@ -13,10 +11,6 @@ struct State {
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
 
-/// # Safety
-///
-/// The caller must ensure that the E820 entries in the boot parameters correctly represent the
-/// current memory map.
 pub(super) unsafe fn init(boot_params: &'static linux_boot_params::BootParams) {
     let mut state = STATE.lock();
 
@@ -39,7 +33,6 @@ pub(super) unsafe fn init(boot_params: &'static linux_boot_params::BootParams) {
         core::ptr::from_ref(boot_params).addr(),
         size_of::<linux_boot_params::BootParams>(),
     );
-    // No need to worry about `ext_*` addresses/sizes since we're 32-bit.
     used[2] = range_from_start_and_len(
         boot_params.hdr.cmd_line_ptr as usize,
         boot_params.hdr.cmdline_size as usize,
@@ -88,17 +81,9 @@ pub fn alloc_at(addr: usize, size: usize) -> &'static mut [MaybeUninit<u8>] {
     let empty = state
         .used
         .iter_mut()
-        // Use fully qualified syntax to avoid collisions with the unstable method
-        // `ExactSizeIterator::is_empty`. See <https://github.com/rust-lang/rust/issues/86682>.
         .find(|used| Range::is_empty(used))
         .expect("the allocated ranges are full");
     *empty = range;
 
-    // SAFETY:
-    // 1. The address is not zero and the size is reasonable (there are less the `isize::MAX` bytes
-    //    and the range won't overflow the address space), as asserted above.
-    // 2. The memory region is usable and just allocated, so it is valid for reading and writing.
-    //    We will not deallocate it, so it live for `'static`.
-    // 3. The type alignment is 1 and the type can contain uninitialized data.
     unsafe { core::slice::from_raw_parts_mut(addr as *mut MaybeUninit<u8>, size) }
 }

@@ -1,12 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! `FUSE_READDIR` reads directory entries from an open directory handle.
-//!
-//! The request body reuses [`ReadReq`] with the directory handle, offset, and
-//! maximum byte count. The reply body is a sequence of [`Dirent`] headers
-//! followed by 8-byte-padded names, and the operation returns decoded
-//! [`FuseDirEntry`] values.
-
 use alloc::{string::ToString, vec::Vec};
 
 use ostd::mm::{Infallible, VmReader, VmWriter};
@@ -17,7 +8,6 @@ use crate::{
     ReadReq, ReplyExpectation,
 };
 
-/// The maximum directory entry name bytes decoded in one FUSE record.
 const MAX_NAME_LEN: usize = 1024;
 
 pub struct ReaddirOperation {
@@ -61,7 +51,6 @@ impl ReaddirOperation {
                 name.to_string(),
             ));
 
-            // Each dirent is padded to 8-byte alignment.
             let dirent_len = size_of::<Dirent>() + namelen;
             let padded = (dirent_len + 7) & !7;
             let pad = padded - dirent_len;

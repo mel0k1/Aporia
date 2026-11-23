@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::{boxed::Box, sync::Arc};
 use core::fmt::Debug;
 
@@ -92,7 +90,6 @@ impl VirtioTransport for VirtioPciModernTransport {
             .write_u64(used_ring_ptr.daddr() as u64)
             .unwrap();
 
-        // Enable queue
         field_ptr!(&self.common_cfg, VirtioPciCommonCfg, queue_enable)
             .write_once(&1u16)
             .unwrap();
@@ -132,14 +129,12 @@ impl VirtioTransport for VirtioPciModernTransport {
     }
 
     fn read_device_features(&self) -> u64 {
-        // select low
         field_ptr!(&self.common_cfg, VirtioPciCommonCfg, device_feature_select)
             .write_once(&0u32)
             .unwrap();
         let device_feature_low = field_ptr!(&self.common_cfg, VirtioPciCommonCfg, device_features)
             .read_once()
             .unwrap();
-        // select high
         field_ptr!(&self.common_cfg, VirtioPciCommonCfg, device_feature_select)
             .write_once(&1u32)
             .unwrap();
@@ -245,7 +240,6 @@ impl VirtioTransport for VirtioPciModernTransport {
     }
 
     fn is_legacy_version(&self) -> bool {
-        // TODO: Support legacy version
         false
     }
 }
@@ -298,7 +292,6 @@ impl VirtioPciModernTransport {
         let common_cfg = common_cfg.unwrap();
         let device_cfg = device_cfg.unwrap();
 
-        // TODO: Support interrupt without MSI-X.
         let msix = common_device.acquire_msix_capability().unwrap().unwrap();
         let msix_manager = VirtioMsixManager::new(msix);
 

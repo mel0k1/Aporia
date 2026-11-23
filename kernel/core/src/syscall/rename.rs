@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::SyscallReturn;
 use crate::{
     fs::{
@@ -103,14 +101,9 @@ pub(super) fn sys_rename(
 }
 
 bitflags! {
-    /// Flags used in the `renameat2` system call.
-    ///
-    /// Reference: <https://elixir.bootlin.com/linux/v6.16.3/source/include/uapi/linux/fcntl.h#L140-L143>.
     #[derive(Clone, Copy, Debug)]
     struct Flags: u32 {
         const NOREPLACE = 1 << 0;
         const EXCHANGE  = 1 << 1;
-        // TODO: Add support for handling the `WHITEOUT` flag.
-        // const WHITEOUT  = 1 << 2;
     }
 }

@@ -1,17 +1,6 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! The test suite for web browsers applications on Asterinas NixOS.
-//!
-//! See `test/nixos/README.md#documentation-maintenance` for sync requirements
-//! between this test suite and the corresponding "Verified Usage" book section.
-
 use nixos_test_framework::*;
 
 nixos_test_main!();
-
-// ============================================================================
-// Browsers
-// ============================================================================
 
 #[nixos_test]
 fn firefox_screenshot_website(nixos_shell: &mut Session) -> Result<(), Error> {

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::ops::Range;
 
 use lending_iterator::prelude::*;
@@ -12,51 +10,6 @@ use crate::{
     prelude::*,
 };
 
-/// A cryptographically-protected chain of blocks.
-///
-/// `CryptoChain<L>` allows writing and reading a sequence of
-/// consecutive blocks securely to and from an untrusted storage of data log
-/// `L: BlockLog`.
-/// The target use case of `CryptoChain` is to implement secure journals,
-/// where old data are scanned and new data are appended.
-///
-/// # On-disk format
-///
-/// The on-disk format of each block is shown below.
-///
-/// ```text
-/// ┌─────────────────────┬───────┬──────────┬──────────┬──────────┬─────────┐
-/// │  Encrypted payload  │  Gap  │  Length  │  PreMac  │  CurrMac │   IV    │
-/// │(Length <= 4KB - 48B)│       │   (4B)   │  (16B)   │   (16B)  │  (12B)  │
-/// └─────────────────────┴───────┴──────────┴──────────┴──────────┴─────────┘
-///
-/// ◄─────────────────────────── Block size (4KB) ──────────────────────────►
-/// ```
-///
-/// Each block begins with encrypted user payload. The size of payload
-/// must be smaller than that of block size as each block ends with a footer
-/// (in plaintext).
-/// The footer consists of fours parts: the length of the payload (in bytes),
-/// the MAC of the previous block, the MAC of the current block, the IV used
-/// for encrypting the current block.
-/// The MAC of a block protects the encrypted payload, its length, and the MAC
-/// of the previous block.
-///
-/// # Security
-///
-/// Each `CryptoChain` is assigned a randomly-generated encryption key.
-/// Each block is encrypted using this key and a randomly-generated IV.
-/// This setup ensures the confidentiality of payload and even the same payloads
-/// result in different ciphertexts.
-///
-/// `CryptoChain` is called a "chain" of blocks because each block
-/// not only stores its own MAC, but also the MAC of its previous block.
-/// This effectively forms a "chain" (much like a blockchain),
-/// ensuring the orderness and consecutiveness of the sequence of blocks.
-///
-/// Due to this chain structure, the integrity of a `CryptoChain` can be ensured
-/// by verifying the MAC of the last block. Once the integrity of the last block
-/// is verified, the integrity of all previous blocks can also be verified.
 pub(crate) struct CryptoChain<L> {
     block_log: L,
     key: Key,
@@ -74,11 +27,8 @@ struct Footer {
 }
 
 impl<L: BlockLog> CryptoChain<L> {
-    /// The available size in each chained block is smaller than that of
-    /// the block size.
     pub(crate) const AVAIL_BLOCK_SIZE: usize = BLOCK_SIZE - size_of::<Footer>();
 
-    /// Construct a new `CryptoChain` using `block_log: L` as the storage.
     pub(crate) fn new(block_log: L) -> Self {
         Self {
             block_log,
@@ -88,26 +38,15 @@ impl<L: BlockLog> CryptoChain<L> {
         }
     }
 
-    /// Recover an existing `CryptoChain` backed by `block_log: L`,
-    /// starting from its `from` block.
     pub(crate) fn recover(key: Key, block_log: L, from: BlockId) -> Recovery<L> {
         Recovery::new(block_log, key, from)
     }
 
-    /// Read a block at a specified position.
-    ///
-    /// The length of the given buffer should not be smaller than payload_len
-    /// stored in `Footer`.
-    ///
-    /// # Security
-    ///
-    /// The authenticity of the block is guaranteed.
     pub(crate) fn read(&self, pos: BlockId, buf: &mut [u8]) -> Result<usize> {
         if !self.block_range().contains(&pos) {
             return_errno_with_msg!(NotFound, "read position is out of range");
         }
 
-        // Read block and get footer.
         let mut block_buf = Buf::alloc(1)?;
         self.block_log.read(pos, block_buf.as_mut())?;
         let footer: Footer = Pod::from_bytes(&block_buf.as_slice()[Self::AVAIL_BLOCK_SIZE..]);
@@ -117,13 +56,11 @@ impl<L: BlockLog> CryptoChain<L> {
             return_errno_with_msg!(OutOfDisk, "wrong payload_len or the read_buf is too small");
         }
 
-        // Check the footer MAC, to ensure the orderness and consecutiveness of blocks.
         let this_mac = self.block_macs.get(pos - self.block_range.start).unwrap();
         if footer.this_mac.as_bytes() != this_mac.as_bytes() {
             return_errno_with_msg!(NotFound, "check footer MAC failed");
         }
 
-        // Decrypt payload.
         let aead = Aead::new();
         aead.decrypt(
             &block_buf.as_slice()[..payload_len],
@@ -136,27 +73,18 @@ impl<L: BlockLog> CryptoChain<L> {
         Ok(payload_len)
     }
 
-    /// Append a block at the end.
-    ///
-    /// The length of the given buffer must not be larger than `AVAIL_BLOCK_SIZE`.
-    ///
-    /// # Security
-    ///
-    /// The confidentiality of the block is guaranteed.
     pub(crate) fn append(&mut self, buf: &[u8]) -> Result<()> {
         if buf.len() > Self::AVAIL_BLOCK_SIZE {
             return_errno_with_msg!(OutOfDisk, "append data is too large");
         }
         let mut block_buf = Buf::alloc(1)?;
 
-        // Encrypt payload.
         let aead = Aead::new();
         let this_iv = Iv::random();
         let pre_mac = self.block_macs.last().copied().unwrap_or_default();
         let output = &mut block_buf.as_mut_slice()[..buf.len()];
         let this_mac = aead.encrypt(buf, self.key(), &this_iv, &pre_mac, output)?;
 
-        // Store footer.
         let footer = Footer {
             len: buf.len() as _,
             pre_mac,
@@ -172,19 +100,11 @@ impl<L: BlockLog> CryptoChain<L> {
         Ok(())
     }
 
-    /// Ensures the persistence of data.
     pub(crate) fn flush(&self) -> Result<()> {
         self.block_log.flush()
     }
 
-    /// Trim the blocks before a specified position (exclusive).
-    ///
-    /// The purpose of this method is to free some memory used for keeping the
-    /// MACs of accessible blocks. After trimming, the range of accessible
-    /// blocks is shrunk accordingly.
     pub(crate) fn trim(&mut self, before_block: BlockId) {
-        // We must ensure the invariance that there is at least one valid block
-        // after trimming.
         debug_assert!(before_block < self.block_range.end);
 
         if before_block <= self.block_range.start {
@@ -196,31 +116,19 @@ impl<L: BlockLog> CryptoChain<L> {
         self.block_macs.drain(..num_blocks_trimmed);
     }
 
-    /// Returns the range of blocks that are accessible through the `CryptoChain`.
     pub(crate) fn block_range(&self) -> &Range<BlockId> {
         &self.block_range
     }
 
-    /// Returns the underlying block log.
     pub(crate) fn inner_log(&self) -> &L {
         &self.block_log
     }
 
-    /// Returns the encryption key of the `CryptoChain`.
     pub(crate) fn key(&self) -> &Key {
         &self.key
     }
 }
 
-/// `Recovery<L>` represents an instance `CryptoChain<L>` being recovered.
-///
-/// An object `Recovery<L>` attempts to recover as many valid blocks of
-/// a `CryptoChain` as possible. A block is valid if and only if its real MAC
-/// is equal to the MAC value recorded in its successor.
-///
-/// For the last block, which does not have a successor block, the user
-/// can obtain its MAC from `Recovery<L>` and verify the MAC by comparing it
-/// with an expected value from another trusted source.
 pub(crate) struct Recovery<L> {
     block_log: L,
     key: Key,
@@ -231,8 +139,6 @@ pub(crate) struct Recovery<L> {
 }
 
 impl<L: BlockLog> Recovery<L> {
-    /// Construct a new `Recovery` from the `first_block` of
-    /// `block_log: L`, using a cryptographic `key`.
     pub(crate) fn new(block_log: L, key: Key, first_block: BlockId) -> Self {
         Self {
             block_log,
@@ -244,30 +150,18 @@ impl<L: BlockLog> Recovery<L> {
         }
     }
 
-    /// Returns the number of valid blocks.
-    ///
-    /// Each success call to `next` increments the number of valid blocks.
     pub(crate) fn num_blocks(&self) -> usize {
         self.block_range.len()
     }
 
-    /// Returns the range of valid blocks.
-    ///
-    /// Each success call to `next` increments the upper bound by one.
     pub(crate) fn block_range(&self) -> &Range<BlockId> {
         &self.block_range
     }
 
-    /// Returns the MACs of valid blocks.
-    ///
-    /// Each success call to `next` pushes the MAC of the new valid block.
     pub(crate) fn block_macs(&self) -> &[Mac] {
         &self.block_macs
     }
 
-    /// Open a `CryptoChain<L>` from the recovery object.
-    ///
-    /// User should call `next` to  retrieve valid blocks as much as possible.
     pub(crate) fn open(self) -> CryptoChain<L> {
         CryptoChain {
             block_log: self.block_log,
@@ -288,7 +182,6 @@ impl<L: BlockLog> LendingIterator for Recovery<L> {
             .read(next_block_id, self.read_buf.as_mut())
             .ok()?;
 
-        // Deserialize footer.
         let footer: Footer =
             Pod::from_bytes(&self.read_buf.as_slice()[CryptoChain::<L>::AVAIL_BLOCK_SIZE..]);
         let payload_len = footer.len as usize;
@@ -296,7 +189,6 @@ impl<L: BlockLog> LendingIterator for Recovery<L> {
             return None;
         }
 
-        // Decrypt payload.
         let aead = Aead::new();
         aead.decrypt(
             &self.read_buf.as_slice()[..payload_len],
@@ -308,11 +200,6 @@ impl<L: BlockLog> LendingIterator for Recovery<L> {
         )
         .ok()?;
 
-        // Crypto blocks are chained: each block stores not only
-        // the MAC of its own, but also the MAC of its previous block.
-        // So we need to check whether the two MAC values are the same.
-        // There is one exception that the `pre_mac` of the first block
-        // is NOT checked.
         if self
             .block_macs()
             .last()

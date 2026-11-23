@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd::mm::VmIo;
 
 use super::{SyscallReturn, sched_getattr::LinuxSchedAttr, sched_setattr::update_sched_attr_with};

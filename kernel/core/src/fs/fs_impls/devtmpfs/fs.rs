@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Filesystem registration and the singleton tmpfs backing for devtmpfs.
-
 use spin::Once;
 
 use crate::{
@@ -20,10 +16,6 @@ pub(in crate::fs) fn singleton() -> &'static Arc<TmpFs> {
     static SINGLETON: Once<Arc<TmpFs>> = Once::new();
 
     SINGLETON.call_once(|| {
-        // devtmpfsd creates and deletes device nodes from a kernel thread,
-        // outside the VFS path operation that may have cached the dentry.
-        // Revalidate directory entries so cached positive/negative dentries
-        // reflect the latest devtmpfs tree.
         TmpFs::new_tmpfs_backing(
             "devtmpfs",
             RevalidationPolicy::REVALIDATE_EXISTS | RevalidationPolicy::REVALIDATE_ABSENT,

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::borrow::ToOwned;
 
 use aster_block::{BLOCK_SIZE, BlockDevice, SECTOR_SIZE, bio::BioStatus};
@@ -30,7 +28,6 @@ pub(super) fn init_in_first_kthread() {
             continue;
         }
 
-        // Spawn threads for virtio block devices
         if device.downcast_ref::<VirtIoBlockDevice>().is_some() {
             let device_clone = device.clone();
             let task_fn = move || {
@@ -41,9 +38,7 @@ pub(super) fn init_in_first_kthread() {
                 }
             };
             ThreadOptions::new(task_fn).spawn();
-        }
-        // Spawn threads for NVMe block devices
-        else if device.downcast_ref::<NvmeBlockDevice>().is_some() {
+        } else if device.downcast_ref::<NvmeBlockDevice>().is_some() {
             let device_clone = device.clone();
             let task_fn = move || {
                 info!("spawn the nvme-block thread");
@@ -56,8 +51,6 @@ pub(super) fn init_in_first_kthread() {
         }
     }
 
-    // Partition scanning performs synchronous block I/O, so the request
-    // handling threads above must be available first.
     aster_block::scan_partitions();
 }
 
@@ -78,32 +71,11 @@ mod ioctl_defs {
         util::ioctl::{NoData, OutData},
     };
 
-    // Reference: <https://elixir.bootlin.com/linux/v6.18/source/include/uapi/linux/fs.h>
-
-    /// Returns the device size in bytes.
     pub(super) type BlkGetSize64 = ioc!(BLKGETSIZE64, 0x12, 114, OutData<u64>);
 
-    /// Returns the logical sector size of the block device.
-    ///
-    /// This is the smallest unit of I/O the device can address and,
-    /// importantly, the minimum alignment required for `O_DIRECT` I/O on
-    /// files backed by this device. Both buffer address and offset must be a
-    /// multiple of this value.
-    ///
-    /// Benchmarks and filesystem tests (for example, `xfstests`, LTP
-    /// `preadv03`/`pwritev03`) rely on this ioctl to size `O_DIRECT` buffers.
-    /// If the effective alignment enforced by the filesystem layered on top
-    /// is larger than the hardware sector, such as `ext2`'s 4 KiB block, this
-    /// ioctl must return that larger value. Otherwise user programs will align
-    /// correctly for the device but still hit `EINVAL` at the filesystem.
     pub(super) type BlkGetSectorSize = ioc!(BLKSSZGET, 0x12, 104, NoData);
 }
 
-/// Represents a block device inode in the filesystem.
-//
-// TODO: This type wraps an `Arc<dyn BlockDevice>` in another `Arc` just to implement the `Device`
-// trait. It leads to redundant vtable dispatch, reference counting, and heap allocation. We should
-// devise a better strategy to eliminate the unnecessary intermediate `Arc`.
 #[derive(Debug)]
 struct BlockFile(Arc<dyn BlockDevice>);
 
@@ -131,11 +103,6 @@ impl Device for BlockFile {
     }
 }
 
-/// Represents an opened block device file ready for I/O operations.
-//
-// TODO: This type wraps an `Arc<dyn BlockDevice>` in another `Box` just to implement the
-// `PerOpenFileOps` trait. It leads to redundant vtable dispatch and heap allocation. We should
-// devise a better strategy to eliminate the unnecessary intermediate `Box`.
 struct OpenBlockFile(Arc<dyn BlockDevice>);
 
 impl FileOps for OpenBlockFile {
@@ -181,8 +148,6 @@ impl FileOps for OpenBlockFile {
 
         let write_len = total.min(device_size - offset);
         {
-            // `VmIo::write` does not allow short writes,
-            // so the reader must be precisely limited here.
             let mut limited_reader = reader.clone();
             limited_reader.limit(write_len);
             self.0.write(offset, &mut limited_reader)?;
@@ -217,10 +182,6 @@ impl PerOpenFileOps for OpenBlockFile {
 
         dispatch_ioctl!(match raw_ioctl {
             _cmd @ BlkGetSectorSize => {
-                // TODO: Query the per-device logical block size once block device metadata
-                // exposes it. For now, report the effective minimum I/O granularity enforced
-                // by Asterinas filesystems so userspace can use `BLKSSZGET` for `O_DIRECT`
-                // alignment.
                 let sector_size = SECTOR_SIZE.max(BLOCK_SIZE) as i32;
                 current_userspace!().write_val(raw_ioctl.arg(), &sector_size)?;
                 Ok(0)
@@ -243,8 +204,6 @@ impl PerOpenFileOps for OpenBlockFile {
 
     fn sync(&self, _mode: SyncMode) -> Result<()> {
         match self.0.sync()? {
-            // Linux treats an unsupported block-device flush as success.
-            // Reference: <https://github.com/torvalds/linux/blob/v6.16/block/fops.c#L609-L611>
             BioStatus::Complete | BioStatus::NotSupported => Ok(()),
             status @ (BioStatus::NoSpace | BioStatus::IoError) => Err(status.into()),
             BioStatus::Init | BioStatus::Submit | BioStatus::Zeros => {
@@ -265,6 +224,4 @@ pub(super) fn lookup(id: DeviceId) -> Option<Arc<dyn Device>> {
     Some(block_device_file)
 }
 
-// TODO: Merge the two mapping tables, one is here and the other is in the block component.
-// Maintaining two mapping tables is undesirable due to duplication and (potential) inconsistency.
 static DEVICE_REGISTRY: Mutex<BTreeMap<u32, Arc<dyn Device>>> = Mutex::new(BTreeMap::new());

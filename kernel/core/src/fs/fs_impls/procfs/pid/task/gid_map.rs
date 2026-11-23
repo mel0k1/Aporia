@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use aster_util::printer::VmPrinter;
 
 use super::TidDirOps;
@@ -14,12 +12,10 @@ use crate::{
     thread::Thread,
 };
 
-/// Represents the inode at `/proc/[pid]/task/[tid]/gid_map` (and also `/proc/[pid]/gid_map`).
 pub(super) struct GidMapFileOps(TidDirOps);
 
 impl GidMapFileOps {
     pub(super) fn new_inode(dir: &TidDirOps, parent: Weak<dyn Inode>) -> Arc<dyn Inode> {
-        // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/fs/proc/base.c#L3403>
         ProcFile::new(Self(dir.clone()), parent, mkmod!(a+r, u+w))
     }
 }
@@ -32,9 +28,6 @@ impl ProcFileOps for GidMapFileOps {
     fn read_at(&self, offset: usize, writer: &mut VmWriter) -> Result<usize> {
         let mut printer = VmPrinter::new_skip(writer, offset);
 
-        // This is the default GID map for the initial user namespace.
-        // TODO: Retrieve the GID map from the user namespace of the current process
-        // instead of returning this hard-coded value.
         writeln!(
             printer,
             "{:>10} {:>10} {:>10}",

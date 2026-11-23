@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 #![expect(dead_code)]
 
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -9,7 +7,6 @@ use ostd::cpu::{CpuId, CpuSet};
 
 use crate::prelude::*;
 
-/// A task to be executed by a worker thread.
 pub(crate) struct WorkItem {
     work_func: Box<dyn Fn() + Send + Sync>,
     cpu_affinity: CpuSet,

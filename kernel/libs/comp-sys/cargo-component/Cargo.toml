@@ -8,7 +8,6 @@ build = "build.rs"
 members = ["analysis"]
 resolver = "3"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [[bin]]
 name = "cargo-component"
@@ -27,5 +26,4 @@ analysis = { path = "analysis" }
 rustc_tools_util = "0.3.0"
 
 [package.metadata.rust-analyzer]
-# This package uses #[feature(rustc_private)]
 rustc_private = true

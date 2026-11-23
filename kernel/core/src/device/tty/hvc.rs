@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::format;
 
 use aster_console::AnyConsoleDevice;
@@ -16,14 +14,12 @@ use crate::{
     prelude::*,
 };
 
-/// The driver for hypervisor console devices.
 #[derive(Clone)]
 pub(super) struct HvcDriver {
     console: Arc<dyn AnyConsoleDevice>,
 }
 
 impl TtyDriver for HvcDriver {
-    // Reference: <https://elixir.bootlin.com/linux/v6.17/source/Documentation/admin-guide/devices.txt#L2936>.
     const DEVICE_MAJOR_ID: u32 = 229;
 
     fn devtmpfs_meta(&self, index: u32) -> Option<DevtmpfsNodeMeta> {
@@ -54,17 +50,12 @@ impl TtyDriver for HvcDriver {
 
 static HVC0: Once<Arc<Tty<HvcDriver>>> = Once::new();
 
-/// Returns the `hvc0` device.
-///
-/// Returns `None` if the device is not found nor initialized.
 pub(super) fn hvc0_device() -> Option<&'static Arc<Tty<HvcDriver>>> {
     HVC0.get()
 }
 
 pub(super) fn init_in_first_process() -> Result<()> {
     let devices = aster_console::all_devices();
-
-    // Initialize the `hvc0` device if the virtio console is available.
 
     let virtio_console = devices
         .iter()

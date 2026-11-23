@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use aster_bigtcp::{
     socket::{NeedIfacePoll, RawTcpOption, RawTcpSetOption},
     time::Duration,
@@ -57,9 +55,6 @@ pub(crate) mod options;
 mod util;
 
 pub(crate) struct StreamSocket {
-    // Lock order: `state` first, `options` second
-    // FIXME: We perform userspace reads/writes when holding the spin locks (e.g., this state lock
-    // and other locks in `aster-bigtcp`), which will break the atomic mode.
     state: RwLock<Takeable<State>>,
     family: IpAddressFamily,
     options: RwLock<OptionSet>,
@@ -70,13 +65,9 @@ pub(crate) struct StreamSocket {
 }
 
 enum State {
-    // Start state
     Init(InitStream),
-    // Intermediate state
     Connecting(ConnectingStream),
-    // Final State 1
     Connected(ConnectedStream),
-    // Final State 2
     Listen(ListenStream),
 }
 
@@ -128,16 +119,6 @@ impl StreamSocket {
         let options = connected_stream.raw_with(|raw_tcp_socket| {
             let mut options = OptionSet::new();
 
-            // Inherit socket options from `raw_tcp_socket` first, then fall
-            // back to `listener_options` for options the raw socket cannot
-            // expose.
-            //
-            // The raw socket is created when a connection arrives, before
-            // `accept()` returns it. If the listener's options are changed
-            // after that but before `accept()` returns, using only
-            // `listener_options` would give the accepted socket "new" options
-            // while its raw socket still has the "old" ones.
-
             if let Some(interval) = raw_tcp_socket.keep_alive() {
                 options.socket.set_keep_alive(true);
                 options.tcp.set_keep_intvl(interval.secs() as u32);
@@ -150,8 +131,6 @@ impl StreamSocket {
             if !raw_tcp_socket.nagle_enabled() {
                 options.tcp.set_no_delay(true);
             }
-
-            // TODO: Update other options for a newly-accepted socket
 
             options
         });
@@ -169,9 +148,6 @@ impl StreamSocket {
         })
     }
 
-    /// Ensures that the socket state is up to date and obtains a read lock on it.
-    ///
-    /// For a description of what "up-to-date" means, see [`Self::write_updated_state`].
     fn read_updated_state(&self) -> RwLockReadGuard<'_, Takeable<State>, PreemptDisabled> {
         loop {
             let state = self.state.read();
@@ -185,15 +161,6 @@ impl StreamSocket {
         }
     }
 
-    /// Ensures that the socket state is up to date and obtains a write lock on it.
-    ///
-    /// A connecting socket can become obsolete because some network events can set the socket to
-    /// connected state (if the connection succeeds) or initial state (if the connection is
-    /// refused) in [`Self::check_io_events`], but the state transition is delayed until the user
-    /// operates on the socket to avoid too many locks in the interrupt handler.
-    ///
-    /// This method performs the delayed state transition to ensure that the state is up to date
-    /// and returns the guard of the write-locked state.
     fn write_updated_state(&self) -> RwLockWriteGuard<'_, Takeable<State>, PreemptDisabled> {
         let mut state = self.state.write();
 
@@ -217,8 +184,6 @@ impl StreamSocket {
         state
     }
 
-    // Returns `None` to block the task and wait for the connection to be established, and returns
-    // `Some(_)` if blocking is not necessary or not allowed.
     fn start_connect(&self, remote_endpoint: &IpEndpoint) -> Option<Result<()>> {
         let is_nonblocking = self.is_nonblocking();
 
@@ -268,8 +233,6 @@ impl StreamSocket {
                     (State::Connecting(connecting_stream), Some(iface_to_poll))
                 }
                 Err((err, init_stream)) if err.error() == Errno::ECONNREFUSED => {
-                    // `ECONNREFUSED` should be reported asynchronously, i.e., we need to return
-                    // `EINPROGRESS` first for non-blocking sockets.
                     (State::Init(init_stream), None)
                 }
                 Err((err, init_stream)) => {
@@ -382,8 +345,6 @@ impl StreamSocket {
                 return Err(errno!(EPIPE, "the socket is not connected"));
             }
             State::Connecting(_) => {
-                // FIXME: Linux indeed allows data to be buffered at this point. Can we do
-                // something similar?
                 return Err(errno!(EAGAIN, "the socket is connecting"));
             }
         };
@@ -439,16 +400,10 @@ impl SocketPrivate for StreamSocket {
     }
 
     fn protocol_ioctl(&self, raw_ioctl: RawIoctl) -> Result<i32> {
-        // Handle common IPv4/IPv6 ioctl commands.
         match self.family {
             IpAddressFamily::IPv4 => ipv4_ioctl(raw_ioctl),
-            IpAddressFamily::IPv6 => {
-                // TODO: Add support for IPv6 ioctl commands.
-                Err(errno!(ENOTTY, "the socket ioctl command is unknown"))
-            }
+            IpAddressFamily::IPv6 => Err(errno!(ENOTTY, "the socket ioctl command is unknown")),
         }
-
-        // Handle ioctl commands that require TCP-specific handling.
     }
 }
 
@@ -532,13 +487,10 @@ impl Socket for StreamSocket {
                 connected_stream.shutdown(cmd, &self.pollee),
                 connected_stream.iface().clone(),
             ),
-            // TODO: shutdown listening stream
             _ => return Err(errno!(EINVAL, "cannot shutdown")),
         };
 
         drop(state);
-        // No need to call `Pollee::invalidate` because `ConnectedStream::shutdown` will call
-        // `Pollee::notify`.
         iface_to_poll.poll();
 
         result
@@ -565,13 +517,6 @@ impl Socket for StreamSocket {
             }
             State::Connecting(connecting_stream) => connecting_stream.remote_endpoint(),
             State::Connected(connected_stream) => {
-                // `getpeername()` fails on a closed connection.
-                // Reference: <https://elixir.bootlin.com/linux/v7.1/source/net/ipv4/af_inet.c#L820>.
-                //
-                // Linux checks for TCP_CLOSE. We also reject smoltcp's TIME_WAIT state because
-                // Linux moves TIME_WAIT handling to a separate socket and sets the original
-                // socket to TCP_CLOSE. smoltcp keeps TIME_WAIT on the original socket.
-                // Reference: <https://elixir.bootlin.com/linux/v7.1/source/net/ipv4/tcp_minisocks.c#L393>.
                 if !connected_stream.raw_with(|socket| socket.is_open()) {
                     return Err(errno!(ENOTCONN, "the socket is not connected"));
                 }
@@ -587,7 +532,6 @@ impl Socket for StreamSocket {
         message_header: MessageHeader,
         flags: SendFlags,
     ) -> Result<usize> {
-        // TODO: Deal with flags
         if !flags.is_all_supported() {
             warn!("unsupported flags: {:?}", flags);
         }
@@ -596,20 +540,13 @@ impl Socket for StreamSocket {
             control_messages, ..
         } = message_header;
 
-        // According to the Linux man pages, `EISCONN` _may_ be returned when the destination
-        // address is specified for a connection-mode socket. In practice, the destination address
-        // is simply ignored. We follow the same behavior as the Linux implementation to ignore it.
-
         if !control_messages.is_empty() {
-            // TODO: Support sending control message
             warn!("sending control message is not supported");
         }
 
         self.block_on(IoEvents::OUT, self.timeouts.send_timeout(), || {
             self.try_send(reader, flags)
         })
-
-        // TODO: Trigger `SIGPIPE` if the error code is `EPIPE` and `MSG_NOSIGNAL` is not specified
     }
 
     fn recvmsg(
@@ -617,7 +554,6 @@ impl Socket for StreamSocket {
         writer: &mut dyn MultiWrite,
         flags: RecvFlags,
     ) -> Result<(RecvOutput, MessageHeader)> {
-        // TODO: Deal with flags
         if !flags.is_all_supported() {
             warn!("unsupported flags: {:?}", flags);
         }
@@ -627,10 +563,6 @@ impl Socket for StreamSocket {
                 self.try_recv(writer, flags)
             })?;
 
-        // TODO: Receive control message
-
-        // According to <https://elixir.bootlin.com/linux/v6.0.9/source/net/ipv4/tcp.c#L2645>,
-        // peer address is ignored for connected socket.
         let message_header = MessageHeader::new(None, Vec::new());
 
         Ok((RecvOutput::new_for_stream(received_bytes), message_header))
@@ -648,7 +580,6 @@ impl Socket for StreamSocket {
         let state = self.read_updated_state();
         let options = self.options.read();
 
-        // Deal with socket-level options
         match options
             .socket
             .get_option(option, &(state.as_ref(), &self.timeouts))
@@ -657,15 +588,11 @@ impl Socket for StreamSocket {
             res => return res,
         }
 
-        // Deal with IP-level options
         match options.ip.get_option(option) {
             Err(err) if err.error() == Errno::ENOPROTOOPT => (),
             res => return res,
         }
 
-        // Deal with TCP-level options
-        // FIXME: Here we only return the previously set values, without actually
-        // asking the underlying sockets for the real, effective values.
         sock_option_mut!(match option {
             tcp_no_delay @ NoDelay => {
                 let no_delay = options.tcp.no_delay();
@@ -673,12 +600,6 @@ impl Socket for StreamSocket {
             }
             tcp_maxseg @ MaxSegment => {
                 const DEFAULT_MAX_SEGMEMT: u32 = 536;
-                // For an unconnected socket,
-                // older Linux versions (e.g., v6.0) return
-                // the default MSS value defined above.
-                // However, newer Linux versions (e.g., v6.11)
-                // return the user-set MSS value if it is set.
-                // Here, we adopt the behavior of the latest Linux versions.
                 let maxseg = options.tcp.maxseg();
                 if maxseg == 0 {
                     tcp_maxseg.set(DEFAULT_MAX_SEGMEMT);
@@ -733,7 +654,6 @@ impl Socket for StreamSocket {
         let mut state = self.write_updated_state();
         let mut options = self.options.write();
 
-        // Deal with socket-level options
         let socket_option_result = {
             let OptionSet { socket, tcp, .. } = &mut *options;
             socket.set_option(option, &(state.as_ref(), &*tcp, &self.timeouts))
@@ -741,10 +661,8 @@ impl Socket for StreamSocket {
 
         let need_iface_poll = match socket_option_result {
             Err(err) if err.error() == Errno::ENOPROTOOPT => {
-                // Deal with IP-level options
                 match options.ip.set_option(option, state.as_ref()) {
                     Err(err) if err.error() == Errno::ENOPROTOOPT => {
-                        // Deal with TCP-level options
                         do_tcp_setsockopt(option, &mut options, state.as_mut())?
                     }
                     Err(err) => return Err(err),
@@ -804,11 +722,8 @@ fn do_tcp_setsockopt(
                 return Err(errno!(EINVAL, "the keep idle time is out of bounds"));
             }
             options.tcp.set_keep_idle(*keepidle);
-
-            // TODO: Track when the socket becomes idle to actually support keep idle.
         }
         tcp_keep_intvl @ KeepIntvl => {
-            // Reference: <https://elixir.bootlin.com/linux/v6.13/source/include/net/tcp.h#L168>
             const MIN_KEEP_INTVL: u32 = 1;
             const MAX_KEEP_INTVL: u32 = 32767;
 
@@ -821,7 +736,6 @@ fn do_tcp_setsockopt(
             return Ok(state.set_keep_alive(options.socket.keep_alive(), *keepintvl));
         }
         tcp_keep_cnt @ KeepCnt => {
-            // Reference: <https://elixir.bootlin.com/linux/v6.13/source/include/net/tcp.h#L169>
             const MIN_KEEP_CNT: u8 = 1;
             const MAX_KEEP_CNT: u8 = 127;
 
@@ -830,8 +744,6 @@ fn do_tcp_setsockopt(
                 return Err(errno!(EINVAL, "the keepalive count is out of bounds"));
             }
             options.tcp.set_keep_cnt(*keepcnt);
-
-            // TODO: Track the keepalive count in the underlying TCP socket.
         }
         tcp_syn_cnt @ SynCnt => {
             const MAX_TCP_SYN_CNT: u8 = 127;
@@ -885,10 +797,6 @@ fn do_tcp_setsockopt(
 }
 
 impl State {
-    /// Calls `f` to set raw socket option.
-    ///
-    /// For listening sockets, socket options are inherited by new connections. However, they are
-    /// not updated for connections in the backlog queue.
     fn set_raw_option<R>(&self, set_option: impl FnOnce(&dyn RawTcpSetOption) -> R) -> Option<R> {
         match self {
             State::Init(_) => None,
@@ -920,8 +828,6 @@ impl State {
             }
             State::Connecting(connecting_stream) => connecting_stream.bound_port(),
             State::Connected(connected_stream) => connected_stream.bound_port(),
-            // Setting a listening address as reusable has no effect,
-            // since no other sockets can bind to a listening port.
             State::Listen(_) => return,
         };
 

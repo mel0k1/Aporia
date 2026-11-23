@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 mod table;
 
 use core::fmt::Debug;
@@ -54,14 +52,12 @@ pub(in crate::arch) fn alloc_irt_entry() -> Option<IrtEntryHandle> {
 pub(super) fn init() {
     let mut iommu_regs = IOMMU_REGS.get().unwrap().lock();
 
-    // Check if interrupt remapping is supported
     let extend_cap = iommu_regs.read_extended_capability();
     if !extend_cap.flags().contains(ExtendedCapabilityFlags::IR) {
         warn!("Interrupt remapping not supported");
         return;
     }
 
-    // Create interrupt remapping table
     REMAPPING_TABLE.call_once(IntRemappingTable::new);
     iommu_regs.enable_interrupt_remapping(REMAPPING_TABLE.get().unwrap());
 

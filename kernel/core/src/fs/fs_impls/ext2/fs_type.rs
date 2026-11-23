@@ -1,10 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! VFS filesystem-type registration for ext2.
-//!
-//! `Ext2Type` implements the `FsType` trait so the VFS layer can
-//! discover and mount ext2 volumes by name (`"ext2"`).
-
 use aster_systree::SysNode;
 use device_id::DeviceId;
 
@@ -14,12 +7,10 @@ use crate::fs::vfs::{
     registry::{FsCache, FsCreationCtx, FsProperties, FsType},
 };
 
-/// VFS-visible Ext2 filesystem type.
 pub(in crate::fs) struct Ext2Type {
     cache: FsCache<DeviceId>,
 }
 
-/// The VFS filesystem type descriptor for Ext2.
 pub(in crate::fs) static EXT2_TYPE: Ext2Type = Ext2Type {
     cache: FsCache::new(),
 };

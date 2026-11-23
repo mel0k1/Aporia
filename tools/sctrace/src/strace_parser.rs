@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use std::{cell::RefCell, collections::HashMap, error::Error, fmt};
 
 use nom::{
@@ -13,7 +11,6 @@ use nom::{
 };
 
 thread_local! {
-    /// Storage for blocked syscalls by PID in multi-threaded strace output.
     static BLOCKED_SYSCALL: RefCell<HashMap<u32, String>> = RefCell::new(HashMap::new());
 }
 
@@ -44,7 +41,6 @@ impl fmt::Display for StraceParseError {
 
 impl Error for StraceParseError {}
 
-/// Syscall representation parsed from strace output.
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) struct Syscall<'a> {
     pid: u32,
@@ -55,7 +51,6 @@ pub(crate) struct Syscall<'a> {
 }
 
 impl<'a> Syscall<'a> {
-    /// Fetches and preprocesses a strace line before parsing.
     pub(crate) fn fetch(line: String) -> Result<String, StraceParseError> {
         let trimmed = line.as_str().trim();
 
@@ -63,17 +58,14 @@ impl<'a> Syscall<'a> {
             return Err(StraceParseError::EmptyLine);
         }
 
-        // Skip signal lines
         if Self::parse_signal_line(trimmed).is_ok() {
             return Err(StraceParseError::SignalLine);
         }
 
-        // Skip exit status lines
         if Self::parse_exit_line(trimmed).is_ok() {
             return Err(StraceParseError::ExitLine);
         }
 
-        // Save blocked syscalls for later reconstruction
         if let Ok((_, (pid, str))) = Self::parse_multithread_blocked(trimmed) {
             BLOCKED_SYSCALL.with(|blocked| {
                 blocked.borrow_mut().insert(pid, str);
@@ -91,7 +83,6 @@ impl<'a> Syscall<'a> {
         Ok(line)
     }
 
-    /// Parses a single line of strace output into a Syscall.
     pub(crate) fn parse(input: &'a str) -> Result<Self, StraceParseError> {
         let trimmed = input.trim();
 
@@ -137,32 +128,23 @@ impl<'a> Syscall<'a> {
 
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) enum SyscallArg<'a> {
-    /// Integer argument represented as a string.
     Integer(&'a str),
 
-    /// Quoted string argument.
     String(&'a str),
 
-    /// Unquoted flag argument.
     Flag(&'a str),
 
-    /// File descriptor with absolute path.
     FdPath(&'a str),
 
-    /// Combination of flags and/or integer values.
     Flags(SyscallFlagSet<'a>),
 
-    /// Structured data represented as key-value pairs.
     Struct(SyscallStruct<'a>),
 
-    /// Array of syscall arguments.
     Array(SyscallArray<'a>),
 
-    /// Argument is ignored.
     Ignored,
 }
 
-/// Wrapper for arrays of syscall arguments.
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) struct SyscallArray<'a>(Vec<SyscallArg<'a>>);
 
@@ -176,7 +158,6 @@ impl<'a> SyscallArray<'a> {
     }
 }
 
-/// Wrapper for flag sets with restricted element types.
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) struct SyscallFlagSet<'a>(Vec<SyscallArg<'a>>);
 
@@ -186,8 +167,6 @@ impl<'a> SyscallFlagSet<'a> {
     }
 
     fn new(flags: Vec<SyscallArg<'a>>) -> Result<Self, StraceParseError> {
-        // Validates that all elements are either `Flag` or `Integer` types,
-        // as these are the only valid types for flag combinations.
         for flag in &flags {
             match flag {
                 SyscallArg::Flag(_) | SyscallArg::Integer(_) => {}
@@ -203,7 +182,6 @@ impl<'a> SyscallFlagSet<'a> {
     }
 }
 
-/// Wrapper for structured data represented as key-value pairs.
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) struct SyscallStruct<'a>(HashMap<&'a str, SyscallArg<'a>>);
 
@@ -256,7 +234,6 @@ impl Syscall<'_> {
     }
 
     fn parse_arg(input: &str) -> IResult<&str, SyscallArg<'_>> {
-        // Skip parameter's name
         let (input, _) = opt(terminated(
             take_while1(|c: char| c.is_ascii_alphanumeric() || c == '_'),
             char('='),
@@ -274,14 +251,12 @@ impl Syscall<'_> {
             Self::parse_flags,
         ))(input)?;
 
-        // Skip comment
         let (input, _) = opt(delimited(
             delimited(space0, tag("/*"), space0),
             take_until("*/"),
             tag("*/"),
         ))(input)?;
 
-        // Skip output parameter with arrow
         let (input, _) = opt(preceded(
             delimited(space0, tag("=>"), space0),
             Self::parse_arg,
@@ -290,7 +265,6 @@ impl Syscall<'_> {
         Ok((input, arg))
     }
 
-    /// Parses a file descriptor or `AT_FDCWD` with absolute path argument.
     fn parse_fd_path(input: &str) -> IResult<&str, SyscallArg<'_>> {
         let (input, _fd) =
             alt((tag("AT_FDCWD"), take_while1(|c: char| c.is_ascii_digit())))(input)?;
@@ -299,7 +273,6 @@ impl Syscall<'_> {
         Ok((input, SyscallArg::FdPath(path)))
     }
 
-    /// Parses content within angle brackets, handling nested brackets and arrows.
     fn parse_angle_bracket_content(input: &str) -> IResult<&str, &str> {
         let (input, _) = char::<&str, nom::error::Error<&str>>('<')(input)?;
 
@@ -311,10 +284,7 @@ impl Syscall<'_> {
             match ch {
                 '<' => depth += 1,
                 '>' => {
-                    // Check if this is part of '->' arrow
-                    // Look back to see if previous char was '-'
                     if i > 0 && input.as_bytes().get(i - 1) == Some(&b'-') {
-                        // This '>' is part of '->', not a closing bracket
                         continue;
                     }
 
@@ -340,19 +310,17 @@ impl Syscall<'_> {
         Ok((remaining, content))
     }
 
-    /// Parses a quoted string argument.
     fn parse_quoted_string(input: &str) -> IResult<&str, SyscallArg<'_>> {
         map(
             tuple((
-                opt(char('@')), // Optional @ prefix
+                opt(char('@')),
                 delimited(char('"'), Self::take_until_unescaped_quote, char('"')),
-                opt(tag("...")), // Optional ... suffix
+                opt(tag("...")),
             )),
             |(_, content, _)| SyscallArg::String(content),
         )(input)
     }
 
-    /// Helper to take characters until an unescaped quote is found.
     fn take_until_unescaped_quote(input: &str) -> IResult<&str, &str> {
         let chars = input.char_indices();
         let mut last_was_escape = false;
@@ -381,21 +349,14 @@ impl Syscall<'_> {
     }
 
     fn parse_number(input: &str) -> IResult<&str, SyscallArg<'_>> {
-        // Supports negative numbers and arithmetic operations like left shift
-        // and multiplication.
-        //
-        // First, check if this looks like `number<<FLAG` pattern
-        // If so, fail early to let other parsers handle it
         if let Ok((remaining, _)) =
             recognize::<_, _, nom::error::Error<&str>, _>(tuple((digit1, tag("<<"))))(input)
         {
-            // Check if what follows is an identifier (not a digit)
             if peek(take_while1::<_, _, nom::error::Error<&str>>(|c: char| {
                 c.is_ascii_alphabetic() || c == '_'
             }))(remaining)
             .is_ok()
             {
-                // This is `number<<FLAG` format, reject it
                 return Err(nom::Err::Error(nom::error::Error::new(
                     input,
                     nom::error::ErrorKind::Verify,
@@ -414,7 +375,6 @@ impl Syscall<'_> {
     }
 
     fn parse_flags(input: &str) -> IResult<&str, SyscallArg<'_>> {
-        // Flags can be separated by `|` or ` or `
         map(
             separated_list1(
                 alt((tag(" or "), tag("|"))),
@@ -429,9 +389,6 @@ impl Syscall<'_> {
     }
 
     fn parse_unquoted_flag(input: &str) -> IResult<&str, SyscallArg<'_>> {
-        // Flags are symbolic constants that may optionally include:
-        // - Parenthetical parameters: `FLAG(param)`
-        // - Left shift operations: `FLAG<<2` and `1<<FLAG`
         alt((
             map(
                 recognize(tuple((
@@ -460,7 +417,6 @@ impl Syscall<'_> {
     }
 
     fn parse_mask(input: &str) -> IResult<&str, SyscallArg<'_>> {
-        // Parse the format like `~[flags]`
         value(
             SyscallArg::Ignored,
             delimited(tag("~["), take_until("]"), char(']')),
@@ -534,15 +490,10 @@ impl Syscall<'_> {
     }
 
     fn parse_none(input: &str) -> IResult<&str, SyscallArg<'_>> {
-        // Parse the format like:
-        //     func(arg1, , arg3)
-        //     func(arg1,)
         value(SyscallArg::Ignored, recognize(peek(char(','))))(input)
     }
 
     fn parse_signal_line(input: &str) -> IResult<&str, ()> {
-        // Parse the format like:
-        //     --- SIGTERM {si_signo=SIGTERM, si_code=SI_USER, si_pid=123, si_uid=1000} ---
         value(
             (),
             tuple((
@@ -553,8 +504,6 @@ impl Syscall<'_> {
     }
 
     fn parse_exit_line(input: &str) -> IResult<&str, ()> {
-        // Parse the format like:
-        //     +++ exited with 0 +++
         value(
             (),
             tuple((
@@ -565,8 +514,6 @@ impl Syscall<'_> {
     }
 
     fn parse_multithread_blocked(input: &str) -> IResult<&str, (u32, String)> {
-        // Parse the format like:
-        //    123 read(3</path/to/file>, <unfinished ...>
         map(
             tuple((
                 Self::parse_pid,
@@ -580,8 +527,6 @@ impl Syscall<'_> {
     }
 
     fn parse_multithread_resumed(input: &str) -> IResult<&str, (u32, String)> {
-        // Parse the format like:
-        //     123 <... read resumed> "\x00\x01\x02", 1024) = 3
         map(
             tuple((
                 Self::parse_pid,
@@ -597,11 +542,8 @@ impl Syscall<'_> {
         )(input)
     }
 
-    /// Handles special cases for certain syscalls whose strace output is non-standard.
     fn handle_special_cases(mut syscall: Syscall) -> Syscall {
         if syscall.name == "clone" {
-            // For `clone`, strace removes the first and fourth arguments, just insert
-            // ignored args.
             syscall.args.insert(0, SyscallArg::Ignored);
             syscall.args.insert(3, SyscallArg::Ignored);
         }

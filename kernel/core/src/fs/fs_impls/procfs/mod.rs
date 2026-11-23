@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use template::{
@@ -63,11 +61,8 @@ pub(super) fn init_on_each_cpu() {
     cpuinfo::init_on_each_cpu();
 }
 
-/// Magic number.
 const PROC_MAGIC: u64 = 0x9fa0;
-/// Root Inode ID.
 const PROC_ROOT_INO: u64 = 1;
-/// Block size.
 const BLOCK_SIZE: usize = 1024;
 
 struct ProcFs {
@@ -144,12 +139,10 @@ impl FsType for ProcFsType {
     }
 }
 
-/// Represents the inode at `/proc`.
 struct RootDirOps;
 
 impl RootDirOps {
     pub(crate) fn new_inode(fs: Weak<ProcFs>, sb: &SuperBlock) -> Arc<dyn Inode> {
-        // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/fs/proc/root.c#L368>
         let fs: Weak<dyn FileSystem> = fs;
         ProcDir::new_root(Self, fs, PROC_ROOT_INO, sb, mkmod!(a+rx))
     }
@@ -218,7 +211,6 @@ impl ProcDirOps for RootDirOps {
             &mut visit_fn,
         )?;
 
-        // Collect PIDs before visiting entries, as `visit_fn` may copy data to user memory.
         let process_pids = {
             let pid_table = pid_table::pid_table_mut();
             pid_table
@@ -241,21 +233,15 @@ impl ProcDirOps for RootDirOps {
 
     fn revalidate_exists(&self, name: &str, child: &dyn Inode) -> bool {
         if name.parse::<Pid>().is_err() {
-            // For non-numeric names, the set of valid children does not change over time,
-            // so we can rely on the cache without revalidating.
             return true;
         };
 
         if let Some(child) = child.downcast_ref::<ProcDir<PidDirOps>>() {
-            // If the child's `PidEntry` still has the associated process, it will not be removed
-            // from the `PidTable` and remains alive.
             matches!(
                 child.inner().pid_entry().type_(),
                 Some(PidEntryType::Process)
             )
         } else if let Some(child) = child.downcast_ref::<ProcDir<TidDirOps>>() {
-            // If the child's `PidEntry` still has the associated thread, it will not be removed
-            // from the `PidTable` and remains alive.
             matches!(
                 child.inner().pid_entry().type_(),
                 Some(PidEntryType::Thread)

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::SyscallReturn;
 use crate::{
     fs::{
@@ -55,25 +53,15 @@ bitflags! {
 }
 
 bitflags! {
-    /// The accessibility checks requested by the `access(2)` family.
-    ///
-    /// Do not confuse this type with [`crate::fs::file::AccessMode`],
-    /// which describes the read/write mode of an opened file.
     #[derive(Clone, Copy, Debug)]
     struct AccessMode: u32 {
         const R_OK = 0x4;
         const W_OK = 0x2;
         const X_OK = 0x1;
-        // We should ignore `F_OK` in bitflags.
-        // const F_OK = 0x0;
     }
 }
 
 impl AccessMode {
-    /// Returns the permissions that the access mode requires.
-    ///
-    /// `F_OK` is represented by `AccessMode::empty()`,
-    /// which requires no permissions.
     fn required_permission(&self) -> Permission {
         let mut permission = Permission::empty();
 
@@ -123,9 +111,6 @@ fn do_faccessat(
 
     let inode = path.inode();
 
-    // Executing a regular file on a `noexec` mount is forbidden even when the
-    // file mode grants the execute bit. `access(2)` and its variants need to
-    // report the same restriction through `X_OK`.
     if mode.contains(AccessMode::X_OK)
         && inode.type_().is_regular_file()
         && path.mount_node().flags().contains(PerMountFlags::NOEXEC)
@@ -136,10 +121,6 @@ fn do_faccessat(
         ));
     }
 
-    // `F_OK` is represented by `AccessMode::empty()`.
-    // It only asks whether the file exists,
-    // which the successful path lookup above has already established.
-    // So we can skip the permission check, which is not free.
     let permission = mode.required_permission();
     if !permission.is_empty() {
         inode.check_permission(permission)?;

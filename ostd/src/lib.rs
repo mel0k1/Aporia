@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 #![doc = include_str!("../README.md")]
 #![feature(alloc_error_handler)]
 #![feature(btree_cursors)]
@@ -20,7 +18,6 @@ extern crate alloc;
 #[macro_use]
 extern crate ostd_pod;
 
-// Set this crate's log prefix for `ostd::log`.
 macro_rules! __log_prefix {
     () => {
         ""
@@ -66,23 +63,9 @@ pub use ostd_macros::{
 
 pub use self::{error::Error, prelude::Result};
 
-/// Initializes OSTD.
-///
-/// This function represents the first phase booting up the system. It makes
-/// all functionalities of OSTD available after the call.
-///
-/// # Safety
-///
-/// This function should be called only once and only on the BSP.
-//
-// TODO: We need to refactor this function to make it more modular and
-// make inter-initialization-dependencies more clear and reduce usages of
-// boot stage only global variables.
 unsafe fn init() {
     arch::enable_cpu_features();
 
-    // SAFETY: This function is called only once, before `allocator::init`
-    // and after memory regions are initialized.
     unsafe { mm::frame::allocator::init_early_allocator() };
 
     let early_cmdline = boot::parse_early_cmdline();
@@ -90,7 +73,6 @@ unsafe fn init() {
     #[cfg(target_arch = "x86_64")]
     arch::if_tdx_enabled!({
     } else {
-        // SAFETY: This function is called only once on the BSP.
         unsafe { arch::serial::init(&early_cmdline) };
     });
     #[cfg(not(target_arch = "x86_64"))]
@@ -98,43 +80,28 @@ unsafe fn init() {
 
     log::init(&early_cmdline);
 
-    // SAFETY:
-    //  1. They are only called once in the boot context of the BSP.
-    //  2. The number of CPUs are available because ACPI has been initialized.
-    //  3. CPU-local storage has NOT been used.
     unsafe { cpu::init_on_bsp() };
 
-    // SAFETY: We are on the BSP and APs are not yet started.
     let meta_pages = unsafe { mm::frame::meta::init() };
-    // The frame allocator should be initialized immediately after the metadata
-    // is initialized. Otherwise the boot page table can't allocate frames.
-    // SAFETY: This function is called only once.
     unsafe { mm::frame::allocator::init() };
 
     mm::kspace::init_kernel_page_table(meta_pages);
 
-    // SAFETY: This function is called only once on the BSP.
     unsafe { mm::kspace::activate_kernel_page_table() };
 
     sync::init();
 
     boot::init_after_heap();
 
-    // SAFETY: This function is called only once on the BSP.
     unsafe { arch::late_init_on_bsp() };
 
     #[cfg(target_arch = "x86_64")]
     arch::if_tdx_enabled!({
-        // SAFETY: This function is called only once on the BSP.
         unsafe { arch::serial::init(&early_cmdline) };
     });
 
     smp::init();
 
-    // SAFETY:
-    // 1. The kernel page table is activated on the BSP.
-    // 2. The function is called only once on the BSP.
-    // 3. No remaining `with_borrow` invocations from now.
     unsafe { mm::page_table::boot_pt::dismiss() };
 
     arch::irq::enable_local();
@@ -144,12 +111,8 @@ unsafe fn init() {
     IN_BOOTSTRAP_CONTEXT.store(false, Ordering::Relaxed);
 }
 
-/// Indicates whether the kernel is in bootstrap context.
 pub(crate) static IN_BOOTSTRAP_CONTEXT: AtomicBool = AtomicBool::new(true);
 
-/// Invoke the initialization functions defined in the FFI.
-/// The component system uses this function to call the initialization functions of
-/// the components.
 fn invoke_ffi_init_funcs() {
     unsafe extern "C" {
         fn __sinit_array();
@@ -171,7 +134,6 @@ mod feature_validation {
     );
 }
 
-/// Simple unit tests for the ktest framework.
 #[cfg(ktest)]
 mod test {
     use crate::prelude::*;
@@ -197,11 +159,6 @@ mod test {
 
 #[doc(hidden)]
 pub mod ktest {
-    //! The module re-exports everything from the [`ostd_test`] crate, as well
-    //! as the test entry point macro.
-    //!
-    //! It is rather discouraged to use the definitions here directly. The
-    //! `ktest` attribute is sufficient for all normal use cases.
 
     pub use ostd_macros::{test_main as main, test_panic_handler as panic_handler};
     pub use ostd_test::*;

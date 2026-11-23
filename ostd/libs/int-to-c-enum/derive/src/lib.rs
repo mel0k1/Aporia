@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::{TokenStreamExt, format_ident, quote};
 use syn::{
@@ -162,9 +160,6 @@ fn fn_body_tokens(
     }
     let param = Ident::new(value_name, Span::mixed_site());
     quote!(
-        // This block limits the scope of the generated discriminant constants.
-        // Otherwise, they could shadow names in the caller's `error_value` or
-        // `error_fn` expression and silently change the returned error.
         {
             #discriminant_consts
             match #param {

@@ -1,8 +1,3 @@
-// Licensed under the Apache License, Version 2.0 or the MIT License.
-// Copyright (C) 2023-2024 Ant Group.
-
-//! This test checks that if Components.toml is missed, the compiler will panic.
-
 mod test_utils;
 
 #[test]

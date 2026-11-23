@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use std::fs;
 
 use super::{build::do_cached_build, util::DEFAULT_TARGET_RELPATH};
@@ -43,8 +41,6 @@ pub fn test_current_crate(config: &Config, args: &TestArgs) -> QemuExit {
     let cargo_target_directory = get_target_directory();
     let osdk_output_directory = cargo_target_directory.join(DEFAULT_TARGET_RELPATH);
 
-    // A special case is that we use OSDK to test the OSDK test runner crate
-    // itself. We check it by name.
     let runner_self_test = if current_crate.name == "osdk-test-kernel" {
         if matches!(option_env!("OSDK_LOCAL_DEV"), Some("1")) {
             true
@@ -76,8 +72,6 @@ pub fn test_current_crate(config: &Config, args: &TestArgs) -> QemuExit {
         ktest_crate_whitelist.push(name.clone());
     }
 
-    // Append the ktest static variable and the runner reference to the
-    // `main.rs` file.
     let ktest_main_rs = format!(
         r#"
 
@@ -103,7 +97,6 @@ pub static KTEST_CRATE_WHITELIST: Option<&[&str]> = Some(&{:#?});
     main_rs_content.push_str(&ktest_main_rs);
     fs::write(&main_rs_path, main_rs_content).unwrap();
 
-    // Build the kernel with the given base crate
     let default_bundle_directory = osdk_output_directory.join(&current_crate.name);
     let dir_guard = DirGuard::change_dir(&target_crate_dir);
     let bundle = do_cached_build(

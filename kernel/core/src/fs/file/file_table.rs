@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::{
     fmt::Display,
     sync::atomic::{AtomicU8, Ordering},
@@ -15,28 +13,9 @@ use crate::{
     process::{ResourceType, posix_thread::FileTableRefMut},
 };
 
-/// Represents a validated, non-negative file descriptor.
-///
-/// The value is guaranteed to be in the range `[0, i32::MAX]`.
-/// Use [`RawFileDesc`] at syscall boundaries,
-/// then convert to `FileDesc` via `TryFrom` for kernel-internal use.
-///
-/// Some system calls (e.g., `fcntl`) reinterpret
-/// values of types other than [`RawFileDesc`] (e.g., `u64` or `usize`)
-/// as file descriptors. Linux typically truncates the high bits
-/// without checking whether the full argument fits in range.
-/// To avoid accidental misuse, we do not implement `TryFrom` for
-/// those types. The syscall layer should first convert them to
-/// a [`RawFileDesc`] in an explicit, syscall-specific way,
-/// and then convert that value to a `FileDesc`.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct FileDesc(RangedU32<0, { i32::MAX as _ }>);
 
-/// A raw file descriptor as received from or returned to user space.
-///
-/// This is the `int` type from Linux syscall signatures.
-/// It may hold negative sentinel values like `AT_FDCWD` (-100).
-/// Convert to [`FileDesc`] via `TryFrom` before use.
 pub(crate) type RawFileDesc = i32;
 
 impl Display for FileDesc {
@@ -75,14 +54,6 @@ impl From<FileDesc> for usize {
     }
 }
 
-// Intentionally, `TryFrom<RawFileDesc>` is
-// the only `TryFrom` implementation for `FileDesc`.
-//
-// We do not implement conversions from wider integer types
-// for Linux compatibility reasons; see the `FileDesc` type docs.
-// We also do not implement `TryFrom<u32>` directly,
-// to encourage callers to name `RawFileDesc` explicitly
-// instead of using a plain `u32`.
 impl TryFrom<RawFileDesc> for FileDesc {
     type Error = Error;
 
@@ -94,31 +65,23 @@ impl TryFrom<RawFileDesc> for FileDesc {
     }
 }
 
-/// A file table.
-///
-/// A file table is created within an [`RwArc`] and remains within it (see [`Self::new`] and
-/// [`Self::fork_from`]). The file table's address is used as a [`RangeLockOwner`], so users should
-/// not try to move the file table to a different address.
 pub(crate) struct FileTable {
     table: SlotVec<FileTableEntry>,
 }
 
 impl FileTable {
-    /// Creates a new file table.
     pub(crate) fn new() -> RwArc<Self> {
         RwArc::new(Self {
             table: SlotVec::new(),
         })
     }
 
-    /// Creates a new file table containing clones of all entries in `parent`.
     pub(crate) fn fork_from(parent: &Self) -> RwArc<Self> {
         RwArc::new(Self {
             table: parent.table.clone(),
         })
     }
 
-    /// Returns the range-lock owner of `file_table`.
     pub(crate) fn range_lock_owner(file_table: &RwArc<Self>) -> RangeLockOwner {
         RangeLockOwner::from_address(file_table.as_ptr().addr())
     }
@@ -131,10 +94,6 @@ impl FileTable {
         self.table.slots_len()
     }
 
-    /// Inserts `file` at the lowest-numbered available descriptor below the current
-    /// process's soft `RLIMIT_NOFILE` limit.
-    ///
-    /// Returns `EMFILE` if no descriptor is available.
     pub(crate) fn insert(
         &mut self,
         file: Arc<dyn FileLike>,
@@ -143,14 +102,6 @@ impl FileTable {
         self.insert_ceil(file, None, flags)
     }
 
-    /// Inserts `file` at the lowest-numbered available descriptor below the current
-    /// process's soft `RLIMIT_NOFILE` limit.
-    ///
-    /// If `ceil_fd` is specified, searches from that descriptor (inclusive).
-    /// Otherwise, searches from zero.
-    ///
-    /// Returns `EINVAL` if `ceil_fd` is at or above the limit, or `EMFILE` if no
-    /// descriptor is available in the search range.
     pub(crate) fn insert_ceil(
         &mut self,
         file: Arc<dyn FileLike>,
@@ -180,11 +131,9 @@ impl FileTable {
             )
         })?;
 
-        // Resource limits guarantee the table never exceeds `i32::MAX` entries.
         Ok((min_free_fd as RawFileDesc).try_into().unwrap())
     }
 
-    /// Duplicates `fd` onto the exact descriptor number `new_fd`.
     pub(crate) fn dup_exact(
         &mut self,
         fd: FileDesc,
@@ -212,10 +161,6 @@ impl FileTable {
 
     pub(crate) fn close_file(&mut self, fd: FileDesc) -> Option<ClosedFile> {
         let removed_entry = self.table.remove(fd.into())?;
-        // POSIX record locks are process-associated and Linux drops them when any fd for the inode is
-        // closed by that process, even if duplicated descriptors still exist.
-        //
-        // Reference: <https://man7.org/linux/man-pages/man2/fcntl_locking.2.html>
         Some(ClosedFile::new(
             removed_entry.file,
             self.as_range_lock_owner(),
@@ -236,7 +181,6 @@ impl FileTable {
             .idxes_and_items()
             .filter_map(|(idx, entry)| {
                 if should_close(entry) {
-                    // Resource limits guarantee the table never exceeds `i32::MAX` entries.
                     Some((idx as RawFileDesc).try_into().unwrap())
                 } else {
                     None
@@ -271,7 +215,6 @@ impl FileTable {
     }
 
     pub(crate) fn fds_and_files(&self) -> impl Iterator<Item = (FileDesc, &'_ Arc<dyn FileLike>)> {
-        // Resource limits guarantee the table never exceeds `i32::MAX` entries.
         self.table
             .idxes_and_items()
             .map(|(idx, entry)| ((idx as RawFileDesc).try_into().unwrap(), entry.file()))
@@ -288,25 +231,12 @@ impl Drop for FileTable {
     }
 }
 
-/// Operations that acquire the file table's lock internally.
 pub(crate) trait FileTableInsert {
-    /// Inserts `file` at the lowest available descriptor
-    /// below the current process's soft `RLIMIT_NOFILE` limit.
-    ///
-    /// Returns `EMFILE` if no descriptor is available.
     fn lock_and_insert(&self, file: Arc<dyn FileLike>, flags: FdFlags) -> Result<FileDesc> {
         let [fd] = self.lock_and_insert_multiple([file], flags)?;
         Ok(fd)
     }
 
-    /// Inserts `files` in order at the lowest available descriptors
-    /// below the current process's soft `RLIMIT_NOFILE` limit,
-    /// applying `flags` to each.
-    ///
-    /// Returns the descriptors in input order.
-    ///
-    /// If any insertion fails,
-    /// removes all files inserted by this call and returns `EMFILE`.
     fn lock_and_insert_multiple<const N: usize>(
         &self,
         files: [Arc<dyn FileLike>; N],
@@ -327,9 +257,6 @@ impl FileTableInsert for RwArc<FileTable> {
                 Ok(fd) => fds[idx] = Some(fd),
                 Err((err, file)) => {
                     let closed_files = fds.map(|fd| fd.and_then(|fd| table.close_file(fd)));
-                    // File destructors may acquire other locks.
-                    // Release the table lock before dropping any of the files,
-                    // including those remaining in the iterator.
                     drop(table);
                     drop(closed_files);
                     drop(file);
@@ -341,9 +268,6 @@ impl FileTableInsert for RwArc<FileTable> {
     }
 }
 
-/// A file removed from a [`FileTable`] whose close cleanup is pending.
-///
-/// Dropping this value may block, so it must be dropped after releasing the file-table lock.
 #[must_use = "close cleanup runs when this value is dropped"]
 pub(crate) struct ClosedFile {
     file: Arc<dyn FileLike>,
@@ -367,12 +291,7 @@ impl Drop for ClosedFile {
     }
 }
 
-/// A helper trait that provides methods to operate the file table.
 pub(crate) trait WithFileTable {
-    /// Calls `f` with the file table.
-    ///
-    /// This method is lockless if the file table is not shared. Otherwise, `f` is called while
-    /// holding the read lock on the file table.
     fn read_with<R>(&mut self, f: impl FnOnce(&FileTable) -> R) -> R;
 }
 
@@ -388,26 +307,6 @@ impl WithFileTable for FileTableRefMut<'_> {
     }
 }
 
-/// Gets a file from a file descriptor as fast as possible.
-///
-/// `file_table` should be a mutable borrow of the file table contained in the `file_table` field
-/// (which is a [`RefCell`]) in [`ThreadLocal`]. A mutable borrow is required because its
-/// exclusivity can be useful for achieving lockless file lookups.
-///
-/// If the file table is not shared with another thread, this macro will be free of locks
-/// ([`RwArc::read`]) and free of reference counting ([`Arc::clone`]).
-///
-/// If the file table is shared, the read lock is taken, the file is cloned, and then the read lock
-/// is released. Cloning and releasing the lock is necessary because we cannot hold such locks when
-/// operating on files, since many operations on files can block.
-///
-/// Note: This has to be a macro due to a limitation in the Rust borrow check implementation. Once
-/// <https://github.com/rust-lang/rust/issues/58910> is fixed, we can try to convert this macro to
-/// a function.
-///
-/// [`RefCell`]: core::cell::RefCell
-/// [`ThreadLocal`]: crate::process::posix_thread::ThreadLocal
-/// [`RwArc::read`]: ostd::sync::RwArc::read
 macro_rules! get_file_fast {
     ($file_table:expr, $file_desc:expr) => {{
         use alloc::borrow::Cow;
@@ -423,10 +322,8 @@ macro_rules! get_file_fast {
         let file_desc: FileDesc = $file_desc;
 
         if let Some(inner) = file_table.get() {
-            // Fast path: The file table is not shared, we can get the file in a lockless way.
             Cow::Borrowed(inner.get_file(file_desc)?)
         } else {
-            // Slow path: The file table is shared, we need to hold the lock and clone the file.
             Cow::Owned(file_table.read().get_file(file_desc)?.clone())
         }
     }};
@@ -472,7 +369,6 @@ impl Clone for FileTableEntry {
 bitflags! {
     #[derive(Clone, Copy, Debug)]
     pub(crate) struct FdFlags: u8 {
-        /// Close on exec
         const CLOEXEC = 1;
     }
 }

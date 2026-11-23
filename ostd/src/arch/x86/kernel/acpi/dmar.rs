@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 #![expect(dead_code)]
 
 use alloc::vec::Vec;
@@ -12,23 +10,12 @@ use acpi::{
 
 use super::remapping::{Andd, Atsr, Drhd, Rhsa, Rmrr, Satc, Sidp};
 
-/// DMA Remapping structure.
-///
-/// When IOMMU is enabled, the structure should be present in the ACPI table, and the user can use
-/// the DRHD table in this structure to obtain the register base addresses used to configure
-/// functions such IOMMU.
 #[derive(Debug)]
 pub(in crate::arch) struct Dmar {
     header: DmarHeader,
-    // The actual size is indicated by `length` in `header`.
-    // Entries with the format of Remapping Structures are followed.
     remapping_structures: Vec<Remapping>,
 }
 
-/// Remapping Structures.
-///
-/// A DMAR structure contains serval remapping structures. Among these structures,
-/// one DRHD must exist, the others must not exist at all.
 #[derive(Debug)]
 pub(in crate::arch) enum Remapping {
     Drhd(Drhd),
@@ -62,8 +49,6 @@ struct DmarHeader {
     reserved: [u8; 10],
 }
 
-// SAFETY: The `DmarHeader` is the header for the DMAR structure. All its fields are described in
-// the Intel manual.
 unsafe impl AcpiTable for DmarHeader {
     const SIGNATURE: Signature = Signature::DMAR;
     fn header(&self) -> &SdtHeader {
@@ -72,16 +57,12 @@ unsafe impl AcpiTable for DmarHeader {
 }
 
 impl Dmar {
-    /// Creates a instance from ACPI table.
     pub(in crate::arch) fn new() -> Option<Self> {
         let acpi_table = super::get_acpi_tables()?;
 
         let dmar_mapping = acpi_table.find_table::<DmarHeader>().ok()?;
 
         let header = *dmar_mapping;
-        // SAFETY: `find_table` returns a region of memory that belongs to the ACPI table. This
-        // memory region is valid to read, properly initialized, lives for `'static`, and will
-        // never be mutated.
         let slice = unsafe {
             core::slice::from_raw_parts(
                 dmar_mapping
@@ -96,7 +77,6 @@ impl Dmar {
         let mut index = size_of::<DmarHeader>();
         let mut remapping_structures = Vec::new();
         while index != (header.header.length as usize) {
-            // CommonHeader { type: u16, length: u16 }
             let typ = u16::from_ne_bytes(slice[index..index + 2].try_into().unwrap());
             let length =
                 u16::from_ne_bytes(slice[index + 2..index + 4].try_into().unwrap()) as usize;

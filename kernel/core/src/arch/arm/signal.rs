@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd::{
     arch::cpu::context::{CpuException, UserContext},
     user::UserContextApi,
@@ -32,23 +30,17 @@ impl ToFaultSignal for CpuException {
             | CpuException::SystemInstruction => (SIGILL, ILL_ILLOPC, Some(elr)),
             CpuException::InstructionAbort { address }
             | CpuException::DataAbort { address, .. } => {
-                // FIXME: Derive the signal number and code from the error code.
-                // See <https://elixir.bootlin.com/linux/v7.0/source/arch/arm64/mm/fault.c#L861>.
                 (SIGSEGV, SEGV_MAPERR, Some(*address as u64))
             }
             CpuException::PcAlignmentFault => (SIGBUS, BUS_ADRALN, Some(elr)),
             CpuException::SpAlignmentFault => {
                 (SIGBUS, BUS_ADRALN, Some(user_ctx.stack_pointer() as u64))
             }
-            CpuException::FpuException => {
-                // TODO: Derive the code from the floating-point status.
-                (SIGFPE, FPE_FLTDIV, Some(elr))
-            }
+            CpuException::FpuException => (SIGFPE, FPE_FLTDIV, Some(elr)),
             CpuException::SoftwareStep => (SIGTRAP, TRAP_TRACE, Some(elr)),
             CpuException::BrkInstruction => (SIGTRAP, TRAP_BRKPT, Some(elr)),
 
             CpuException::Breakpoint | CpuException::Watchpoint => {
-                // TODO: Properly handle these exceptions once hardware debugging is supported.
                 return None;
             }
             CpuException::SvcInstruction | CpuException::SErrorInterrupt => return None,

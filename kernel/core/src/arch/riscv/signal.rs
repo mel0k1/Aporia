@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd::{
     arch::cpu::context::{CpuException, UserContext},
     user::UserContextApi,
@@ -31,25 +29,10 @@ impl ToFaultSignal for CpuException {
             InstructionFault => (SIGSEGV, SEGV_ACCERR, sepc),
             IllegalInstruction(_) => (SIGILL, ILL_ILLOPC, sepc),
             Breakpoint => (SIGTRAP, TRAP_BRKPT, sepc),
-            LoadMisaligned(_) | StoreMisaligned(_) => {
-                // The address should be the memory address, but Linux reports the instruction
-                // address. So we follow it.
-                //
-                // Reference: <https://elixir.bootlin.com/linux/v7.0/source/arch/riscv/kernel/traps.c#L230-L232>
-                (SIGBUS, BUS_ADRALN, sepc)
-            }
-            LoadFault(_) | StoreFault(_) => {
-                // The address should be the memory address, but Linux reports the instruction
-                // address. So we follow it.
-                //
-                // Reference:
-                // <https://elixir.bootlin.com/linux/v7.0/source/arch/riscv/kernel/traps.c#L198-L199>
-                // <https://elixir.bootlin.com/linux/v7.0/source/arch/riscv/kernel/traps.c#L252-L253>
-                (SIGSEGV, SEGV_ACCERR, sepc)
-            }
+            LoadMisaligned(_) | StoreMisaligned(_) => (SIGBUS, BUS_ADRALN, sepc),
+            LoadFault(_) | StoreFault(_) => (SIGSEGV, SEGV_ACCERR, sepc),
             SupervisorEnvCall => (SIGILL, ILL_ILLTRP, sepc),
             InstructionPageFault(addr) | LoadPageFault(addr) | StorePageFault(addr) => {
-                // FIXME: The code should be `SEGV_ACCERR` for faults within an existing mapping.
                 (SIGSEGV, SEGV_MAPERR, *addr as u64)
             }
             Unknown => (SIGILL, ILL_ILLTRP, sepc),

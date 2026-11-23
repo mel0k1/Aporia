@@ -1,17 +1,8 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! In the setup, VA - SETUP32_LMA == FileOffset - LEGACY_SETUP_SEC_SIZE.
-//! And the addresses are specified in the ELF file.
-//!
-//! This module centralizes the conversion between VA and FileOffset.
-
 use std::{
     cmp::PartialOrd,
     ops::{Add, Sub},
 };
 
-// We chose the legacy setup sections to be 7 so that the setup header
-// is page-aligned and the legacy setup section size would be 0x1000.
 const LEGACY_SETUP_SECS: usize = 7;
 pub(crate) const LEGACY_SETUP_SEC_SIZE: usize = 0x200 * (LEGACY_SETUP_SECS + 1);
 

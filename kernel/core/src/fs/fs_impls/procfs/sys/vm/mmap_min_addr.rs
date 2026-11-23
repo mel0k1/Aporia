@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use aster_util::printer::VmPrinter;
 
 use crate::{
@@ -12,12 +10,10 @@ use crate::{
     vm::vmar::VMAR_LOWEST_ADDR,
 };
 
-/// Represents the inode at `/proc/sys/vm/mmap_min_addr`.
 pub(super) struct MmapMinAddrFileOps;
 
 impl MmapMinAddrFileOps {
     pub(super) fn new_inode(parent: Weak<dyn Inode>) -> Arc<dyn Inode> {
-        // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/security/min_addr.c#L52>
         ProcFile::new(Self, parent, mkmod!(a+r, u+w))
     }
 }

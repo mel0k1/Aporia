@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 #[path = "0-bio/mod.rs"]
 pub(crate) mod bio;
 #[path = "1-crypto/mod.rs"]

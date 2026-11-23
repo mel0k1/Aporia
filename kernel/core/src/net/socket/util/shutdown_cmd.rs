@@ -1,18 +1,11 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use crate::prelude::*;
 
-/// Shutdown types
-/// From <https://elixir.bootlin.com/linux/v6.0.9/source/include/linux/net.h>
 #[expect(non_camel_case_types)]
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, TryFromInt)]
 pub(crate) enum SockShutdownCmd {
-    /// Shutdown receptions
     SHUT_RD = 0,
-    /// Shutdown transmissions
     SHUT_WR = 1,
-    /// Shutdown receptions and transmissions
     SHUT_RDWR = 2,
 }
 

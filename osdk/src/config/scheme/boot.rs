@@ -1,32 +1,22 @@
-// SPDX-License-Identifier: MPL-2.0
+use std::path::PathBuf;
 
 use clap::ValueEnum;
 
-use std::path::PathBuf;
-
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct BootScheme {
-    /// Command line arguments for the guest kernel
     #[serde(default)]
     pub kcmd_args: Vec<String>,
-    /// Command line arguments for the guest init process
     #[serde(default)]
     pub init_args: Vec<String>,
-    /// The path of initramfs
     pub initramfs: Option<PathBuf>,
-    /// The infrastructures used to boot the guest
     pub method: Option<BootMethod>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
 #[serde(rename_all = "kebab-case")]
 pub enum BootMethod {
-    /// Boot the kernel by making a rescue CD image.
     GrubRescueIso,
-    /// Boot the kernel by making a Qcow2 image with Grub as the bootloader.
     GrubQcow2,
-    /// Boot the kernel by supplying the kernel image directly to the VMM,
-    /// without a GRUB boot device.
     #[default]
     VmmDirect,
 }

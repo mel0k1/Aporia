@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use int_to_c_enum::TryFromInt;
 use ostd_pod::IntoBytes;
 use smoltcp::wire::{IpRepr, Ipv4Repr, Ipv6Repr};
@@ -44,7 +42,6 @@ fn do_parse_v4(
     pkt.truncate(total_len);
 
     if header.flags_frag.flags().contains(Flags::MF) || header.flags_frag.fragment_offset() != 0 {
-        // IP fragments are not currently supported.
         return None;
     }
 
@@ -119,7 +116,6 @@ fn emit_v4(
         ver_ihl: VersionAndIhl::new(Version::V4, size_of::<HeaderV4>()),
         dscp_ecn: DscpAndEcn::new(Dscp::Cs0, Ecn::NotEct),
         totlen: ((ipv4_repr.payload_len + size_of::<HeaderV4>()) as u16).into(),
-        // If necessary, we should fill the identification field.
         ident: 0u16.into(),
         flags_frag: FlagsAndFragmentOffset::new(Flags::DF, 0),
         ttl: ipv4_repr.hop_limit,
@@ -140,7 +136,6 @@ fn emit_v6(pkt: TxPacket<TransportLayer>, ipv6_repr: &Ipv6Repr) -> TxPacket<Netw
     debug_assert_eq!(ipv6_repr.payload_len, pkt.len());
 
     let header = HeaderV6 {
-        // If necessary, we should fill the flow label field.
         ver_flow: VersionToFlowLabel::new(Version::V6, Dscp::Cs0, Ecn::NotEct, 0),
         len: (ipv6_repr.payload_len as u16).into(),
         next: ipv6_repr.next_header.into(),
@@ -206,14 +201,12 @@ struct DscpAndEcn(u8);
 #[derive(Clone, Copy, Debug)]
 enum Dscp {
     Cs0 = 0,
-    // Add other variants (e.g., `Cs1`) when needed.
 }
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug)]
 enum Ecn {
     NotEct = 0b00,
-    // Add other variants (e.g., `Ect1`) when needed.
 }
 
 impl DscpAndEcn {

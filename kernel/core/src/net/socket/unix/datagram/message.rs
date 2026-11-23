@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::{
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
@@ -44,7 +42,6 @@ struct Message {
 }
 
 impl MessageQueue {
-    /// Looks up a message queue bound to the specific address in the global table.
     pub(super) fn lookup_bound(addr: &UnixSocketAddrKey) -> Result<Arc<MessageQueue>> {
         QUEUE_TABLE
             .get_queue(addr)
@@ -104,7 +101,6 @@ impl MessageQueue {
         self.addr.get().cloned().unwrap_or(UnixSocketAddr::Unnamed)
     }
 
-    /// Blocks until the buffer is free and the `try_send` succeeds, or until interrupted.
     pub(super) fn block_send<F, R>(&self, timeout: Option<Duration>, mut try_send: F) -> Result<R>
     where
         F: FnMut() -> Result<R>,
@@ -124,14 +120,7 @@ impl MessageQueue {
     }
 }
 
-// Note that a message receiver corresponds to a live socket and maintains certain invariants. For
-// instance, `queue.inner` is always `Some(_)`, and the queue is in the global table if it is bound
-// (i.e., `addr` is not `None`).
 pub(super) struct MessageReceiver {
-    // `addr` should be dropped as soon as the socket file is closed,
-    // so it must not belong to `MessageQueue`.
-    //
-    // This is protected by a mutex because `bind()` requires file I/O.
     addr: Mutex<Option<UnixSocketAddrBound>>,
     queue: Arc<MessageQueue>,
 }
@@ -205,8 +194,6 @@ impl MessageReceiver {
             inner.total_length -= message.bytes.len();
 
             self.queue.pollee.invalidate();
-            // A writer may still fail if the free space is not enough.
-            // So we have to wake up all the writers here.
             self.queue.send_wait_queue.wake_all();
 
             message.aux.generate_control(behavior, is_pass_cred)
@@ -225,8 +212,6 @@ impl MessageReceiver {
 
         inner.is_shutdown = true;
         self.queue.send_wait_queue.wake_all();
-
-        // The caller will notify the pollee.
     }
 
     pub(super) fn set_pass_cred(&self, is_pass_cred: bool) {

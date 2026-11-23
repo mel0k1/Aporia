@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 pub(crate) use crate::{
     error::{Errno::*, Error},
     layers::bio::{BLOCK_SIZE, BlockId},

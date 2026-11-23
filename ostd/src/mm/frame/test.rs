@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::{allocator::FrameAllocOptions, *};
 use crate::{
     impl_frame_meta_for, impl_untyped_frame_meta_for,
@@ -7,21 +5,18 @@ use crate::{
     prelude::*,
 };
 
-/// Typed mock metadata struct for testing
 #[derive(Debug, Default)]
 struct MockFrameMeta {
     value: u32,
 }
 impl_frame_meta_for!(MockFrameMeta);
 
-/// Untyped mock metadata struct for testing
 #[derive(Debug, Default)]
 struct MockUFrameMeta {
     value: u32,
 }
 impl_untyped_frame_meta_for!(MockUFrameMeta);
 
-// Frame allocation and management tests
 mod frame {
     use super::*;
 
@@ -90,7 +85,6 @@ mod frame {
     }
 }
 
-// Frame linked list tests
 mod linked_list {
     use super::*;
     use crate::mm::frame::linked_list::{Link, LinkedList};
@@ -111,34 +105,25 @@ mod linked_list {
         let mut list = LinkedList::new();
         assert!(list.is_empty());
         list.push_front(frame1.try_into().unwrap());
-        // 1
         list.push_front(frame2.try_into().unwrap());
-        // 2 1
         list.push_back(frame3.try_into().unwrap());
-        // 2 1 3
         assert_eq!(list.size(), 3);
 
         let mut cursor = list.cursor_front_mut();
-        // *2 1 3 ()
         assert_eq!(cursor.current_meta().unwrap().value, 2);
         cursor.move_next();
-        // 2 *1 3 ()
         assert_eq!(cursor.current_meta().unwrap().value, 1);
         cursor.move_next();
-        // 2 1 *3 ()
         assert_eq!(cursor.current_meta().unwrap().value, 3);
         cursor.move_next();
-        // 2 1 3 *()
         assert!(cursor.current_meta().is_none());
 
         assert_eq!(cursor.as_list().size(), 3);
 
         assert_eq!(list.pop_front().unwrap().meta().value, 2);
         assert_eq!(list.size(), 2);
-        // 1 3
         assert_eq!(list.pop_back().unwrap().meta().value, 3);
         assert_eq!(list.size(), 1);
-        // 1
         assert_eq!(list.pop_front().unwrap().meta().value, 1);
         assert_eq!(list.size(), 0);
     }
@@ -205,28 +190,20 @@ mod linked_list {
         let mut list = LinkedList::new();
         assert!(list.is_empty());
         list.push_front(frame1.try_into().unwrap());
-        // 1 *()
         list.push_front(frame2.try_into().unwrap());
-        // 2 *1 ()
         assert_eq!(list.size(), 2);
 
         let mut cursor = list.cursor_front_mut();
-        // *2 1 ()
         assert_eq!(cursor.current_meta().unwrap().value, 2);
         cursor.move_next();
-        // 2 *1 ()
         assert_eq!(cursor.current_meta().unwrap().value, 1);
         cursor.insert_before(frame3.try_into().unwrap());
-        // 2 3 *1 ()
         assert_eq!(cursor.current_meta().unwrap().value, 1);
         cursor.insert_before(frame4.try_into().unwrap());
-        // 2 3 4 *1 ()
         assert_eq!(cursor.current_meta().unwrap().value, 1);
         cursor.move_next();
-        // 2 3 4 1 *()
         assert!(cursor.current_meta().is_none());
         cursor.insert_before(frame5.try_into().unwrap());
-        // 2 3 4 1 5 *()
         assert!(cursor.current_meta().is_none());
 
         assert_eq!(cursor.as_list().size(), 5);
@@ -243,46 +220,33 @@ mod linked_list {
         assert_eq!(cursor.current_meta().unwrap().value, 5);
         cursor.move_next();
         assert!(cursor.current_meta().is_none());
-        // 2 3 4 1 5 *()
 
         cursor.move_prev();
-        // 2 3 4 1 *5 ()
         assert_eq!(cursor.current_meta().unwrap().value, 5);
         cursor.move_prev();
-        // 2 3 4 *1 5 ()
         assert_eq!(cursor.current_meta().unwrap().value, 1);
 
         let frame1 = cursor.take_current().unwrap();
-        // 2 3 4 *5 ()
         assert_eq!(frame1.meta().value, 1);
         assert_eq!(cursor.current_meta().unwrap().value, 5);
         cursor.move_next();
-        // 2 3 4 5 *()
         assert!(cursor.current_meta().is_none());
         cursor.move_prev();
-        // 2 3 4 *5 ()
         assert_eq!(cursor.current_meta().unwrap().value, 5);
         cursor.move_prev();
-        // 2 3 *4 5 ()
         assert_eq!(cursor.current_meta().unwrap().value, 4);
         cursor.move_prev();
-        // 2 *3 4 5 ()
         assert_eq!(cursor.current_meta().unwrap().value, 3);
         cursor.move_prev();
-        // *2 3 4 5 ()
         assert_eq!(cursor.current_meta().unwrap().value, 2);
 
         let frame2 = cursor.take_current().unwrap();
-        // *3 4 5 ()
         assert_eq!(frame2.meta().value, 2);
         assert_eq!(cursor.current_meta().unwrap().value, 3);
         cursor.move_next();
-        // 3 *4 5 ()
         assert_eq!(cursor.current_meta().unwrap().value, 4);
         cursor.move_next();
-        // 3 4 *5 ()
         assert_eq!(cursor.current_meta().unwrap().value, 5);
-        // 3 4 *()
         let frame5 = cursor.take_current().unwrap();
         assert_eq!(frame5.meta().value, 5);
         assert!(cursor.current_meta().is_none());
@@ -291,7 +255,6 @@ mod linked_list {
     }
 }
 
-// Segment tests
 mod segment {
     use super::*;
     use crate::{Error, mm::USegment};
@@ -309,7 +272,6 @@ mod segment {
     #[ktest]
     #[should_panic]
     fn max_segment_creation() {
-        // Upstream FrameAllocator panics when attempting to allocate a segment with usize::MAX frames
         let max_frames = usize::MAX;
         let _ = FrameAllocOptions::new().alloc_segment(max_frames);
     }
@@ -378,7 +340,6 @@ mod segment {
         let segment = FrameAllocOptions::new()
             .alloc_segment(total_frames)
             .expect("Failed to allocate segment");
-        // Attempts to split at zero, which should panic
         segment.split(0);
     }
 
@@ -390,7 +351,6 @@ mod segment {
             .alloc_segment(total_frames)
             .expect("Failed to allocate segment");
         let huge_page_aligned_offset = usize::MAX - (PAGE_SIZE - 1);
-        // Huge out-of-bounds offsets should panic
         segment.slice(&(huge_page_aligned_offset..huge_page_aligned_offset));
     }
 
@@ -400,7 +360,6 @@ mod segment {
         let segment = FrameAllocOptions::new()
             .alloc_segment(1)
             .expect("Failed to allocate segment");
-        // Slicing an empty range should panic
         segment.slice(&(0..0));
     }
 
@@ -416,7 +375,6 @@ mod segment {
         let mut iter = segment.into_iter();
         let first = iter.next().expect("The segment is non-empty");
 
-        // Dropping the iterator must release the frame it never yielded
         drop(iter);
 
         assert_eq!(first.reference_count(), 1);
@@ -478,7 +436,6 @@ mod segment {
     }
 }
 
-// Untyped frame/segment tests
 mod untyped {
     use super::*;
 
@@ -488,19 +445,15 @@ mod untyped {
             .alloc_frame_with(())
             .expect("Failed to allocate frame");
 
-        // Tests the frame reader
         let mut reader = frame.reader();
         assert_eq!(reader.remain(), PAGE_SIZE);
 
-        // Tests the frame writer
         let mut writer = frame.writer();
         assert_eq!(writer.avail(), PAGE_SIZE);
 
-        // Writes data to the frame
         let data = [0xAA; 128];
         writer.write(&mut data.as_slice().into());
 
-        // Reads data back
         let mut buffer = [0; 128];
         reader.read(&mut buffer.as_mut_slice().into());
         assert_eq!(buffer, data);
@@ -512,19 +465,15 @@ mod untyped {
             .alloc_segment(2)
             .expect("Failed to allocate segment");
 
-        // Tests the segment reader
         let mut reader = segment.reader();
         assert_eq!(reader.remain(), 2 * PAGE_SIZE);
 
-        // Tests the segment writer
         let mut writer = segment.writer();
         assert_eq!(writer.avail(), 2 * PAGE_SIZE);
 
-        // Writes data to the segment
         let data = [0xBB; 256];
         writer.write(&mut data.as_slice().into());
 
-        // Reads data back
         let mut buffer = [0; 256];
         reader.read(&mut buffer.as_mut_slice().into());
         assert_eq!(buffer, data);
@@ -563,13 +512,11 @@ mod frame_ref {
         let ptr = frame.paddr();
         let uframe: UFrame = frame.into();
 
-        // Converts and retrieves the frame from raw pointer
         let raw_ptr = NonNullPtr::into_raw(uframe);
         let frame_from_raw: Frame<MockUFrameMeta> = unsafe { NonNullPtr::from_raw(raw_ptr.cast()) };
         assert_eq!(frame_from_raw.paddr(), ptr);
         assert_eq!(frame_from_raw.meta().value, init_val);
 
-        // References the frame from raw pointer
         let frame_ref: FrameRef<MockUFrameMeta> = unsafe { Frame::raw_as_ref(raw_ptr.cast()) };
         assert_eq!(frame_ref.paddr(), ptr);
     }

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::time::Duration;
 
 use ostd::mm::VmIo;
@@ -46,15 +44,10 @@ pub(super) fn sys_futex(
 
         let is_real_time = futex_flags.contains(FutexFlags::FUTEX_CLOCK_REALTIME);
         if is_real_time && futex_op == FutexOp::FUTEX_WAIT {
-            // Reference:
-            // <https://github.com/torvalds/linux/commit/4fbf5d6837bf81fd7a27d771358f4ee6c4f243f8>
             return Err(errno!(ENOSYS, "FUTEX_WAIT cannot use CLOCK_REALTIME"));
         }
 
         let timeout = {
-            // For `FUTEX_WAIT`, `timeout` is interpreted as a relative value. This differs from
-            // other futex operations, where `timeout` is interpreted as an absolute value.
-            // Reference: <https://www.man7.org/linux/man-pages/man2/FUTEX_WAIT.2const.html>
             if futex_op == FutexOp::FUTEX_WAIT {
                 Timeout::After(timeout)
             } else {
@@ -109,7 +102,6 @@ pub(super) fn sys_futex(
             ) else {
                 return Err(errno!(EINVAL, "the count of waiters is negative"));
             };
-            // Unlike `FUTEX_WAKE`, `FUTEX_REQUEUE` wakes no waiters if `max_nwakes` is 0.
             futex_requeue(
                 futex_addr as _,
                 max_nwakes,
@@ -147,8 +139,5 @@ pub(super) fn sys_futex(
 }
 
 fn futex_val_to_max_count(futex_val: u32) -> usize {
-    // Linux wakes one waiter even if `futex_val` is 0 or negative. To be
-    // consistent with Linux, we set `max_count` to 1 if it is 0 or negative.
-    // Reference: <https://elixir.bootlin.com/linux/v7.2/source/kernel/futex/waitwake.c#L219>
     (futex_val as i32).max(1) as usize
 }

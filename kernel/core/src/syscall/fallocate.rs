@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::SyscallReturn;
 use crate::{
     fs,
@@ -62,32 +60,13 @@ fn check_offset_and_len(offset: i64, len: i64, ctx: &Context) -> Result<()> {
 }
 
 bitflags! {
-    /// Operation mode flags for fallocate.
-    ///
-    /// These flags determine the operation to be performed on the given byte range.
     #[derive(Clone, Copy, Debug)]
     struct RawFallocMode: u32 {
-        /// File size will not be changed when extending the file.
         const FALLOC_FL_KEEP_SIZE      = 0x01;
-        /// De-allocates a range (creates a hole).
-        ///
-        /// Must be OR-ed with `FALLOC_FL_KEEP_SIZE`.
         const FALLOC_FL_PUNCH_HOLE     = 0x02;
-        /// Removes a range of a file without leaving a hole.
-        ///
-        /// The offset and length must be multiples of the filesystem block size.
         const FALLOC_FL_COLLAPSE_RANGE = 0x08;
-        /// Converts a range of a file to zeros.
-        ///
-        /// Preallocates blocks within the range, converting to unwritten extents.
         const FALLOC_FL_ZERO_RANGE     = 0x10;
-        /// Inserts space within the file size without overwriting any existing data.
-        ///
-        /// The offset and length must be multiples of the filesystem block size.
         const FALLOC_FL_INSERT_RANGE   = 0x20;
-        /// Unshares shared blocks within the file size without overwriting any existing data.
-        ///
-        /// Guarantees that subsequent writes will not fail due to lack of space.
         const FALLOC_FL_UNSHARE_RANGE  = 0x40;
     }
 }
@@ -95,7 +74,6 @@ bitflags! {
 impl TryFrom<RawFallocMode> for FallocMode {
     type Error = Error;
     fn try_from(raw_mode: RawFallocMode) -> Result<Self> {
-        // Check for invalid combinations of flags
         if raw_mode.contains(RawFallocMode::FALLOC_FL_PUNCH_HOLE)
             && raw_mode.contains(RawFallocMode::FALLOC_FL_ZERO_RANGE)
         {
@@ -139,7 +117,6 @@ impl TryFrom<RawFallocMode> for FallocMode {
             ));
         }
 
-        // Transform valid flags into the fallocate mode
         let mode = if raw_mode.contains(RawFallocMode::FALLOC_FL_PUNCH_HOLE) {
             FallocMode::PunchHoleKeepSize
         } else if raw_mode.contains(RawFallocMode::FALLOC_FL_ZERO_RANGE) {

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use align_ext::AlignExt;
 
 use super::SyscallReturn;

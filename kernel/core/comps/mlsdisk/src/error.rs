@@ -1,41 +1,23 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::fmt;
 
-/// The error types used in this crate.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Errno {
-    /// Transaction aborted.
     TxAborted,
-    /// Not found.
     NotFound,
-    /// Invalid arguments.
     InvalidArgs,
-    /// Out of memory.
     OutOfMemory,
-    /// Out of disk space.
     OutOfDisk,
-    /// IO error.
     IoFailed,
-    /// Permission denied.
     PermissionDenied,
-    /// Unsupported.
     Unsupported,
-    /// OS-specific unknown error.
     OsSpecUnknown,
-    /// Encryption operation failed.
     EncryptFailed,
-    /// Decryption operation failed.
     DecryptFailed,
-    /// MAC (Message Authentication Code) mismatched.
     MacMismatched,
-    /// Not aligned to `BLOCK_SIZE`.
     NotBlockSizeAligned,
-    /// Try lock failed.
     TryLockFailed,
 }
 
-/// The error with an error type and an error message used in this crate.
 #[derive(Clone, Debug)]
 pub struct Error {
     errno: Errno,
@@ -43,12 +25,10 @@ pub struct Error {
 }
 
 impl Error {
-    /// Creates a new error with the given error type and no error message.
     pub const fn new(errno: Errno) -> Self {
         Error { errno, msg: None }
     }
 
-    /// Creates a new error with the given error type and the error message.
     pub const fn with_msg(errno: Errno, msg: &'static str) -> Self {
         Error {
             errno,
@@ -56,7 +36,6 @@ impl Error {
         }
     }
 
-    /// Returns the error type.
     pub fn errno(&self) -> Errno {
         self.errno
     }

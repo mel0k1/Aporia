@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Physical-block lifecycle management for a single ext2 inode.
-
 mod block_ptr_tree;
 mod indirect_block_manager;
 
@@ -17,26 +13,14 @@ use crate::{
     vm::page_cache::PageRun,
 };
 
-/// Bridges the inode's logical file view and the physical block device.
-///
-/// `InodeBlockManager` maintains the relationship between logical file
-/// blocks, ext2 physical block addresses, and the page-cache view of file
-/// contents. Sparse logical ranges are represented by absent block mappings,
-/// while allocated ranges must remain consistent with the inode's
-/// block-pointer tree.
 #[derive(Debug)]
 pub(super) struct InodeBlockManager {
-    /// Translates logical file block indices to physical device block addresses and
-    /// manages block allocation and truncation.
     block_ptr_tree: RwMutex<BlockPtrTree>,
-    /// Cached `npages` bound for `PageCache`.
     npages: AtomicUsize,
-    /// File system handle for indirect I/O and BIO submission.
     fs: Weak<Ext2>,
 }
 
 impl InodeBlockManager {
-    /// Creates a new block manager wrapping the given block-pointer tree.
     pub(super) fn new(block_ptr_tree: BlockPtrTree, fs: Weak<Ext2>, npages: usize) -> Self {
         Self {
             block_ptr_tree: RwMutex::new(block_ptr_tree),
@@ -45,45 +29,34 @@ impl InodeBlockManager {
         }
     }
 
-    /// Returns a strong reference to the owning filesystem.
     pub(super) fn fs(&self) -> Result<Arc<Ext2>> {
         self.fs
             .upgrade()
             .ok_or_else(|| errno!(EIO, "filesystem already dropped"))
     }
 
-    /// Looks up a single logical block -> physical block.
     pub(super) fn lookup_block(&self, iblock: Iblock) -> Result<Option<Ext2Bid>> {
         let tree = self.block_ptr_tree.read();
         tree.lookup_block(iblock)
     }
 
-    /// Returns a snapshot of the raw block pointer state.
     pub(super) fn raw_block_ptrs(&self) -> RawBlockPtrs {
         *self.block_ptr_tree.read().raw_block_ptrs()
     }
 
-    /// Returns whether the block-pointer tree has uncommitted changes.
     pub(super) fn is_dirty(&self) -> bool {
         self.block_ptr_tree.read().is_dirty()
     }
 
-    /// Clears the block-pointer dirty flag after writeback.
     pub(super) fn clear_dirty(&self) {
         self.block_ptr_tree.write().clear_dirty();
     }
 
-    /// Creates an iterator over existing and hole block ranges.
-    ///
-    /// The returned iterator holds a read lock on the block-pointer tree for
-    /// its entire lifetime. Callers should consume it promptly to avoid
-    /// blocking concurrent allocations or truncations on this inode.
     pub(super) fn iter_io_ranges(&self, block_range: Range<Iblock>) -> IoRangeIter<'_> {
         let tree = self.block_ptr_tree.read();
         IoRangeIter::new(block_range, tree)
     }
 
-    /// Truncates blocks to the new_size (best-effort).
     pub(super) fn truncate_to_byte_len(&self, new_size: usize) {
         let fs = match self.fs() {
             Ok(fs) => fs,
@@ -96,12 +69,10 @@ impl InodeBlockManager {
         tree.truncate_to_byte_len(&fs, new_size)
     }
 
-    /// Flushes all dirty cached indirect blocks to the device.
     pub(super) fn sync_indirect_blocks(&self) -> Result<()> {
         self.block_ptr_tree.write().sync_indirect_blocks()
     }
 
-    /// Allocates missing data blocks that cover the requested logical block range.
     pub(super) fn allocate_range_blocks(&self, start_block: usize, end_block: usize) -> Result<()> {
         let fs = self.fs()?;
         let mut tree = self.block_ptr_tree.write();
@@ -127,7 +98,6 @@ impl InodeBlockManager {
         Ok(())
     }
 
-    /// Updates the cached page-cache capacity bound.
     pub(super) fn set_npages(&self, npages: usize) {
         self.npages.store(npages, Ordering::Release);
     }
@@ -151,7 +121,6 @@ impl BlockAsPageCacheBackend for InodeBlockManager {
                 fs.read_blocks_async(bid, bio_segment, Some(complete_fn), io_batch)
             }
             None => {
-                // Encountered a hole, zero fill the page.
                 complete_fn(BioStatus::Zeros);
                 Ok(())
             }
@@ -206,17 +175,10 @@ impl BlockAsPageCacheBackend for InodeBlockManager {
         let iblock = idx as Iblock;
         let fs = self.fs()?;
 
-        // TODO: Refactor `lookup_block` and `resolve_block_range`. Currently
-        // `bio_segment.nblocks()` is always 1, so the point lookup works correctly, but the
-        // semantics are misleading because `bio_segment` can represent a contiguous block range.
-        // The block is already allocated; write it directly.
         if let Some(bid) = self.lookup_block(iblock)? {
             return fs.write_blocks_async(bid, bio_segment, Some(complete_fn), io_batch);
         }
 
-        // Encounter a hole; allocate a block. Since we dropped the read lock
-        // above, another thread may have filled the hole; the `Existing` arm
-        // below handles that race.
         let mut tree = self.block_ptr_tree.write();
         let step = tree.resolve_block_range(&fs, iblock, bio_segment.nblocks() as u32)?;
         let bid = match step {

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{ToTokens, quote};
 use syn::{
@@ -10,7 +8,6 @@ use syn::{
 const DERIVE_IDENT: &str = "derive";
 const REPR_IDENT: &str = "repr";
 
-/// Splits attributes into non-derive attributes and derive paths
 fn split_attrs(attrs: Vec<Attribute>) -> (Vec<Attribute>, Vec<Path>) {
     let mut other_attrs = Vec::new();
     let mut derive_paths = Vec::new();
@@ -29,11 +26,9 @@ fn split_attrs(attrs: Vec<Attribute>) -> (Vec<Attribute>, Vec<Path>) {
     (other_attrs, derive_paths)
 }
 
-/// Checks if the attributes contain `#[repr(C)]`
 fn has_repr_c(attrs: &[Attribute]) -> bool {
     attrs.iter().any(|attr| {
         if attr.path().is_ident("repr") {
-            // Parse the attribute using a custom parser
             let result = attr.parse_args_with(Punctuated::<syn::Meta, Token![,]>::parse_terminated);
 
             if let Ok(list) = result {
@@ -49,7 +44,6 @@ fn has_repr_c(attrs: &[Attribute]) -> bool {
     })
 }
 
-/// Inserts a path into the vector if it's not already present
 fn insert_if_absent(paths: &mut Vec<Path>, new_path: Path) {
     let new_repr = new_path.to_token_stream().to_string();
     if !paths
@@ -75,13 +69,11 @@ pub(super) fn expand_pod_union(input: DeriveInput) -> TokenStream2 {
     let internal_ident = Ident::new(&format!("__{}__", ident), ident.span());
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
-    // Split attributes: keep non-derive attrs, collect derive paths
     let (other_attrs, derive_paths) = split_attrs(input.attrs.clone());
 
     let mut union_derive_paths = derive_paths.clone();
     let mut struct_derive_paths = derive_paths;
 
-    // Add required zerocopy derives for internal union
     insert_if_absent(&mut union_derive_paths, parse_quote!(::zerocopy::FromBytes));
     insert_if_absent(&mut union_derive_paths, parse_quote!(::zerocopy::Immutable));
     insert_if_absent(
@@ -89,7 +81,6 @@ pub(super) fn expand_pod_union(input: DeriveInput) -> TokenStream2 {
         parse_quote!(::zerocopy::KnownLayout),
     );
 
-    // Add required zerocopy derives for public struct wrapper
     insert_if_absent(
         &mut struct_derive_paths,
         parse_quote!(::zerocopy::FromBytes),
@@ -130,7 +121,6 @@ pub(super) fn expand_pod_union(input: DeriveInput) -> TokenStream2 {
     internal_union.vis = Visibility::Inherited;
     internal_union.attrs = union_attrs;
 
-    // Generate accessor methods for each field
     let accessor_methods = data_union.fields.named.iter().map(|field| {
         let field_name = &field.ident;
         let field_ty = &field.ty;
@@ -158,7 +148,6 @@ pub(super) fn expand_pod_union(input: DeriveInput) -> TokenStream2 {
         }
     });
 
-    // Generate initializer methods for each field
     let init_methods = data_union.fields.named.iter().map(|field| {
         let field_name = field.ident.as_ref().expect("field name");
         let field_ty = &field.ty;
@@ -176,7 +165,6 @@ pub(super) fn expand_pod_union(input: DeriveInput) -> TokenStream2 {
         }
     });
 
-    // Generate module name to avoid symbol conflicts
     let module_ident = Ident::new(
         &format!(
             "__private_module_generated_by_ostd_pod_{}",
@@ -185,7 +173,6 @@ pub(super) fn expand_pod_union(input: DeriveInput) -> TokenStream2 {
         proc_macro2::Span::call_site(),
     );
 
-    // Add Copy constraint compile-time assertion
     let copy_assert = quote! {
         const _: () = {
             fn assert_copy<T: ::core::marker::Copy>() {}
@@ -195,7 +182,6 @@ pub(super) fn expand_pod_union(input: DeriveInput) -> TokenStream2 {
         };
     };
 
-    // Generate Pod constraint assertions for all fields
     let field_pod_asserts = data_union.fields.named.iter().map(|field| {
         let ty = &field.ty;
         quote! {
@@ -211,7 +197,6 @@ pub(super) fn expand_pod_union(input: DeriveInput) -> TokenStream2 {
         };
     };
 
-    // Generate the public struct
     let size_expr = quote!({ ::core::mem::size_of::<#internal_ident #ty_generics>() });
     let align_expr = quote! ({::core::mem::align_of::<#internal_ident #ty_generics>()});
     let size_align_assert = quote! {

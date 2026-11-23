@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::time::Duration;
 
 use device_id::{DeviceId, MajorId, MinorId};
@@ -20,15 +18,9 @@ use crate::{
     process::{Gid, Uid},
 };
 
-/// Same major number with Linux.
 const PTMX_MAJOR_NUM: u16 = 5;
-/// Same minor number with Linux.
 const PTMX_MINOR_NUM: u32 = 2;
 
-/// Ptmx is the multiplexing master of devpts.
-///
-/// Every time the multiplexing master is opened, a new instance of pty master inode is returned
-/// and an corresponding pty slave inode is also created.
 pub(crate) struct Ptmx {
     inner: Inner,
     metadata: RwLock<Metadata>,
@@ -60,8 +52,6 @@ impl Ptmx {
     }
 }
 
-// Many methods are left to do nothing because every time the ptmx is being opened,
-// it returns the pty master. So the ptmx can not be used at upper layer.
 impl FileOps for Ptmx {
     fn read_at(
         &self,
@@ -159,7 +149,6 @@ impl Inode for Ptmx {
     }
 
     fn fs(&self) -> Arc<dyn FileSystem> {
-        // FIXME: The below code may panic if the devpts is dropped.
         self.devpts().unwrap()
     }
 

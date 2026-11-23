@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 #![short_vis_path::add(procfs)]
 
 use core::time::Duration;
@@ -116,7 +114,6 @@ impl<S: ProcSymOps + 'static> Inode for ProcSym<S> {
 }
 
 pub(crate) trait ProcSymOps: Sync + Send {
-    /// Returns the thread whose credentials own this procfs inode.
     fn owner_thread(&self) -> Option<Arc<Thread>> {
         None
     }

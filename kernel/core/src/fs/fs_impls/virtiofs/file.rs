@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Open regular-file handles for `virtiofs`.
-
 use aster_fuse::{FsyncFlags, FuseOpenFlags, ops::init::FuseInitFlags2};
 use ostd::warn;
 
@@ -21,14 +17,6 @@ use crate::{
     vm::vmar::FileMmapRequest,
 };
 
-/// A per-open file object backed by a FUSE file handle.
-///
-/// Each instance owns one server-issued `fh` returned by `FUSE_OPEN`. Read,
-/// write, seek, and release requests carry this handle, while access rights
-/// are inherited from the VFS open path that created the object.
-///
-/// The handle also records whether I/O should use the page cache or bypass it,
-/// according to the flags returned by the server.
 pub(super) struct VirtioFsFile {
     inode: Arc<VirtioFsInode>,
     open_handle: Arc<VirtioFsOpenHandle>,
@@ -61,7 +49,6 @@ impl Drop for VirtioFsFile {
 
         work_queue::submit_work_func(
             move || {
-                // Keep the filesystem alive until the deferred flush completes.
                 let _fs_guard = &fs;
                 if let Err(err) = inode.invalidate_whole_page_cache() {
                     warn!(
@@ -71,8 +58,6 @@ impl Drop for VirtioFsFile {
                     );
                 }
 
-                // Keep the handle alive until invalidation finishes, so
-                // `VirtioFsOpenHandle::drop` submits `FUSE_RELEASE` afterward.
                 let _ = &open_handle;
             },
             WorkPriority::Normal,
@@ -121,11 +106,6 @@ impl FileOps for VirtioFsFile {
             WriteOffset::Absolute(offset)
         };
 
-        // FIXME: Cached writeback currently submits whole-page writes with the
-        // original open flags. With `O_APPEND`, the server may append cached
-        // bytes that precede the user write. Keep append writes on the direct
-        // path until writeback can issue precise positional ranges without
-        // append semantics.
         if self.cache_policy == CachePolicy::Cached
             && !status_flags.intersects(StatusFlags::O_APPEND | StatusFlags::O_DIRECT)
         {
@@ -140,9 +120,6 @@ impl FileOps for VirtioFsFile {
 
 impl PerOpenFileOps for VirtioFsFile {
     fn mappable(&self, request: FileMmapRequest) -> Result<MappableObject<'_>> {
-        // `FuseOpenFlags::FOPEN_DIRECT_IO` permits private mappings. Shared
-        // mappings additionally require `FuseInitFlags2::DIRECT_IO_ALLOW_MMAP`
-        // to have been negotiated.
         let is_mmap_allowed = !self
             .open_handle
             .open_flags()
@@ -181,8 +158,6 @@ impl PerOpenFileOps for VirtioFsFile {
     }
 
     fn seek_end(&self) -> Result<Option<usize>> {
-        // The cached inode size may be stale. Refreshing attributes here keeps
-        // `SEEK_END` consistent with the latest file size on the server.
         self.inode.revalidate_attr(Some(self.open_handle.fh()))?;
 
         Ok(Some(self.inode.size()))
@@ -206,12 +181,8 @@ impl PerOpenFileOps for VirtioFsFile {
     }
 }
 
-/// The virtio-fs file I/O caching policy.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum CachePolicy {
-    /// I/O goes through the page cache.
     Cached,
-    /// I/O bypasses the page cache and hits the FUSE server directly, due to
-    /// either `O_DIRECT` or `FOPEN_DIRECT_IO`.
     Direct,
 }

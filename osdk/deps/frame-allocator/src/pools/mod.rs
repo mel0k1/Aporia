@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 mod balancing;
 
 use core::{
@@ -16,39 +14,19 @@ use ostd::{
     sync::{LocalIrqDisabled, SpinLock, SpinLockGuard},
 };
 
+use super::set::BuddySet;
 use crate::chunk::{BuddyOrder, greater_order_of, lesser_order_of, size_of_order, split_to_chunks};
 
-use super::set::BuddySet;
-
-/// The global free buddies.
 static GLOBAL_POOL: SpinLock<BuddySet<MAX_BUDDY_ORDER>, LocalIrqDisabled> =
     SpinLock::new(BuddySet::new_empty());
-/// A snapshot of the total size of the global free buddies, not precise.
 static GLOBAL_POOL_SIZE: AtomicUsize = AtomicUsize::new(0);
 
-// CPU-local free buddies.
 cpu_local! {
     static LOCAL_POOL: RefCell<BuddySet<MAX_LOCAL_BUDDY_ORDER>> = RefCell::new(BuddySet::new_empty());
 }
 
-/// Maximum supported order of the buddy system.
-///
-/// i.e., it is the number of classes of free blocks. It determines the
-/// maximum size of each allocation.
-///
-/// A maximum buddy order of 32 supports up to 4KiB*2^31 = 8 TiB of chunks.
 const MAX_BUDDY_ORDER: BuddyOrder = 32;
 
-/// Maximum supported order of the buddy system for CPU-local buddy system.
-///
-/// Since large blocks are rarely allocated, caching such blocks will lead
-/// to much fragmentation.
-///
-/// Lock guards are also allocated on stack. We can limit the stack usage
-/// for common paths in this way.
-///
-/// A maximum local buddy order of 18 supports up to 4KiB*2^17 = 512 MiB of
-/// chunks.
 const MAX_LOCAL_BUDDY_ORDER: BuddyOrder = 18;
 
 pub(super) fn alloc(guard: &DisabledLocalIrqGuard, layout: Layout) -> Option<Paddr> {
@@ -66,16 +44,10 @@ pub(super) fn alloc(guard: &DisabledLocalIrqGuard, layout: Layout) -> Option<Pad
         chunk_addr = local_pool.alloc_chunk(order);
     }
 
-    // Fall back to the global free lists if the local free lists are empty.
     if chunk_addr.is_none() {
         chunk_addr = global_pool.get().alloc_chunk(order);
     }
-    // TODO: On memory pressure the global pool may be not enough. We may need
-    // to merge all buddy chunks from the local pools to the global pool and
-    // try again.
 
-    // If the alignment order is larger than the size order, we need to split
-    // the chunk and return the rest part back to the free lists.
     let allocated_size = size_of_order(order);
     if allocated_size > layout.size()
         && let Some(chunk_addr) = chunk_addr
@@ -131,10 +103,6 @@ fn do_dealloc(
 
 type GlobalLockGuard = SpinLockGuard<'static, BuddySet<MAX_BUDDY_ORDER>, LocalIrqDisabled>;
 
-/// An on-demand guard that locks the global pool when needed.
-///
-/// It helps to avoid unnecessarily locking the global pool, and also avoids
-/// repeatedly locking the global pool when it is needed multiple times.
 struct OnDemandGlobalLock {
     guard: Option<GlobalLockGuard>,
 }
@@ -148,11 +116,6 @@ impl OnDemandGlobalLock {
         self.guard.get_or_insert_with(|| GLOBAL_POOL.lock())
     }
 
-    /// Returns the size of the global pool.
-    ///
-    /// If the global pool is locked, returns the actual size of the global pool.
-    /// Otherwise, returns the last snapshot of the global pool size by loading
-    /// [`GLOBAL_POOL_SIZE`].
     fn get_global_size(&self) -> usize {
         if let Some(guard) = self.guard.as_ref() {
             guard.total_size()
@@ -164,7 +127,6 @@ impl OnDemandGlobalLock {
 
 impl Drop for OnDemandGlobalLock {
     fn drop(&mut self) {
-        // Updates [`GLOBAL_POOL_SIZE`] if the global pool is locked.
         if let Some(guard) = self.guard.as_ref() {
             GLOBAL_POOL_SIZE.store(guard.total_size(), Ordering::Relaxed);
         }

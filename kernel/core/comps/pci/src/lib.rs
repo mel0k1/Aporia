@@ -1,14 +1,6 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! PCI enumeration, topology, and device-model integration.
-//!
-//! Drivers implement `aster_device::bus::Driver<PciBus>` and register with [`PCI_BUS`].
-//! Devices keep their identity and resources in [`PciCommonDevice`] while bound or unbound.
-
 #![no_std]
 #![deny(unsafe_code)]
 
-// Set this crate's log prefix for `ostd::log`.
 macro_rules! __log_prefix {
     () => {
         "pci: "
@@ -45,10 +37,6 @@ use self::{
     common_device::{PciCommonDevice, PciDeviceType},
 };
 
-// FIXME: Discover root buses from firmware instead of assuming bus 0 is the only root.
-// Until firmware root discovery is supported, use bus 0 as the root of the device tree.
-// This is true in most common cases. For example, QEMU documents this in
-// <https://github.com/qemu/qemu/blob/6883fb508cb7a93e2e7b44c0582bfd9fc2196d4d/docs/pcie.txt#L37>.
 const ROOT_BUS: u8 = 0;
 const MAX_BUSES_PER_SEGMENT: usize = 256;
 
@@ -58,7 +46,6 @@ fn pci_init() -> Result<(), ComponentInitError> {
     Ok(())
 }
 
-/// The PCI bus instance.
 pub static PCI_BUS: Once<Arc<BusHandle<PciBus>>> = Once::new();
 
 fn init() {
@@ -97,9 +84,6 @@ fn scan_bus(
         return Err(Error::InvalidTopology);
     }
 
-    // A bus may be reachable through multiple bridges, as on the i450NX chipset.
-    // Skip buses already scanned to avoid duplicate devices and recursion cycles.
-    // Reference: <https://elixir.bootlin.com/linux/v6.17/source/drivers/pci/probe.c#L1400-L1405>.
     if visited[bus as usize] {
         return Ok(());
     }
@@ -152,7 +136,6 @@ fn register_function(
     if let PciDeviceType::PciToPciBridge(_, secondary, _) = device_type
         && secondary != UNCONFIGURED_SECONDARY_BUS
     {
-        // An invalid bridge edge must not stop enumeration of unrelated devices.
         match scan_bus(bus_handle, range, secondary, device, visited) {
             Err(Error::InvalidTopology) => ostd::warn!(
                 "skipping bridge {:02x}:{:02x}.{} secondary bus {:02x}: outside accessible range",
@@ -169,9 +152,7 @@ fn register_function(
 
 #[derive(Debug)]
 enum Error {
-    /// A bus number is outside the accessible range.
     InvalidTopology,
-    /// The device model failed to register a PCI function or root device.
     DeviceModel(#[expect(dead_code)] aster_device::common::Error),
 }
 

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::{Pgid, Pid};
 use crate::{
     fs::file::file_table::{FileDesc, get_file_fast},
@@ -16,10 +14,7 @@ pub(crate) enum ProcessFilter {
 }
 
 impl ProcessFilter {
-    // For `waitpid`.
     pub(crate) fn from_which_and_id(which: u64, id: u32, ctx: &Context) -> Result<Self> {
-        // Reference:
-        // <https://elixir.bootlin.com/linux/v6.14.4/source/include/uapi/linux/wait.h#L16-L20>
         const P_ALL: u64 = 0;
         const P_PID: u64 = 1;
         const P_PGID: u64 = 2;
@@ -44,28 +39,17 @@ impl ProcessFilter {
         }
     }
 
-    // For `wait4` and `kill`.
     pub(crate) fn from_id(wait_pid: i32) -> Result<Self> {
-        // Reference:
-        // <https://man7.org/linux/man-pages/man2/waitpid.2.html>
-        // <https://man7.org/linux/man-pages/man2/kill.2.html>
         if wait_pid == i32::MIN {
-            // Note that performing `-wait_pid` will overflow, so we return an error directly.
             Err(errno!(ESRCH, "the target group does not exist"))
         } else if wait_pid < -1 {
-            // "wait for any child process whose process group ID is equal to the absolute value of
-            // `pid`"
             Ok(ProcessFilter::WithPgid((-wait_pid).cast_unsigned()))
         } else if wait_pid == -1 {
-            // "wait for any child process"
             Ok(ProcessFilter::Any)
         } else if wait_pid == 0 {
-            // "wait for any child process whose process group ID is equal to that of the calling
-            // process at the time of the call to `waitpid()`"
             let pgid = current!().pgid();
             Ok(ProcessFilter::WithPgid(pgid))
         } else {
-            // "wait for the child whose process ID is equal to the value of `pid`"
             Ok(ProcessFilter::WithPid(wait_pid.cast_unsigned()))
         }
     }

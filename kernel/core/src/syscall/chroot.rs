@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::SyscallReturn;
 use crate::{fs::vfs::path::FsPath, prelude::*, syscall::constants::MAX_FILENAME_LEN};
 

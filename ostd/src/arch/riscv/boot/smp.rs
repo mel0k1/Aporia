@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Multiprocessor Boot Support
-
 use core::arch::global_asm;
 
 use crate::{
@@ -10,7 +6,6 @@ use crate::{
     mm::{Paddr, kspace::kernel_loaded_offset},
 };
 
-// Include the AP boot assembly code
 global_asm!(include_str!("ap_boot.S"));
 
 pub(crate) fn count_processors() -> Option<u32> {
@@ -25,24 +20,11 @@ pub(crate) fn count_processors() -> Option<u32> {
     }
 }
 
-/// Brings up all application processors.
-///
-/// Following the x86 naming, all the harts that are not the bootstrapping hart
-/// are "application processors".
-///
-/// # Safety
-///
-/// The caller must ensure that
-///  1. we're in the boot context of the BSP,
-///  2. all APs have not yet been booted, and
-///  3. the arguments are valid to boot APs.
 pub(crate) unsafe fn bringup_all_aps(info_ptr: *const PerApRawInfo, pt_ptr: Paddr, num_cpus: u32) {
     if num_cpus <= 1 {
-        return; // No APs to bring up
+        return;
     }
 
-    // SAFETY: We ensure that the variables are properly defined in the assembly
-    // code and they are safe to write here.
     unsafe {
         fill_boot_info_ptr(info_ptr);
         fill_boot_page_table_ptr(pt_ptr);
@@ -54,9 +36,6 @@ pub(crate) unsafe fn bringup_all_aps(info_ptr: *const PerApRawInfo, pt_ptr: Padd
 
     for_each_hart_id(|hart_id| {
         if hart_id != bsp_id {
-            // SAFETY: Each hart ID is iterated over exactly once here so we
-            // won't boot up one hart twice. Other safety constraints are
-            // upheld by the caller.
             unsafe { bringup_ap(hart_id) };
         }
     });
@@ -70,9 +49,6 @@ fn for_each_hart_id(mut f: impl FnMut(u32)) {
 
     device_tree.cpus().for_each(|cpu_node| {
         if let Some(device_type) = cpu_node.property("device_type") {
-            // FIXME: We should find a robust method to identify the management
-            // harts. Here we simply skip those harts without MMU, which is
-            // supposed to work in most cases.
             if device_type.as_str() == Some("cpu")
                 && cpu_node.property("mmu-type").is_some()
                 && let Some(reg) = cpu_node.property("reg")
@@ -83,22 +59,10 @@ fn for_each_hart_id(mut f: impl FnMut(u32)) {
     })
 }
 
-/// # Safety
-///
-/// The caller must ensure that
-///  1. we're in the boot context of the BSP,
-///  2. the resources for APs' boot (e.g., stacks and the page table) are set
-///     up correctly, and
-///  3. the `hart_id` hart hasn't booted.
 unsafe fn bringup_ap(hart_id: u32) {
     crate::info!("Starting hart {}", hart_id);
 
-    // Use SBI to start the hart directly at the AP boot code
-    let result = sbi_rt::hart_start(
-        hart_id as usize,
-        get_ap_boot_start_addr(),
-        /* Unused */ 0,
-    );
+    let result = sbi_rt::hart_start(hart_id as usize, get_ap_boot_start_addr(), 0);
 
     if result.error == 0 {
         crate::debug!("Successfully started hart {}", hart_id);
@@ -111,42 +75,27 @@ unsafe fn bringup_ap(hart_id: u32) {
     }
 }
 
-/// Fills the AP boot info array pointer.
-///
-/// # Safety
-///
-/// This function writes to the static mutable variable `__ap_boot_info_array_pointer`.
-/// The caller must ensure exclusive access to this variable.
 unsafe fn fill_boot_info_ptr(info_ptr: *const PerApRawInfo) {
     unsafe extern "C" {
         static mut __ap_boot_info_array_pointer: *const PerApRawInfo;
     }
 
-    // SAFETY: The safety conditions are upheld by the caller.
     unsafe {
         __ap_boot_info_array_pointer = info_ptr;
     }
 }
 
-/// Fills the AP boot page table pointer.
-///
-/// # Safety
-///
-/// This function writes to the static mutable variable `__ap_boot_page_table_pointer`.
-/// The caller must ensure exclusive access to this variable.
 unsafe fn fill_boot_page_table_ptr(pt_ptr: Paddr) {
     unsafe extern "C" {
         static mut __ap_boot_page_table_pointer: Paddr;
     }
 
-    // SAFETY: The safety conditions are upheld by the caller.
     unsafe {
         __ap_boot_page_table_pointer = pt_ptr;
     }
 }
 
 fn get_ap_boot_start_addr() -> Paddr {
-    // The symbol is defined in `ap_boot.S`.
     unsafe extern "C" {
         fn __ap_boot_start();
     }
@@ -155,18 +104,12 @@ fn get_ap_boot_start_addr() -> Paddr {
 }
 
 fn get_bootstrap_hart_id() -> u32 {
-    // SAFETY: This function is only called after `riscv_boot` has written the
-    // ID. There must be a fence after the write if we are APs, and no other
-    // writes happen after that so it's safe to read.
     unsafe { super::BOOTSTRAP_HART_ID }
 }
 
 pub(in crate::arch) fn get_current_hart_id() -> u32 {
     let id = AP_CURRENT_HART_ID.load();
     if id == u32::MAX {
-        // This function cannot be called before `riscv_ap_early_entry`, which
-        // is the entrypoint and initializes `AP_CURRENT_HART_ID`. So if the ID
-        // is not written we must be the BSP.
         get_bootstrap_hart_id()
     } else {
         id
@@ -177,26 +120,9 @@ cpu_local_cell! {
     static AP_CURRENT_HART_ID: u32 = u32::MAX;
 }
 
-// Since in RISC-V we cannot read the hart ID in S mode, the hart ID is
-// delivered from the bootloader. We need to record the hart ID with another
-// layer of entry point.
-//
-/// # Safety
-///
-/// - This function must be called only once on each AP at a proper timing in the AP's boot
-///   assembly code.
-/// - The caller must follow C calling conventions and put the right arguments in registers.
-// SAFETY: The name does not collide with other symbols.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn riscv_ap_early_entry(cpu_id: u32, hart_id: u32) -> ! {
-    // CPU local memory could be accessed here since we are the AP and the BSP
-    // must have initialized it.
     AP_CURRENT_HART_ID.store(hart_id);
 
-    // SAFETY: This is valid to call, because
-    // - The caller is the AP's boot assembly code. It also guarantees that this method will be
-    //   called only once on each AP. No uninitialized AP states are accessed by the code above.
-    // - The compiler guarantees the C calling conventions for this call, and the caller guarantees
-    //   the correctness of the arguments.
     unsafe { ap_early_entry(cpu_id) }
 }

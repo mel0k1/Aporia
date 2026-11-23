@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::{fmt::Debug, marker::PhantomData, mem::ManuallyDrop, ops::Deref, ptr::NonNull};
 
 use super::{
@@ -11,24 +9,14 @@ use crate::{
     sync::non_null::NonNullPtr,
 };
 
-/// A struct that can work as `&'a Frame<M>`.
 pub struct FrameRef<'a, M: AnyFrameMeta + ?Sized> {
     inner: ManuallyDrop<Frame<M>>,
     _marker: PhantomData<&'a Frame<M>>,
 }
 
 impl<M: AnyFrameMeta + ?Sized> FrameRef<'_, M> {
-    /// Borrows the [`Frame`] at the physical address as a [`FrameRef`].
-    ///
-    /// # Safety
-    ///
-    /// The caller must ensure that:
-    ///  - the frame outlives the created reference, so that the reference can
-    ///    be seen as borrowed from that frame.
-    ///  - the type of the [`FrameRef`] (`M`) matches the borrowed frame.
     pub(crate) unsafe fn borrow_paddr(raw: Paddr) -> Self {
         Self {
-            // SAFETY: The caller ensures the safety.
             inner: ManuallyDrop::new(unsafe { Frame::from_raw(raw) }),
             _marker: PhantomData,
         }
@@ -51,8 +39,6 @@ impl<M: AnyFrameMeta + ?Sized> Debug for FrameRef<'_, M> {
     }
 }
 
-// SAFETY: `Frame` is essentially a `*const MetaSlot` that could be used as a non-null
-// `*const` pointer.
 unsafe impl<M: AnyFrameMeta + ?Sized> NonNullPtr for Frame<M> {
     type Target = PhantomData<Self>;
 

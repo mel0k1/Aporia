@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Kernel initialization.
-
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use aster_cmdline::INIT_PROC_ARGS;
@@ -21,18 +17,14 @@ use crate::{
 };
 
 pub(super) fn main() {
-    // Initialize the global states for all CPUs.
     ostd::early_println!("OSTD initialized. Preparing components.");
     component::init_all(InitStage::Bootstrap, component::parse_metadata!()).unwrap();
     init();
 
-    // Initialize the per-CPU states for BSP.
     init_on_each_cpu();
 
-    // Enable APs.
     ostd::boot::smp::register_ap_entry(ap_init);
 
-    // Give the control of the BSP to the idle thread.
     ThreadOptions::new(bsp_idle_loop)
         .cpu_affinity(CpuId::bsp().into())
         .sched_policy(SchedPolicy::Idle)
@@ -67,43 +59,22 @@ fn init_on_each_cpu() {
 }
 
 fn ap_init() {
-    // Initialize the per-CPU states for AP.
     init_on_each_cpu();
 
     ThreadOptions::new(ap_idle_loop)
-        // No races because `ap_init` runs on a certain AP.
         .cpu_affinity(CpuId::current_racy().into())
         .sched_policy(SchedPolicy::Idle)
         .spawn();
 }
 
-//--------------------------------------------------------------------------
-// Per-CPU idle threads
-//--------------------------------------------------------------------------
-
-// Note: Keep the code in the idle loop to the bare minimum.
-//
-// We do not want the idle loop to
-// rely on the APIs of other kernel subsystems for two reasons.
-// First, the idle task must never sleep or block.
-// This property is relied upon by the scheduler.
-// Second, the idle task is spawned before the kernel is fully initialized.
-// So other subsystems may not be ready, yet.
-//
-// In addition,
-// doing more work in the idle task may have negative impact on
-// the latency to switching from the idle task to a useful, runnable one.
-
 fn bsp_idle_loop() {
     ostd::info!("Idle thread for CPU #0 started");
 
-    // Spawn the first non-idle kernel thread on BSP.
     ThreadOptions::new(first_kthread)
         .cpu_affinity(CpuId::bsp().into())
         .sched_policy(SchedPolicy::default())
         .spawn();
 
-    // Wait till the init process is spawned.
     let init_process = loop {
         if let Some(init_process) = INIT_PROCESS.get() {
             break init_process;
@@ -112,7 +83,6 @@ fn bsp_idle_loop() {
         ostd::task::halt_cpu();
     };
 
-    // Wait till the init process becomes zombie.
     while !init_process.status().is_zombie() {
         ostd::task::halt_cpu();
     }
@@ -126,7 +96,6 @@ fn bsp_idle_loop() {
 fn ap_idle_loop() {
     ostd::info!(
         "Idle thread for CPU #{} started",
-        // No races because this function runs on a certain AP.
         CpuId::current_racy().as_usize(),
     );
 
@@ -135,11 +104,6 @@ fn ap_idle_loop() {
     }
 }
 
-//--------------------------------------------------------------------------
-// The first kernel thread
-//--------------------------------------------------------------------------
-
-// The main function of the first (non-idle) kernel thread
 fn first_kthread() {
     println!("Spawn the first kernel thread");
 
@@ -182,7 +146,6 @@ impl BootInit {
             init_path,
         } = self;
 
-        // Only rootfs boot may have no init path; initramfs boot always provides one.
         let Some((init_path, init_name)) = init_path else {
             return spawn_default_rootfs_init(path_resolver, argv, envp);
         };
@@ -221,14 +184,11 @@ fn spawn_default_rootfs_init(
     argv: Vec<CString>,
     envp: Vec<CString>,
 ) -> Result<Arc<Process>> {
-    // Linux probes the fallback init executables in this order:
-    // Reference: <https://elixir.bootlin.com/linux/v6.19/source/init/main.c#L1634>.
     const DEFAULT_INIT_EXEC_PATHS: &[&str] = &["/sbin/init", "/etc/init", "/bin/init", "/bin/sh"];
 
     let mut last_error = None;
 
     for &init_name in DEFAULT_INIT_EXEC_PATHS {
-        // FIXME: Avoid cloning `argv` and `envp` for each fallback candidate.
         let init_path = match path_resolver.lookup(&FsPath::try_from(init_name).unwrap()) {
             Ok(path) => path,
             Err(error) => {
@@ -255,8 +215,6 @@ fn spawn_default_rootfs_init(
 }
 
 fn with_init_argv0(init_name: &str, mut argv: Vec<CString>) -> Vec<CString> {
-    // Linux prepends the init executable path as `argv[0]`.
-    // Reference: <https://elixir.bootlin.com/linux/v6.19/source/init/main.c#L1491>.
     argv.insert(0, CString::new(init_name).unwrap());
     argv
 }

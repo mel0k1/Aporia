@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 pub(super) use bound::BoundNetlink;
 use ostd::sync::{PreemptDisabled, RwLockWriteGuard};
 use unbound::UnboundNetlink;
@@ -101,7 +99,6 @@ where
         Ok(sent_bytes)
     }
 
-    // FIXME: This method is marked as `pub(super)` because it's invoked during kernel mode testing.
     pub(super) fn try_recv(
         &self,
         writer: &mut dyn MultiWrite,
@@ -171,16 +168,13 @@ where
         };
 
         if !control_messages.is_empty() {
-            // TODO: Support sending control message
             warn!("sending control message is not supported");
         }
 
         if reader.is_empty() {
-            // Based on how Linux behaves, zero-sized messages are not allowed for netlink sockets.
             return Err(errno!(ENODATA, "there are no data to send"));
         }
 
-        // TODO: Make sure our blocking behavior matches that of Linux
         self.try_send(reader, remote.as_ref(), flags)
     }
 
@@ -193,8 +187,6 @@ where
             self.try_recv(writer, flags)
         })?;
 
-        // TODO: Receive control message
-
         let message_header = MessageHeader::new(Some(addr), Vec::new());
 
         Ok((output, message_header))
@@ -203,7 +195,6 @@ where
     fn get_option(&self, option: &mut dyn SocketOption) -> Result<()> {
         sock_option_mut!(match option {
             socket_errors @ SocketError => {
-                // TODO: Support socket errors for netlink sockets
                 socket_errors.set(None);
                 return Ok(());
             }
@@ -213,7 +204,6 @@ where
         let inner = self.inner.read();
         let options = self.options.read();
 
-        // Deal with socket-level options
         match options
             .socket
             .get_option(option, &(&*inner, self.socket_type, &self.timeouts))
@@ -222,14 +212,12 @@ where
             res => return res,
         }
 
-        // Deal with netlink-level options
         options.netlink.get_option(option)
     }
 
     fn set_option(&self, option: &dyn SocketOption) -> Result<()> {
         let mut inner = self.inner.write();
 
-        // Deal with socket-level options
         let mut options = self.options.write();
         match options
             .socket
@@ -239,7 +227,6 @@ where
             res => return res.map(|_need_iface_poll| ()),
         }
 
-        // Deal with netlink-level options
         do_netlink_setsockopt(option, options, &mut inner)
     }
 
@@ -321,16 +308,12 @@ fn do_netlink_setsockopt<P: SupportedNetlinkProtocol>(
 ) -> Result<()> {
     sock_option_ref!(match option {
         add_membership @ AddMembership => {
-            // Membership updates may sleep,
-            // so release the options lock first.
             drop(options);
 
             let group_id = add_membership.get().unwrap();
             inner.add_groups(GroupIdSet::from_group_id(*group_id)?);
         }
         drop_membership @ DropMembership => {
-            // Membership updates may sleep,
-            // so release the options lock first.
             drop(options);
 
             let group_id = drop_membership.get().unwrap();

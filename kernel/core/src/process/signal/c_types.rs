@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 #![expect(dead_code)]
 #![expect(non_camel_case_types)]
 
@@ -14,7 +12,6 @@ use crate::{
 };
 
 pub(crate) type sigset_t = u64;
-// FIXME: this type should be put at suitable place
 pub(crate) type clock_t = i64;
 
 #[padding_struct]
@@ -34,9 +31,6 @@ pub(crate) struct siginfo_t {
     pub si_signo: i32,
     pub si_errno: i32,
     pub si_code: i32,
-    // In x86_64, there will be a 4-bytes padding here automatically, the offset of `siginfo_fields` is `0x10`.
-    // Yet in other architectures like arm64, there is no padding here and the offset of `siginfo_fields` is `0x0c`.
-    //_padding: i32,
     siginfo_fields: siginfo_fields_t,
 }
 
@@ -160,7 +154,7 @@ union siginfo_common_second_t {
 #[derive(Clone, Copy)]
 pub(crate) union sigval_t {
     sigval_int: i32,
-    sigval_ptr: Vaddr, //*mut c_void
+    sigval_ptr: Vaddr,
 }
 
 impl sigval_t {
@@ -186,7 +180,7 @@ union siginfo_sigchild_t {
 #[repr(C)]
 #[derive(Clone, Copy, Pod)]
 struct siginfo_sigfault_t {
-    addr: Vaddr, //*const c_void
+    addr: Vaddr,
     addr_lsb: i16,
     first: siginfo_sigfault_first_t,
 }
@@ -203,25 +197,21 @@ union siginfo_sigfault_first_t {
 #[repr(C)]
 #[derive(Clone, Copy)]
 union siginfo_addr_bnd_t {
-    lower: Vaddr, // *const c_void
-    upper: Vaddr, // *const c_void,
+    lower: Vaddr,
+    upper: Vaddr,
 }
 
-/// Reference: <https://elixir.bootlin.com/linux/v6.15.7/source/include/uapi/asm-generic/ucontext.h#L5>
 #[cfg(target_arch = "x86_64")]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
 pub(crate) struct ucontext_t {
     pub uc_flags: u64,
-    pub uc_link: Vaddr, // *mut ucontext_t
+    pub uc_link: Vaddr,
     pub uc_stack: stack_t,
     pub uc_mcontext: mcontext_t,
     pub uc_sigmask: sigset_t,
 }
 
-/// Reference: <https://elixir.bootlin.com/linux/v6.15.7/source/arch/riscv/include/uapi/asm/ucontext.h>
-/// Reference: <https://elixir.bootlin.com/linux/v6.15.7/source/arch/loongarch/include/uapi/asm/ucontext.h>
-/// Reference: <https://elixir.bootlin.com/linux/v6.15.7/source/arch/arm64/include/uapi/asm/ucontext.h>
 #[cfg(any(
     target_arch = "riscv64",
     target_arch = "loongarch64",
@@ -232,18 +222,13 @@ pub(crate) struct ucontext_t {
 #[derive(Clone, Copy, Debug, Pod)]
 pub(crate) struct ucontext_t {
     pub uc_flags: u64,
-    pub uc_link: Vaddr, // *mut ucontext_t
+    pub uc_link: Vaddr,
     pub uc_stack: stack_t,
     pub uc_sigmask: sigset_t,
     pub __unused: [u8; 120],
     pub uc_mcontext: mcontext_t,
 }
 
-// FIXME: Currently Rust generates array impls for every size up to 32 manually
-// and there is ongoing work on refactoring with const generics. We can just
-// derive the `Default` implementation once that is done.
-//
-// See <https://github.com/rust-lang/rust/issues/61415>.
 #[cfg(any(
     target_arch = "riscv64",
     target_arch = "loongarch64",
@@ -274,7 +259,7 @@ pub(crate) type stack_t = sigaltstack_t;
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
 pub(crate) struct sigaltstack_t {
-    pub ss_sp: Vaddr, // *mut c_void
+    pub ss_sp: Vaddr,
     pub ss_flags: i32,
     pub ss_size: usize,
 }
@@ -303,7 +288,6 @@ pub(crate) struct _sigev_thread {
 }
 
 const SIGEV_MAX_SIZE: usize = 64;
-/// The total size of the fields `sigev_value`, `sigev_signo` and `sigev_notify`.
 const SIGEV_PREAMBLE_SIZE: usize = size_of::<i32>() * 2 + size_of::<sigval_t>();
 const SIGEV_PAD_SIZE: usize = (SIGEV_MAX_SIZE - SIGEV_PREAMBLE_SIZE) / size_of::<i32>();
 

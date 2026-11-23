@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::{cmp, sync::atomic::Ordering};
 
 use ostd::{
@@ -35,10 +33,6 @@ pub(super) fn sys_sched_getaffinity(
     Ok(SyscallReturn::Return(bytes_written as isize))
 }
 
-// TODO: The manual page of `sched_setaffinity` says that if the thread is not
-// running on the CPU specified in the affinity mask, it would be migrated to
-// one of the CPUs specified in the mask. We currently do not support this
-// feature as the scheduler is not ready for migration yet.
 pub(super) fn sys_sched_setaffinity(
     tid: Tid,
     cpuset_size: usize,
@@ -80,8 +74,6 @@ pub(super) fn sys_sched_setaffinity(
     Ok(SyscallReturn::Return(0))
 }
 
-// Linux uses `DECLARE_BITMAP` for `cpu_set_t`, inside which each part is a
-// `long`. We use the same scheme to ensure byte endianness compatibility.
 type Part = u64;
 const SIZE_OF_PART: usize = size_of::<Part>();
 const CPUS_IN_PART: usize = SIZE_OF_PART * 8;
@@ -104,7 +96,6 @@ fn read_cpu_set_from(
         let user_part: Part = user_space.read_val(cpu_set_ptr + part_id * SIZE_OF_PART)?;
         for bit_id in 0..CPUS_IN_PART {
             if user_part & (1 << bit_id) != 0 {
-                // If the CPU ID is invalid, just ignore it.
                 let Ok(cpu_id) = CpuId::try_from(part_id * CPUS_IN_PART + bit_id) else {
                     continue;
                 };
@@ -120,7 +111,6 @@ fn read_cpu_set_from(
     Ok(ret_set)
 }
 
-// Returns the number of bytes written.
 fn write_cpu_set_to(
     user_space: CurrentUserSpace,
     cpu_set: &CpuSet,

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::{constants::*, sig_action::SigAction, sig_num::SigNum};
 use crate::{
     prelude::*,
@@ -8,7 +6,6 @@ use crate::{
 
 #[derive(Clone, Copy)]
 pub(crate) struct SigDispositions {
-    // SigNum -> SigAction
     map: [SigAction; COUNT_ALL_SIGS],
 }
 
@@ -30,9 +27,6 @@ impl SigDispositions {
         self.map[idx]
     }
 
-    /// Returns all signal dispositions in ascending signal-number order.
-    ///
-    /// The iterator covers standard and real-time signals.
     pub(crate) fn iter(&self) -> impl Iterator<Item = (SigNum, SigAction)> + '_ {
         self.map.iter().enumerate().map(|(idx, sig_action)| {
             let sig_num = MIN_STD_SIG_NUM + idx as u8;
@@ -52,10 +46,6 @@ impl SigDispositions {
         self.map[idx] = SigAction::Dfl;
     }
 
-    /// man 7 signal:
-    /// When execve, the handled signals are reset to the default; the dispositions of
-    /// ignored signals are left unchanged.
-    /// This function should be used when execve.
     pub(crate) fn inherit(&mut self) {
         for sigaction in &mut self.map {
             if let SigAction::User { .. } = sigaction {
@@ -75,11 +65,6 @@ impl SigDispositions {
 }
 
 fn check_sigaction(sig_action: &SigAction) -> Result<()> {
-    // Here we only check if the SA_RESTORER flag is set and restorer_addr is not 0.
-    // Note: Linux checks the SA_RESTORER flag when initializing the signal stack,
-    // whereas we have moved this check forward to prevent this action from being set.
-    // This may result in some differences from the behavior of Linux.
-
     let SigAction::User {
         flags,
         restorer_addr,
@@ -94,20 +79,9 @@ fn check_sigaction(sig_action: &SigAction) -> Result<()> {
     }
 
     cfg_select! {
-        target_arch = "x86_64" => {
-            // On x86-64, `SA_RESTORER` is mandatory and cannot be omitted.
-            // Ref: <https://elixir.bootlin.com/linux/v6.13/source/arch/x86/kernel/signal_64.c#L172>
-            Err(errno!(EINVAL, "x86-64 should always use SA_RESTORER"))
-        }
-        any(target_arch = "riscv64", target_arch = "aarch64") => {
-            // On RISC-V/ARM, if `SA_RESTORER` is not specified, `__vdso_rt_sigreturn` will be used
-            // as a fallback.
-            Ok(())
-        }
+        target_arch = "x86_64" => Err(errno!(EINVAL, "x86-64 should always use SA_RESTORER")),
+        any(target_arch = "riscv64", target_arch = "aarch64") => Ok(()),
         _ => {
-            // FIXME: The support for user-provided signal handlers
-            // without `SA_RESTORER` is arch-dependent.
-            // Other archs may need to handle scenarios where `SA_RESTORER` is omitted.
             warn!("SA_RESTORER fallback mechanism not implemented for this architecture");
             Err(errno!(
                 EINVAL,

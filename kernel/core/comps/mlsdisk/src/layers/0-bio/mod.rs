@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! The layer of untrusted block I/O.
-
 mod block_buf;
 mod block_log;
 mod block_ring;
@@ -22,5 +18,4 @@ pub type BlockId = usize;
 pub const BLOCK_SIZE: usize = 0x1000;
 pub(crate) const BID_SIZE: usize = size_of::<BlockId>();
 
-// This definition of `BlockId` assumes the target architecture is 64-bit.
 const_assert!(BID_SIZE == 8);

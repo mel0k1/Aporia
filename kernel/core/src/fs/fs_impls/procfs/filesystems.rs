@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use aster_util::printer::{VmPrinter, VmPrinterError};
 
 use crate::{
@@ -11,14 +9,10 @@ use crate::{
     prelude::*,
 };
 
-/// Represents the inode at /proc/filesystems.
 pub(super) struct FileSystemsFileOps;
 
 impl FileSystemsFileOps {
     pub(super) fn new_inode(parent: Weak<dyn Inode>) -> Arc<dyn Inode> {
-        // Reference:
-        // <https://elixir.bootlin.com/linux/v6.16.5/source/fs/filesystems.c#L259>
-        // <https://elixir.bootlin.com/linux/v6.16.5/source/fs/proc/generic.c#L549-L550>
         ProcFile::new(Self, parent, mkmod!(a+r))
     }
 }

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd::mm::VmIo;
 
 use super::SyscallReturn;
@@ -24,7 +22,6 @@ pub(super) fn sys_capset(
     let cap_user_header = user_space.read_val::<CUserCapHeader>(cap_user_header_addr)?;
 
     if cap_user_header.version != LINUX_CAPABILITY_VERSION_3 {
-        // Write the supported version back to userspace.
         user_space.write_val(cap_user_header_addr, &LINUX_CAPABILITY_VERSION_3)?;
         return Err(errno!(
             EINVAL,
@@ -32,9 +29,6 @@ pub(super) fn sys_capset(
         ));
     };
 
-    // The ability to set capabilities of any other thread has been deprecated.
-    // Reference: The "With VFS capabilities support" section in
-    // <https://man7.org/linux/man-pages/man2/capset.2.html>.
     let header_pid = cap_user_header.pid;
     if header_pid != 0 && header_pid != ctx.posix_thread.tid() {
         return Err(errno!(
@@ -47,7 +41,6 @@ pub(super) fn sys_capset(
     let caps_hi =
         user_space.read_val::<CUserCapData>(cap_user_data_addr + size_of::<CUserCapData>())?;
 
-    // Convert the 32-bit capability fields to the 64-bit capability value.
     let permitted_capset = CapSet::from_lo_hi(caps_lo.permitted, caps_hi.permitted);
     let effective_capset = CapSet::from_lo_hi(caps_lo.effective, caps_hi.effective);
     let inheritable_capset = CapSet::from_lo_hi(caps_lo.inheritable, caps_hi.inheritable);

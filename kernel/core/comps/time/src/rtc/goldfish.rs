@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::time::Duration;
 
 use fdt_util::AcquireIoMems;

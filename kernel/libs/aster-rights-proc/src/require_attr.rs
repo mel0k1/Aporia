@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! expand the require macro
-
 use proc_macro2::{Ident, TokenStream};
 use quote::quote;
 use syn::{
@@ -39,8 +35,6 @@ impl Fold for RequireAttr {
 
         let mut new_where_clause = where_clause;
         for required_type in self.required_types.iter() {
-            // If required type is a generic param, the required type should be a type set, we use SetInclude.
-            // Otherwise, we use SetContain.
             if is_generic_param(required_type.clone(), &params) {
                 new_where_clause = Some(set_include_where_clause(
                     self,
@@ -156,7 +150,6 @@ fn set_contain_where_clause(
     }
 }
 
-/// generate a where clause to constraint the type set with another type set
 fn set_include_where_clause(
     require_attr: &RequireAttr,
     required_type_set: Ident,

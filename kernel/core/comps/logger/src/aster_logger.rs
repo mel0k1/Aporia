@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::time::Duration;
 
 use ostd::{
@@ -7,7 +5,6 @@ use ostd::{
     timer::Jiffies,
 };
 
-/// The logger used for Asterinas.
 struct AsterLogger;
 
 static LOGGER: AsterLogger = AsterLogger;

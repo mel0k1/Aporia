@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! This module defines functions related to spawning the init process.
-
 use ostd::{arch::cpu::context::UserContext, task::Task, user::UserContextApi};
 
 use super::{Process, Session};
@@ -23,7 +19,6 @@ use crate::{
     vm::vmar::VmarHandle,
 };
 
-/// Creates and schedules the init process to run.
 pub(crate) fn spawn_init_process(
     path_resolver: PathResolver,
     executable_path: Path,
@@ -32,13 +27,6 @@ pub(crate) fn spawn_init_process(
 ) -> Result<Arc<Process>> {
     let process = create_init_process(path_resolver, executable_path, argv, envp)?;
 
-    // Linux starts the init process without placing it in a process group or session.
-    // It joins one only after userspace first calls `setsid()`.
-    //
-    // Asterinas instead requires every process to belong to both a process group and
-    // a session. The init process is therefore placed in a bootstrap process group
-    // and session with PGID and SID set to zero. This preserves the same user-visible
-    // behavior.
     set_bootstrap_session_and_group(&process);
 
     process.run();
@@ -79,20 +67,16 @@ fn create_init_process(
 }
 
 fn set_bootstrap_session_and_group(process: &Arc<Process>) {
-    // Locking order: PID table -> process group
     let mut pid_table = pid_table::pid_table_mut();
 
-    // Add the process to the bootstrap process group and session
     let (session, process_group) = Session::new_bootstrap_pair(process);
     pid_table.insert_session(session.sid(), &session);
     pid_table.insert_process_group(process_group.pgid(), &process_group);
     *process.process_group.lock() = Some(process_group);
 
-    // Add the new process to the global table
     pid_table.insert_process(process.pid(), process);
 }
 
-/// Creates the init task from the given executable path.
 fn create_init_task(
     tid: Tid,
     process: &Arc<Process>,

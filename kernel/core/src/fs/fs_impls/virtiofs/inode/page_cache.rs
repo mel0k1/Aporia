@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Page cache backend implementation for `VirtioFsInode`.
-
 use core::ops::Deref;
 
 use aster_fuse::{FuseCompletion, FuseNodeId, ReadReq, WriteFlags, WriteReq};
@@ -35,10 +31,6 @@ impl PageCacheBackend for VirtioFsInode {
         let read_offset = idx * PAGE_SIZE;
         let mut chunk = ReadChunk::with_capacity(1);
         chunk.push(locked_page)?;
-        // FIXME: Page-cache I/O should use the current `InodeHandle` status
-        // flags instead of the flags captured in the cached FUSE handle. The
-        // page-cache backend currently receives only the inode, so it cannot
-        // observe per-open status flag changes.
         let read_req = ReadReq::new(
             handle.fh(),
             read_offset as u64,
@@ -57,8 +49,6 @@ impl PageCacheBackend for VirtioFsInode {
         let nodeid = self.nodeid();
         let session = self.fs_ref().session().clone();
 
-        // Split the page run into device-limited request chunks, each issued
-        // as its own FUSE_READ.
         while pages.len() > 0 {
             let chunk_len = pages.len().min(MAX_READ_DATA_PAGES_PER_REQUEST);
             let chunk_start = pages.start_idx();
@@ -99,10 +89,6 @@ impl PageCacheBackend for VirtioFsInode {
         let prepared = prepare_write_page(write_offset, locked_page, file_size, &session)?;
         let chunk = WriteChunk::single(prepared);
 
-        // FIXME: Page-cache I/O should use the current `InodeHandle` status
-        // flags instead of the flags captured in the cached FUSE handle. The
-        // page-cache backend currently receives only the inode, so it cannot
-        // observe per-open status flag changes.
         submit_write_chunk(&session, nodeid, handle, write_offset, chunk, io_batch)
     }
 
@@ -115,7 +101,6 @@ impl PageCacheBackend for VirtioFsInode {
         let nodeid = self.nodeid();
         let session = self.fs_ref().session().clone();
 
-        // Bound each FUSE_WRITE payload by the negotiated `max_write`
         let max_pages_by_write = (session.max_write() as usize / PAGE_SIZE).max(1);
 
         while pages.len() > 0 {
@@ -126,9 +111,6 @@ impl PageCacheBackend for VirtioFsInode {
             let chunk_start = pages.start_idx();
             let chunk_offset = chunk_start * PAGE_SIZE;
 
-            // Keep pages locked until every page in the chunk is prepared. If
-            // preparation fails, dropping these guards unlocks the pages
-            // without leaving any of them in writeback state.
             let mut chunk = WriteChunk::with_capacity(chunk_len);
             for (chunk_pos, locked_page) in (&mut pages).enumerate().take(chunk_len) {
                 let page_idx = chunk_start + chunk_pos;
@@ -137,9 +119,6 @@ impl PageCacheBackend for VirtioFsInode {
                 chunk.push_prepared(prepared);
             }
 
-            // On submission failure, roll the current chunk's pages back so the
-            // caller can re-dirty them; pages already submitted in earlier
-            // chunks complete through `io_batch` on their own.
             submit_write_chunk(
                 &session,
                 nodeid,
@@ -261,8 +240,6 @@ fn prepare_write_page(
     file_size: usize,
     session: &FuseSession,
 ) -> Result<PreparedWritePage> {
-    // The completion callback clears the writeback flag without taking the
-    // page lock, so it is safe to wait while retaining this guard.
     locked_page.wait_until_finish_writing_back();
 
     let writeback_len = PAGE_SIZE.min(file_size - page_start);
@@ -294,8 +271,6 @@ fn submit_read_chunk(
 
     let complete_fn = move |status| {
         complete_read_pages(status, total_len, pages);
-        // Keep the handle alive until the request completes or until the
-        // completion closure is dropped on submission failure.
         drop(handle);
     };
 
@@ -326,8 +301,6 @@ fn submit_write_chunk(
     );
 
     let complete_fn = move |status| {
-        // FIXME: Handle short FUSE writeback by invalidating or retrying unwritten
-        // page contents. For now, continue with the usual writeback completion.
         if let FuseCompletion::MalformedResponse | FuseCompletion::RemoteError(_) = status {
             ostd::error!("virtiofs writeback failed; page data may be lost");
         }
@@ -336,8 +309,6 @@ fn submit_write_chunk(
             page.clear_writing_back();
         }
 
-        // Keep the handle alive until the request completes or until the
-        // completion closure is dropped on submission failure.
         drop(handle);
     };
 
@@ -367,8 +338,6 @@ fn complete_read_pages(
     };
 
     if payload_len > read_size {
-        // The server returned more data than the request asked for; treat the
-        // reply as malformed and leave the pages untouched.
         ostd::error!(
             "virtiofs read failed; payload length {} exceeds {}",
             payload_len,

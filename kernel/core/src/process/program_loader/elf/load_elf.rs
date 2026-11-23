@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! ELF file parser.
-
 use core::ops::Range;
 
 use align_ext::AlignExt;
@@ -29,29 +25,13 @@ use crate::{
     },
 };
 
-/// The base address for PIE (ET_DYN with INTERP) loading.
-///
-/// Linux calls this `ELF_ET_DYN_BASE`. It has some intentions:
-/// - The base load address for PIE programs (ET_DYN with INTERP).
-/// - The heap start address for static PIE programs (ET_DYN without INTERP).
-///
-/// References: <https://elixir.bootlin.com/linux/v6.16.9/source/arch/x86/include/asm/elf.h#L235>
-/// - x86_64:       ELF_ET_DYN_BASE = DEFAULT_MAP_WINDOW / 3 * 2
-/// - riscv64:      ELF_ET_DYN_BASE = (DEFAULT_MAP_WINDOW / 3) * 2
-/// - loongarch64:  ELF_ET_DYN_BASE = TASK_SIZE / 3 * 2
 const PIE_BASE_ADDR: Vaddr = VMAR_CAP_ADDR / 3 * 2;
 
 pub(crate) struct ElfLoadInfo {
-    /// The relocated entry point.
     pub entry_point: Vaddr,
-    /// The top address of the user stack.
     pub user_stack_top: Vaddr,
 }
 
-/// Loads an ELF file to the process VMAR.
-///
-/// This function will map ELF segments and
-/// initialize the init stack and heap.
 pub(crate) fn load_elf_to_vmar(
     vmar: &Vmar,
     elf_file: Arc<dyn FileLike>,
@@ -70,9 +50,6 @@ pub(crate) fn load_elf_to_vmar(
     vmar.process_vm()
         .set_data_range(elf_mapped_info.data_range.clone());
 
-    // Map the vDSO and set the entry.
-    // Since the vDSO does not require being mapped to any specific address,
-    // the vDSO is mapped after the ELF file, heap, and stack.
     #[cfg(not(target_arch = "loongarch64"))]
     if let Some(vdso_text_base) = map_vdso_to_vmar(vmar) {
         #[cfg(any(target_arch = "riscv64", target_arch = "aarch64"))]
@@ -107,7 +84,6 @@ fn lookup_and_parse_ldso(
             return Ok(None);
         };
 
-        // Our FS requires the path to be valid UTF-8. This may be too restrictive.
         let ldso_path = ldso_path
             .into_string()
             .map_err(|_| errno!(ENOEXEC, "the interpreter path is not a valid UTF-8 string",))?;
@@ -131,9 +107,6 @@ fn lookup_and_parse_ldso(
     Ok(Some((ldso_file, ldso_elf)))
 }
 
-/// Maps the VMOs to the corresponding virtual memory addresses and builds the auxiliary vector.
-///
-/// Returns the mapped information, the entry point, and the auxiliary vector.
 fn map_vmos_and_build_aux_vec(
     vmar: &Vmar,
     ldso: Option<(Arc<dyn FileLike>, ElfHeaders)>,
@@ -155,10 +128,6 @@ fn map_vmos_and_build_aux_vec(
         init_aux_vec(parsed_elf, &elf_mapped_info.full_range, ldso_base)?
     };
 
-    // Set AT_SECURE based on setuid/setgid bits and `no_new_privs`.
-    //
-    // FIXME: We should fetch the setuid/setgid bits and `no_new_privs` from
-    // the execve entry and pass them here, rather than re-fetching them here.
     let mode = elf_file.path().mode()?;
     let secure = if mode.has_set_uid() || mode.has_set_gid() {
         let task = Task::current().unwrap();
@@ -184,11 +153,7 @@ fn map_vmos_and_build_aux_vec(
 }
 
 struct LdsoLoadInfo {
-    /// The relocated entry point.
     entry_point: Vaddr,
-    /// The range covering all the mapped segments.
-    ///
-    /// Note that the range may not be page-aligned.
     range: RelocatedRange,
 }
 
@@ -205,26 +170,13 @@ fn load_ldso(
     Ok(LdsoLoadInfo { entry_point, range })
 }
 
-/// The information of mapped ELF segments.
 struct ElfMappedInfo {
-    /// The range covering all the mapped segments.
     full_range: RelocatedRange,
-    /// The executable code range after relocation.
     code_range: Range<Vaddr>,
-    /// The data range after relocation.
     data_range: Range<Vaddr>,
-    /// The base address for the heap start.
     heap_base: Vaddr,
 }
 
-/// Initializes a [`Vmo`] for each segment and then map to the [`Vmar`].
-///
-/// This function will return the mapped information, which contains the
-/// mapped range that covers all segments. The range will be tight,
-/// i.e., will not include any padding bytes. So the boundaries may not
-/// be page-aligned.
-///
-/// [`Vmo`]: crate::vm::page_cache::Vmo
 fn map_segment_vmos(
     elf: &ElfHeaders,
     vmar: &Vmar,
@@ -233,36 +185,18 @@ fn map_segment_vmos(
 ) -> Result<ElfMappedInfo> {
     let elf_va_range = elf.calc_total_vaddr_bounds();
 
-    // The base address for the heap start. If it's `None`, we will use the end of ELF segments.
     let mut heap_base = None;
 
     let map_range = if elf.is_shared_object() {
-        // Relocatable object.
-
         let align = elf.max_load_align();
 
-        // Given that `elf_va_range` is guaranteed to be below `VMAR_CAP_ADDR`, as long as
-        // `VMAR_CAP_ADDR * 2` does not overflow, the following `align_up(align)` cannot overflow
-        // either.
         const { assert!(VMAR_CAP_ADDR.checked_mul(2).is_some()) };
 
-        // Allocate a continuous range of virtual memory for all segments in advance.
-        //
-        // All segments in the ELF program must be mapped to a continuous VM range to
-        // ensure the relative offset of each segment not changed.
         let elf_va_range_aligned =
             elf_va_range.start.align_down(align)..elf_va_range.end.align_up(align);
         let map_size = elf_va_range_aligned.len();
 
-        // There are effectively two types of ET_DYN ELF binaries:
-        // - PIE programs (ET_DYN with PT_INTERP) and
-        // - static PIE programs (ET_DYN without PT_INTERP, usually the ELF interpreter itself).
-        //
-        // Reference: <https://elixir.bootlin.com/linux/v6.19-rc2/source/fs/binfmt_elf.c#L1109>
         let vmar_map_options = if has_interpreter {
-            // PIE program: map near a dedicated base.
-
-            // Add some random padding.
             let nr_pages_padding = {
                 let mut nr_random_padding_pages: u8 = 0;
                 getrandom(nr_random_padding_pages.as_mut_bytes());
@@ -280,23 +214,12 @@ fn map_segment_vmos(
                 .align(align)
                 .offset(VmarMapOffset::FixedNoReplace(offset))
         } else {
-            // Static PIE program: pick an aligned address from the mmap region.
-
-            // When executing static PIE programs, place the heap area away from the
-            // general mmap region and into the unused `PIE_BASE_ADDR` space.
-            // This helps avoid early collisions, since the heap grows upward while
-            // the stack grows downward, and other mappings (such as the vDSO) may
-            // also be placed in the mmap region.
-            //
-            // Reference: <https://elixir.bootlin.com/linux/v6.16.9/source/fs/binfmt_elf.c#L1293>
             heap_base = Some(PIE_BASE_ADDR);
 
             vmar.new_map(map_size, VmPerms::empty()).align(align)
         };
         let aligned_range = vmar_map_options.build().map(|addr| addr..addr + map_size)?;
 
-        // After acquiring a suitable range, we can remove the mapping and then
-        // map each segment at the desired address.
         vmar.remove_mapping(aligned_range.clone());
 
         let start_offset = elf_va_range.start - elf_va_range_aligned.start;
@@ -304,16 +227,10 @@ fn map_segment_vmos(
 
         aligned_range.start + start_offset..aligned_range.end - end_offset
     } else {
-        // Not relocatable object. Map as-is.
-
         if elf_va_range.start < VMAR_LOWEST_ADDR {
             return Err(errno!(EPERM, "the mapping address is too small"));
         }
 
-        // Allocate a continuous range of virtual memory for all segments in advance.
-        //
-        // This is to ensure that the range does not conflict with other objects, such
-        // as the interpreter.
         let elf_va_range_aligned =
             elf_va_range.start.align_down(PAGE_SIZE)..elf_va_range.end.align_up(PAGE_SIZE);
         let map_size = elf_va_range_aligned.len();
@@ -322,8 +239,6 @@ fn map_segment_vmos(
             .offset(VmarMapOffset::FixedNoReplace(elf_va_range_aligned.start))
             .build()?;
 
-        // After acquiring a suitable range, we can remove the mapping and then
-        // map each segment at the desired address.
         vmar.remove_mapping(elf_va_range_aligned.clone());
 
         elf_va_range.clone()
@@ -339,7 +254,6 @@ fn map_segment_vmos(
         map_segment_vmo(loadable_phdr, elf_file.clone(), vmar, map_at)?;
     }
 
-    // The code range spans all executable loadable segments after relocation.
     let code_range = elf
         .loadable_phdrs()
         .iter()
@@ -354,8 +268,6 @@ fn map_segment_vmos(
         .reduce(|acc_range, range| acc_range.start.min(range.start)..acc_range.end.max(range.end))
         .unwrap_or(0..0);
 
-    // According to Linux behavior, the data range only includes the last loadable segment.
-    // Reference: <https://elixir.bootlin.com/linux/v6.16.9/source/fs/binfmt_elf.c#L1200-L1227>
     let data_range = elf.find_last_vaddr_bound().map_or(0..0, |range| {
         let start = relocated_range
             .relocated_addr_of(range.start)
@@ -371,10 +283,6 @@ fn map_segment_vmos(
     })
 }
 
-/// Creates and maps the segment VMO to the VMAR.
-///
-/// Additional anonymous mappings will be created to represent trailing bytes, if any. For example,
-/// this applies to the `.bss` segment.
 fn map_segment_vmo(
     loadable_phdr: &LoadablePhdr,
     elf_file: Arc<dyn FileLike>,
@@ -412,11 +320,6 @@ fn map_segment_vmo(
             .handle_page_faults_around();
         let map_addr = vm_map_options.build()?;
 
-        // Write zero as paddings if the tail is not page-aligned and map size
-        // is larger than file size (e.g., `.bss`). The mapping is by default
-        // private so the writes will trigger copy-on-write. Ignore errors if
-        // the permissions do not allow writing.
-        // Reference: <https://elixir.bootlin.com/linux/v6.17/source/fs/binfmt_elf.c#L410-L422>
         let vaddr_to_zero = map_addr + (file_range.end - segment_offset);
         let size_to_zero = map_addr + segment_size - vaddr_to_zero;
         if size_to_zero != 0 {
@@ -474,7 +377,6 @@ fn init_aux_vec(
     Ok(aux_vec)
 }
 
-/// Maps the vDSO VMO to the corresponding virtual memory address.
 #[cfg(not(target_arch = "loongarch64"))]
 fn map_vdso_to_vmar(vmar: &Vmar) -> Option<Vaddr> {
     use crate::vdso::{VDSO_VMO_LAYOUT, vdso_vmo};

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd_pod::{FromZeros, IntoBytes, Pod, pod_union};
 
 #[test]
@@ -48,7 +46,6 @@ fn union_mutable_accessor() {
 
     let mut u = U3::new_zeroed();
 
-    // Modify field through mutable accessor
     *u.x_mut() = 0xAABBCCDD;
     assert_eq!(*u.x(), 0xAABBCCDD);
 }

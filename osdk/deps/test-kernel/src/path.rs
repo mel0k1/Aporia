@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::{
     collections::{BTreeMap, VecDeque, vec_deque},
     string::{String, ToString},
@@ -201,7 +199,6 @@ impl SuffixTrie {
         cur.is_end = true;
     }
 
-    /// Find if there is a perfect match in this suffix trie.
     #[cfg_attr(not(ktest), expect(dead_code))]
     pub(super) fn matches<I, P>(&self, path: I) -> bool
     where
@@ -219,7 +216,6 @@ impl SuffixTrie {
         cur.is_end
     }
 
-    /// Find if any suffix of the path exists in the suffix trie.
     pub(super) fn contains<I, P>(&self, path: I) -> bool
     where
         I: DoubleEndedIterator<Item = P>,

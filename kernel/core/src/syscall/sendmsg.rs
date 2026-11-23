@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd::mm::VmIo;
 
 use super::SyscallReturn;
@@ -29,8 +27,6 @@ pub(super) fn sys_sendmsg(
     );
 
     let file = {
-        // Reading control messages may access the file table,
-        // so we have to clone the file and drop the file table reference here.
         let file_table = ctx.thread_local.borrow_file_table();
         let file_table_locked = file_table.read();
         file_table_locked.get_file(sockfd.try_into()?)?.clone()
@@ -58,7 +54,6 @@ pub(super) fn send_one_message(
     socket
         .sendmsg(&mut io_vec_reader, message_header, flags)
         .map_err(|err| match err.error() {
-            // FIXME: `sendmsg` should not be restarted if a timeout has been set on the socket using `setsockopt`.
             Errno::EINTR => errno!(ERESTARTSYS),
             _ => err,
         })

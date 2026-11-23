@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use crate::{
     mm::{
         Frame, FrameAllocOptions, PAGE_SIZE,
@@ -85,7 +83,6 @@ fn kvirt_area_tracked_drop() {
 
     drop(kvirt_area);
 
-    // After dropping, the virtual address range should be freed and no longer mapped.
     let kvirt_area =
         KVirtArea::map_frames(size, 0, core::iter::empty::<Frame<()>>(), default_prop());
     let guard = disable_preempt();
@@ -103,7 +100,6 @@ fn kvirt_area_untracked_drop() {
 
     drop(kvirt_area);
 
-    // After dropping, the virtual address range should be freed and no longer mapped.
     let kvirt_area = unsafe { KVirtArea::map_untracked_frames(size, 0, 0..0, default_prop()) };
     let guard = disable_preempt();
     assert!(kvirt_area.query(&guard, kvirt_area.start()).is_none());

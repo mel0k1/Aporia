@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::{fmt::Display, ops::Range};
 
 use ostd::mm::VmIo;
@@ -18,7 +16,7 @@ use crate::{
     vm::page_cache::PageCache,
 };
 
-pub(super) const DENTRY_SIZE: usize = 32; // directory entry size
+pub(super) const DENTRY_SIZE: usize = 32;
 
 #[derive(Clone, Copy, Debug)]
 pub(super) enum ExfatDentry {
@@ -89,7 +87,6 @@ impl TryFrom<RawExfatDentry> for ExfatDentry {
     fn try_from(dentry: RawExfatDentry) -> Result<Self> {
         let dentry_bytes = dentry.as_bytes();
         #[expect(clippy::match_overlapping_arm)]
-        // FIXME: `EXFAT_STREAM` and `0xC0..=0xFF` overlap. Is the overlapping case expected?
         match dentry.dentry_type {
             EXFAT_FILE => Ok(ExfatDentry::File(ExfatFileDentry::from_bytes(dentry_bytes))),
             EXFAT_STREAM => Ok(ExfatDentry::Stream(ExfatStreamDentry::from_bytes(
@@ -110,15 +107,12 @@ impl TryFrom<RawExfatDentry> for ExfatDentry {
             )),
 
             EXFAT_UNUSED => Ok(ExfatDentry::UnUsed),
-            // Deleted
             0x01..0x80 => Ok(ExfatDentry::Deleted(ExfatDeletedDentry::from_bytes(
                 dentry_bytes,
             ))),
-            // Primary
             0x80..0xC0 => Ok(ExfatDentry::GenericPrimary(
                 ExfatGenericPrimaryDentry::from_bytes(dentry_bytes),
             )),
-            // Secondary
             0xC0..=0xFF => Ok(ExfatDentry::GenericSecondary(
                 ExfatGenericSecondaryDentry::from_bytes(dentry_bytes),
             )),
@@ -126,12 +120,10 @@ impl TryFrom<RawExfatDentry> for ExfatDentry {
     }
 }
 
-// State machine used to validate dentry set.
 enum ExfatValidateDentryMode {
     Started,
     GetFile,
     GetStream,
-    // 17 name dentires at maximal.
     GetName(usize),
     GetBenignSecondary,
 }
@@ -192,19 +184,13 @@ pub(crate) trait Checksum {
     fn update_checksum(&mut self);
 }
 
-/// A set of dentries that collectively describe a file or folder.
-/// Root directory cannot be represented as an ordinal dentryset.
 pub(super) struct ExfatDentrySet {
     dentries: Vec<ExfatDentry>,
 }
 
 impl ExfatDentrySet {
-    /// Entry set indexes
-    /// File dentry index.
     const ES_IDX_FILE: usize = 0;
-    /// Stream dentry index.
     const ES_IDX_STREAM: usize = 1;
-    /// Name dentry index.
     #[expect(dead_code)]
     const ES_IDX_FIRST_FILENAME: usize = 2;
 
@@ -320,9 +306,6 @@ impl ExfatDentrySet {
     }
 
     pub(super) fn to_le_bytes(&self) -> Vec<u8> {
-        // It may be slow to copy at the granularity of byte.
-        // self.dentries.iter().map(|dentry| dentry.to_le_bytes()).flatten().collect::<Vec<u8>>()
-
         let mut bytes = vec![0; self.dentries.len() * DENTRY_SIZE];
         for (i, dentry) in self.dentries.iter().enumerate() {
             let dentry_bytes = dentry.as_le_bytes();
@@ -335,7 +318,6 @@ impl ExfatDentrySet {
     fn validate_dentry_set(&self) -> Result<()> {
         let mut status = ExfatValidateDentryMode::Started;
 
-        // Maximum dentries = 255 + 1(File dentry)
         if self.dentries.len() > u8::MAX as usize + 1 {
             return Err(errno!(EINVAL, "too many dentries"));
         }
@@ -404,7 +386,6 @@ impl ExfatDentrySet {
         Ok(name)
     }
 
-    /// Name dentries are not permitted to modify. We should create a new dentry set for renaming.
     fn calculate_checksum(&self) -> u16 {
         const CHECKSUM_BYTES_RANGE: Range<usize> = 2..4;
         const EMPTY_RANGE: Range<usize> = 0..0;
@@ -438,11 +419,8 @@ impl Checksum for ExfatDentrySet {
 }
 
 pub(super) struct ExfatDentryIterator<'a> {
-    /// The dentry position in current inode.
     entry: u32,
-    /// The page cache of the iterated inode.
     page_cache: &'a PageCache,
-    /// Remaining size that can be iterated. If none, iterate through the whole cluster chain.
     size: Option<usize>,
 }
 
@@ -489,7 +467,6 @@ impl Iterator for ExfatDentryIterator<'_> {
             return Some(Err(errno!(EIO, "Unable to read dentry from page cache.",)));
         }
 
-        // The result is always OK.
         let dentry_result = ExfatDentry::try_from(RawExfatDentry::from_bytes(&dentry_buf)).unwrap();
 
         self.entry += 1;
@@ -501,38 +478,28 @@ impl Iterator for ExfatDentryIterator<'_> {
     }
 }
 
-/// On-disk dentry formats
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
-// For files & directories
 pub(super) struct ExfatFileDentry {
-    pub(super) dentry_type: u8, // 0x85
-    // Number of Secondary directory entries.
-    // 2 to 18 (1 StreamDentry + rest NameDentry)
+    pub(super) dentry_type: u8,
     pub(super) num_secondary: u8,
-    // Checksum of all directory entries in the given set excluding this field,calculated on file and secondary entries.
     pub(super) checksum: u16,
 
-    // bit0: read-only; bit1: hidden; bit2: system; bit4: directory; bit5: archive
     pub(super) attribute: u16,
     pub(super) reserved1: u16,
 
-    // Create time, however, ctime in unix metadata means ***change time***.
     pub(super) create_time: u16,
     pub(super) create_date: u16,
 
     pub(super) modify_time: u16,
     pub(super) modify_date: u16,
 
-    // The timestamp for access_time has double seconds granularity.
     pub(super) access_time: u16,
     pub(super) access_date: u16,
 
-    // High precision time in 10ms
     pub(super) create_time_cs: u8,
     pub(super) modify_time_cs: u8,
 
-    // Timezone for various time
     pub(super) create_utc_offset: u8,
     pub(super) modify_utc_offset: u8,
     pub(super) access_utc_offset: u8,
@@ -542,29 +509,27 @@ pub(super) struct ExfatFileDentry {
 
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
-// MUST be immediately follow the FileDentry (the second dentry in a dentry set)
 pub(super) struct ExfatStreamDentry {
-    pub(super) dentry_type: u8, // 0xC0
-    pub(super) flags: u8, // bit0: AllocationPossible (must be 1); bit1: NoFatChain (=1 <=> contiguous)
+    pub(super) dentry_type: u8,
+    pub(super) flags: u8,
     pub(super) reserved1: u8,
-    pub(super) name_len: u8,   // file name length (in Unicode - 2 bytes)
-    pub(super) name_hash: u16, // something like checksum for file name (calculated in bytes)
+    pub(super) name_len: u8,
+    pub(super) name_hash: u16,
     pub(super) reserved2: u16,
-    pub(super) valid_size: u64, // file current size
+    pub(super) valid_size: u64,
     pub(super) reserved3: u32,
-    pub(super) start_cluster: u32, // file start cluster
-    pub(super) size: u64,          // file maximum size (not used in init a inode?)
+    pub(super) start_cluster: u32,
+    pub(super) size: u64,
 }
 
 pub(crate) type UTF16Char = u16;
 
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
-// MUST be immediately follow the StreamDentry in the number of NameLength/15 rounded up
 pub(super) struct ExfatNameDentry {
-    pub(super) dentry_type: u8,                                // 0xC1
-    pub(super) flags: u8,                                      // first two bits must be zero
-    pub(super) unicode_0_14: [UTF16Char; EXFAT_FILE_NAME_LEN], // 15 (or less) characters of file name
+    pub(super) dentry_type: u8,
+    pub(super) flags: u8,
+    pub(super) unicode_0_14: [UTF16Char; EXFAT_FILE_NAME_LEN],
 }
 
 #[repr(C, packed)]
@@ -666,22 +631,21 @@ impl ExfatName {
             return Err(errno!(EINVAL, "not a valid char"));
         }
         self.0.push(value);
-        // self.0.push(upcase_table.lock().transform_char_to_upcase(value)?);
         Ok(())
     }
 
     fn is_valid_char(value: UTF16Char) -> bool {
         match value {
-            0..0x20 => false, // Control Code
-            0x22 => false,    // Quotation Mark
-            0x2A => false,    // Asterisk
-            0x2F => false,    // Forward slash
-            0x3A => false,    // Colon
-            0x3C => false,    // Less-than sign
-            0x3E => false,    // Greater-than sign
-            0x3F => false,    // Question mark
-            0x5C => false,    // Back slash
-            0x7C => false,    // Vertical bar
+            0..0x20 => false,
+            0x22 => false,
+            0x2A => false,
+            0x2F => false,
+            0x3A => false,
+            0x3C => false,
+            0x3E => false,
+            0x3F => false,
+            0x5C => false,
+            0x7C => false,
             _ => true,
         }
     }
@@ -701,7 +665,6 @@ impl ExfatName {
         _upcase_table: Arc<SpinLock<ExfatUpcaseTable>>,
     ) -> Result<Self> {
         let name = ExfatName(name.encode_utf16().collect());
-        // upcase_table.lock().transform_to_upcase(&mut name.0)?;
         name.verify()?;
         Ok(name)
     }
@@ -735,7 +698,6 @@ impl ExfatName {
         {
             return Err(errno!(EINVAL, "invalid file name"));
         }
-        // TODO:verify dots
         Ok(())
     }
 }

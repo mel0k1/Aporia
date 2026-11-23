@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Kernel virtual memory allocation
-
 use core::ops::Range;
 
 use self::allocator::kvirt_area_allocator;
@@ -24,33 +20,11 @@ mod allocator {
 
     static KVIRT_AREA_ALLOCATOR: RangeAllocator = RangeAllocator::new(VMALLOC_VADDR_RANGE);
 
-    /// Returns a reference to the kernel virtual memory allocator.
-    ///
-    /// [`DisabledLocalIrqGuard`] is required because DMA objects may be
-    /// dropped in IRQ handlers. So the guard is necessary to prevent
-    /// deadlocks. For more details, see [`crate::mm::dma`].
-    ///
-    /// Meanwhile, note that deadlocks may occur if the page table nodes locked
-    /// in this file are also locked in other files where only preemption is
-    /// disabled. This requires extra care.
     pub(super) fn kvirt_area_allocator(_guard: &DisabledLocalIrqGuard) -> &RangeAllocator {
         &KVIRT_AREA_ALLOCATOR
     }
 }
 
-/// Kernel virtual area.
-///
-/// A kernel virtual area manages a range of memory in [`VMALLOC_VADDR_RANGE`].
-/// It can map a portion or the entirety of its virtual memory pages to
-/// physical memory, whether tracked with metadata or not.
-///
-/// It is the caller's responsibility to ensure TLB coherence before using the
-/// mapped virtual address on a certain CPU.
-//
-// FIXME: This caller-ensured design is very error-prone. A good option is to
-// use a guard the pins the CPU and ensures TLB coherence while accessing the
-// `KVirtArea`. However, `IoMem` need some non trivial refactoring to support
-// being implemented on a `!Send` and `!Sync` guard.
 #[derive(Debug)]
 pub(crate) struct KVirtArea {
     range: Range<Vaddr>,
@@ -110,17 +84,6 @@ impl KVirtArea {
         cursor.query().unwrap().1
     }
 
-    /// Create a kernel virtual area and map tracked pages into it.
-    ///
-    /// The created virtual area will have a size of `area_size`, and the pages
-    /// will be mapped starting from `map_offset` in the area.
-    ///
-    /// # Panics
-    ///
-    /// This function panics if
-    ///  - the area size is not a multiple of [`PAGE_SIZE`];
-    ///  - the map offset is not aligned to [`PAGE_SIZE`];
-    ///  - the map offset plus the size of the pages exceeds the area size.
     pub(crate) fn map_frames<T: AnyFrameMeta + ?Sized>(
         area_size: usize,
         map_offset: usize,
@@ -139,32 +102,12 @@ impl KVirtArea {
         let mut cursor = page_table.cursor_mut(&irq_guard, &cursor_range).unwrap();
 
         for frame in frames.into_iter() {
-            // SAFETY: The constructor of the `KVirtArea` has already ensured
-            // that this mapping does not affect kernel's memory safety.
             unsafe { cursor.map(MappedItem::Tracked(Frame::from_unsized(frame), prop)) };
         }
 
         Self { range }
     }
 
-    /// Creates a kernel virtual area and maps untracked frames into it.
-    ///
-    /// The created virtual area will have a size of `area_size`, and the
-    /// physical addresses will be mapped starting from `map_offset` in
-    /// the area.
-    ///
-    /// You can provide a `0..0` physical range to create a virtual area without
-    /// mapping any physical memory.
-    ///
-    /// # Panics
-    ///
-    /// This function panics if
-    ///  - the area size is not a multiple of [`PAGE_SIZE`];
-    ///  - the map offset is not aligned to [`PAGE_SIZE`];
-    ///  - the provided physical range is not aligned to [`PAGE_SIZE`];
-    ///  - the map offset plus the length of the physical range exceeds the
-    ///    area size;
-    ///  - the provided physical range contains tracked physical addresses.
     pub(crate) unsafe fn map_untracked_frames(
         area_size: usize,
         map_offset: usize,
@@ -193,7 +136,6 @@ impl KVirtArea {
 
             for (pa, level) in largest_pages::<KernelPtConfig>(va_range.start, pa_range.start, len)
             {
-                // SAFETY: The caller of `map_untracked_frames` has ensured the safety of this mapping.
                 unsafe { cursor.map(MappedItem::Untracked(pa, level, prop)) };
             }
         }
@@ -206,22 +148,16 @@ impl Drop for KVirtArea {
     fn drop(&mut self) {
         let irq_guard = irq::disable_local();
 
-        // 1. Unmap all mapped pages.
         let page_table = KERNEL_PAGE_TABLE.get().unwrap();
         let range = self.start()..self.end();
         let mut cursor = page_table.cursor_mut(&irq_guard, &range).unwrap();
         loop {
-            // SAFETY:
-            // 1. The range is under `KVirtArea`, so it is safe to unmap.
-            // 2. The caller of `KVirtArea` will ensure TLB conherence when the range is used again,
-            //    so the unmapped items are safe to be dropped immediately.
             let Some(frag) = (unsafe { cursor.take_next(self.end() - cursor.virt_addr()) }) else {
                 break;
             };
             drop(frag);
         }
 
-        // 2. Free the virtual block.
         kvirt_area_allocator(&irq_guard).free(range);
     }
 }

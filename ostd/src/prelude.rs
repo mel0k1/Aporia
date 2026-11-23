@@ -1,10 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! The prelude.
-
-/// A specialized [`Result`] type for this crate.
-///
-/// [`Result`]: core::result::Result
 #[expect(
     unused_qualifications,
     reason = "`error` below is intended to re-export the macro but brings the module into scope"

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use aster_bigtcp::{
     errors::tcp::ListenError,
     socket::{RawTcpOption, RawTcpSetOption},
@@ -58,8 +56,6 @@ impl ListenStream {
     pub(super) fn check_io_events(&self) -> IoEvents {
         let can_accept = self.tcp_listener.can_accept();
 
-        // If network packets come in simultaneously, the socket state may change in the middle.
-        // However, the current pollee implementation should be able to handle this race condition.
         if can_accept {
             IoEvents::IN
         } else {

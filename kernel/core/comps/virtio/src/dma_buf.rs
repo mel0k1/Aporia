@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::sync::Arc;
 
 use aster_bigtcp::packet::{RxBuffer, TxBuffer};
@@ -10,12 +8,7 @@ use ostd::mm::{
     dma::{DmaCoherent, DmaDirection, DmaStream},
 };
 
-/// A DMA-capable buffer.
-///
-/// Any type implements this trait should also implements `HasDaddr` trait,
-/// and provides the exact length of DMA area.
 pub(crate) trait DmaBuf: HasDaddr {
-    /// The length of Dma area, in bytes
     fn len(&self) -> usize;
 }
 

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::SyscallReturn;
 use crate::{
     fs::file::{
@@ -49,13 +47,9 @@ impl From<FlockOps> for FlockType {
 bitflags! {
     #[derive(Clone, Copy, Debug)]
     struct FlockOps: i32 {
-        /// Shared lock
         const LOCK_SH = 1;
-        /// Exclusive lock
         const LOCK_EX = 2;
-        // Or'd with one of the above to prevent blocking
         const LOCK_NB = 4;
-        // Remove lock
         const LOCK_UN = 8;
     }
 }

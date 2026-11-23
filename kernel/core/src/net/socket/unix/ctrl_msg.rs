@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::{fmt, mem};
 
 use aster_bigtcp::socket::ReceiveBehavior;
@@ -78,9 +76,6 @@ impl Debug for FileMessage {
     }
 }
 
-/// The maximum number of the file descriptors in the control messages.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.15/source/include/net/scm.h#L18>.
 const MAX_NR_FILES: usize = 253;
 
 impl FileMessage {
@@ -91,14 +86,9 @@ impl FileMessage {
         }
         let nfiles = payload_len / size_of::<i32>();
 
-        // "Attempting to send an array larger than this limit causes sendmsg(2) to fail with the
-        // error EINVAL." -- Reference: <https://man7.org/linux/man-pages/man7/unix.7.html>.
         if nfiles > MAX_NR_FILES {
             return Err(errno!(EINVAL, "the SCM_RIGHTS message is too large"));
         }
-        // TODO: "[the ETOOMANYREFS error] occurs if the number of "in-flight" file descriptors
-        // exceeds the RLIMIT_NOFILE resource limit and the caller does not have the
-        // CAP_SYS_RESOURCE capability."
 
         let mut files = Vec::with_capacity(nfiles);
 
@@ -136,13 +126,8 @@ impl FileMessage {
 
         let current = Task::current().unwrap();
         let file_table = current.as_thread_local().unwrap().borrow_file_table();
-        // TODO: Report the FDs already inserted and set `MSG_CTRUNC` if the FD limit is reached.
         for file in self.files[..nfiles].iter() {
-            // TODO: Deal with the `O_CLOEXEC` flag.
             let fd = file_table.lock_and_insert(file.clone(), FdFlags::empty())?;
-            // Perhaps we should remove the inserted files from the file table if we cannot write
-            // the file descriptor back to user space? However, even Linux cannot handle every
-            // corner case (https://elixir.bootlin.com/linux/v6.15.2/source/net/core/scm.c#L357).
             writer.write_val::<i32>(&(fd.into()))?;
         }
 
@@ -187,9 +172,6 @@ impl CredMessage {
     }
 }
 
-/// Control message types.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.13/source/include/linux/socket.h#L178>.
 #[expect(non_camel_case_types)]
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, TryFromInt)]
@@ -200,15 +182,6 @@ enum CControlType {
     SCM_PIDFD = 4,
 }
 
-/// Auxiliary data associated with UNIX messages.
-///
-/// In UNIX sockets, one can send payload bytes with multiple control messages. If these control
-/// messages need to be sent to a remote endpoint, they are packaged in this type and transmitted.
-///
-/// We use this type instead of transmitting control messages directly to the remote endpoint
-/// because control messages of the same type (e.g., files) can be merged and missing control
-/// messages of certain types (e.g., credentials) can be supplied automatically according to socket
-/// option settings.
 #[derive(Default)]
 pub(super) struct AuxiliaryData {
     files: Vec<Arc<dyn FileLike>>,
@@ -216,14 +189,12 @@ pub(super) struct AuxiliaryData {
 }
 
 impl AuxiliaryData {
-    /// Builds the auxiliary data from the control messages.
     pub(super) fn from_control(ctrl_msgs: Vec<ControlMessage>) -> Result<Self> {
         let mut files = Vec::new();
         let mut cred = None;
 
         for ctrl_msg in ctrl_msgs.into_iter() {
             let ControlMessage::Unix(unix_ctrl_msg) = ctrl_msg;
-            // TODO: What should we do if there are control messages of other protocols?
 
             match unix_ctrl_msg.0 {
                 Message::Files(FileMessage {
@@ -237,7 +208,6 @@ impl AuxiliaryData {
                 Message::Cred(CredMessage { cred: msg_cred }) => {
                     let cur_cred = SocketCred::<ReadOp>::new_current();
                     if cur_cred.to_real_c_cred() != msg_cred {
-                        // FIXME: Allow this if we're root or have the CAP_SYS_ADMIN capability.
                         return Err(errno!(EPERM, "setting others' credentials is not allowed"));
                     }
                     cred = Some(cur_cred);
@@ -245,9 +215,6 @@ impl AuxiliaryData {
             }
         }
 
-        // FIXME: Sending UNIX sockets over UNIX sockets can easily lead to circular references and
-        // memory leaks. Linux uses a complex garbage collection algorithm to address these issues.
-        // See also <https://elixir.bootlin.com/linux/v6.15/source/net/unix/garbage.c#L592>.
         if files
             .iter()
             .any(|file| (&**file as &dyn Any).is::<UnixStreamSocket>())
@@ -266,14 +233,12 @@ impl AuxiliaryData {
         Ok(Self { files, cred })
     }
 
-    /// Fills the current credentials if there are no credentials.
     pub(super) fn fill_cred(&mut self) {
         if self.cred.is_none() {
             self.cred = Some(SocketCred::<ReadOp>::new_current());
         }
     }
 
-    /// Generates the control messages from the auxiliary data.
     pub(super) fn generate_control(
         &mut self,
         behavior: ReceiveBehavior,
@@ -305,15 +270,10 @@ impl AuxiliaryData {
         ctrl_msgs
     }
 
-    /// Returns whether the auxiliary data contains nothing.
     pub(super) fn is_empty(&self) -> bool {
         self.files.is_empty() && self.cred.is_none()
     }
 
-    /// Returns whether the auxiliary data can be treated as a subset of the other one.
-    ///
-    /// In stream sockets, we can receive more bytes at once if the current auxiliary data is a
-    /// subset of the subsequent auxiliary data.
     pub(super) fn is_subset_of(&self, other: &Self, is_pass_cred: bool) -> bool {
         if !self.files.is_empty() {
             return false;

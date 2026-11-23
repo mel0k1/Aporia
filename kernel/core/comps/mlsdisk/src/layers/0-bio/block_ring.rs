@@ -1,41 +1,12 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::{BlockLog, BlockSet, BufMut, BufRef};
 use crate::{os::Mutex, prelude::*};
 
-/// `BlockRing<S>` emulates a blocks log (`BlockLog`) with infinite
-/// storage capacity by using a block set (`S: BlockSet`) of finite storage
-/// capacity.
-///
-/// `BlockRing<S>` uses the entire storage space provided by the underlying
-/// block set (`S`) for user data, maintaining no extra metadata.
-/// Having no metadata, `BlockRing<S>` has to put three responsibilities to
-/// its user:
-///
-/// 1. Tracking the valid block range for read.
-///    `BlockRing<S>` accepts reads at any position regardless of whether the
-///    position refers to a valid block. It blindly redirects the read request to
-///    the underlying block set after moduloing the target position by the
-///    size of the block set.
-///
-/// 2. Setting the cursor for appending new blocks.
-///    `BlockRing<S>` won't remember the progress of writing blocks after reboot.
-///    Thus, after a `BlockRing<S>` is instantiated, the user must specify the
-///    append cursor (using the `set_cursor` method) before appending new blocks.
-///
-/// 3. Avoiding overriding valid data blocks mistakenly.
-///    As the underlying storage is used in a ring buffer style, old
-///    blocks must be overridden to accommodate new blocks. The user must ensure
-///    that the underlying storage is big enough to avoid overriding any useful
-///    data.
 pub(crate) struct BlockRing<S> {
     storage: S,
-    // The cursor for appending new blocks
     cursor: Mutex<Option<BlockId>>,
 }
 
 impl<S: BlockSet> BlockRing<S> {
-    /// Creates a new instance.
     pub(crate) fn new(storage: S) -> Self {
         Self {
             storage,
@@ -43,17 +14,10 @@ impl<S: BlockSet> BlockRing<S> {
         }
     }
 
-    /// Set the cursor for appending new blocks.
-    ///
-    /// # Panics
-    ///
-    /// Calling the `append` method without setting the append cursor first
-    /// via this method `set_cursor` causes panic.
     pub(crate) fn set_cursor(&self, new_cursor: BlockId) {
         *self.cursor.lock() = Some(new_cursor);
     }
 
-    // Return a reference to the underlying storage.
     pub(crate) fn storage(&self) -> &S {
         &self.storage
     }

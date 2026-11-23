@@ -1,8 +1,3 @@
-// Licensed under the Apache License, Version 2.0 or the MIT License.
-// Copyright (C) 2023-2024 Ant Group.
-
-// This implementation is from rust clippy. We modified the code.
-
 use std::{
     env,
     path::PathBuf,
@@ -27,7 +22,6 @@ fn show_version() {
 }
 
 pub fn main() {
-    // Check for version and help flags even when invoked as 'cargo-component'
     if env::args().any(|a| a == "--help" || a == "-h") {
         show_help();
         return;

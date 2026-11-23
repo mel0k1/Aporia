@@ -1,16 +1,9 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::{JobControl, Pgid, Process, Session, session::SessionGuard};
 use crate::{
     device::Device, dispatch_ioctl, prelude::*, process::pid_table, util::ioctl::RawIoctl,
 };
 
-/// A terminal.
-///
-/// We currently support two kinds of terminal, the TTY and pty. They're associated with a
-/// `JobControl` to track the session and the foreground process group.
 pub(crate) trait Terminal: Device {
-    /// Returns the job control of the terminal.
     fn job_control(&self) -> &JobControl;
 }
 
@@ -21,8 +14,6 @@ mod ioctl_defs {
         util::ioctl::{InData, NoData, OutData, PassByVal},
     };
 
-    // Reference: <https://elixir.bootlin.com/linux/v6.18/source/include/uapi/asm-generic/ioctls.h>
-
     pub(super) type GetForegroundPgid = ioc!(TIOCGPGRP, 0x540F, OutData<Pgid>);
     pub(super) type SetForegroundPgid = ioc!(TIOCSPGRP, 0x5410, InData<Pgid>);
 
@@ -32,15 +23,6 @@ mod ioctl_defs {
 }
 
 impl dyn Terminal {
-    /// Handles job-control ioctls.
-    ///
-    /// The return value depends on whether the ioctl is recognized:
-    /// - If the terminal recognizes and handles the ioctl, it should return
-    ///   `Ok(true)`.
-    /// - If an error occurs while processing the ioctl, it should return
-    ///   `Err(_)`.
-    /// - If the terminal does not recognize the ioctl command, it should return
-    ///   `Ok(false)` to indicate that the ioctl command is not supported.
     pub(crate) fn job_ioctl(
         self: Arc<Self>,
         raw_ioctl: RawIoctl,
@@ -49,7 +31,6 @@ impl dyn Terminal {
         use ioctl_defs::*;
 
         dispatch_ioctl!(match raw_ioctl {
-            // Commands about foreground process groups
             cmd @ GetForegroundPgid => {
                 let operate = || {
                     self.job_control()
@@ -74,7 +55,6 @@ impl dyn Terminal {
                 self.set_foreground(pgid, &current!())?;
             }
 
-            // Commands about sessions
             cmd @ SetControlTty => {
                 if cmd.get() == 1 {
                     warn!("stealing TTY from another session is not supported");
@@ -110,7 +90,6 @@ impl dyn Terminal {
                 cmd.write(&sid)?;
             }
 
-            // Commands that are invalid or not supported
             _ => {
                 return Ok(false);
             }
@@ -119,9 +98,7 @@ impl dyn Terminal {
         Ok(true)
     }
 
-    /// Sets the terminal to be the controlling terminal of the process.
     pub(super) fn set_control(self: Arc<Self>, process: &Process) -> Result<()> {
-        // Lock order: group of process -> session inner -> job control
         let process_group_mut = process.process_group.lock();
 
         let process_group = process_group_mut.as_ref().unwrap();
@@ -152,16 +129,9 @@ impl dyn Terminal {
         Ok(())
     }
 
-    /// Unsets the terminal from the controlling terminal of the process.
     fn unset_control(self: Arc<Self>, process: &Process) -> Result<()> {
-        // Lock order: group of process -> session inner -> job control
         self.is_control_and(process, |session, session_inner| {
             if !session.is_leader(process) {
-                // TODO: The Linux kernel keeps track of the controlling terminal of each process
-                // in `current->signal->tty`. So even if we're not the session leader, this may
-                // still succeed in releasing the controlling terminal of the current process. Note
-                // that the controlling terminal of the session will never be released in this
-                // case. We cannot mimic the exact Linux behavior, so we just return `Ok(())` here.
                 return Ok(());
             }
 
@@ -171,8 +141,6 @@ impl dyn Terminal {
                     constants::{SIGCONT, SIGHUP},
                     signals::kernel::KernelSignal,
                 };
-                // FIXME: Correct the lock order here. We cannot lock the group inner after locking
-                // the session inner.
                 foreground.broadcast_signal(KernelSignal::new(SIGHUP));
                 foreground.broadcast_signal(KernelSignal::new(SIGCONT));
             }
@@ -181,9 +149,7 @@ impl dyn Terminal {
         })
     }
 
-    /// Sets the foreground process group of the terminal.
     fn set_foreground(self: Arc<Self>, pgid: Pgid, process: &Process) -> Result<()> {
-        // Lock order: PID table -> group of process -> session inner -> job control
         let pid_table = pid_table::pid_table_mut();
 
         self.is_control_and(process, |session, _| {
@@ -207,10 +173,6 @@ impl dyn Terminal {
         })
     }
 
-    /// Runs `op` when the process controls the terminal.
-    ///
-    /// Note that this requires that the terminal is the controlling terminal of the session, but
-    /// does _not_ require that the process is a session leader.
     fn is_control_and<F, R>(self: &Arc<Self>, process: &Process, op: F) -> Result<R>
     where
         F: FnOnce(&Arc<Session>, &mut SessionGuard) -> Result<R>,

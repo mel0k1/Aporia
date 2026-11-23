@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::{ClockId, SyscallReturn};
 use crate::{
     fs::file::file_table::{FdFlags, FileTableInsert},

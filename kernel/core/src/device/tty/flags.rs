@@ -1,10 +1,5 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::sync::atomic::{AtomicBool, Ordering};
 
-/// TTY flags.
-//
-// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/linux/tty.h#L306>.
 pub(crate) struct TtyFlags {
     is_other_closed: AtomicBool,
     is_pty_locked: AtomicBool,

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use spin::Once;
 
 use crate::{
@@ -16,7 +14,6 @@ use crate::{
 };
 
 pub(super) fn init() {
-    // Touch the mount node to trigger the initialization of all singletons.
     let _ = PidfdFs::mount_node();
 }
 
@@ -25,14 +22,12 @@ pub(crate) struct PidfdFs {
 }
 
 impl PidfdFs {
-    /// Returns the singleton instance of the pidfd file system.
     pub(crate) fn singleton() -> &'static Arc<NaivePseudoFs> {
         static PIDFDFS: Once<Arc<NaivePseudoFs>> = Once::new();
 
         NaivePseudoFs::singleton(&PIDFDFS, "pidfdfs", PIDFDFS_MAGIC)
     }
 
-    /// Creates a pseudo `Path` for a pidfd.
     pub(crate) fn new_path(name_fn: fn(&dyn Inode) -> String) -> Path {
         Path::new_pseudo(
             Self::mount_node().clone(),
@@ -41,14 +36,12 @@ impl PidfdFs {
         )
     }
 
-    /// Returns the pseudo mount node of the pidfd file system.
     pub(crate) fn mount_node() -> &'static Arc<Mount> {
         static PIDFDFS_MOUNT: Once<Arc<Mount>> = Once::new();
 
         PIDFDFS_MOUNT.call_once(|| Mount::new_pseudo(Self::singleton().clone()).unwrap())
     }
 
-    /// Returns the shared inode of the pidfd file system.
     pub(crate) fn shared_inode() -> &'static Arc<dyn Inode> {
         static SHARED_INODE: Once<Arc<dyn Inode>> = Once::new();
 
@@ -65,5 +58,4 @@ impl PidfdFs {
     }
 }
 
-// Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/include/uapi/linux/magic.h#L105>
 const PIDFDFS_MAGIC: u64 = 0x50494446;

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use aster_rights::ReadOp;
@@ -123,8 +121,6 @@ impl Init {
     }
 
     pub(super) fn check_io_events(&self) -> IoEvents {
-        // According to the Linux implementation, we always have `IoEvents::HUP` and
-        // `IoEvents::HUP` in this state.
         IoEvents::OUT | IoEvents::HUP
     }
 }

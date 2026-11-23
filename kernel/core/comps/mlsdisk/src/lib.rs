@@ -1,12 +1,9 @@
-// SPDX-License-Identifier: MPL-2.0
-
 #![no_std]
 #![deny(unsafe_code)]
 #![feature(negative_impls)]
 #![allow(unfulfilled_lint_expectations)]
 #![expect(dead_code, deprecated, unused_imports)]
 
-// Set this crate's log prefix for `ostd::log`.
 macro_rules! __log_prefix {
     () => {
         "mlsdisk: "
@@ -51,7 +48,6 @@ pub use self::{
 
 #[init_component]
 fn init() -> Result<(), ComponentInitError> {
-    // FIXME: how to find a valid device used to format mlsdisk.
     let id = DeviceId::new(MajorId::new(255), MinorId::new(0));
     let Some(device) = aster_block::lookup(id) else {
         return Err(ComponentInitError::Unknown);

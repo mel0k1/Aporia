@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::vec;
 
 use crate::{
@@ -62,7 +60,6 @@ mod dma_coherent {
     fn zero_length_operations() {
         let dma_coherent = DmaCoherent::alloc(1, false).unwrap();
 
-        // Zero-length read/write should succeed
         let empty_buf = [];
         dma_coherent.write_bytes(0, &empty_buf).unwrap();
         let mut empty_buf = [];
@@ -73,7 +70,6 @@ mod dma_coherent {
     fn complex_read_write_patterns() {
         let dma_coherent = DmaCoherent::alloc(4, false).unwrap();
 
-        // Test alternating pattern
         let pattern1 = vec![0xAAu8; PAGE_SIZE];
         let pattern2 = vec![0x55u8; PAGE_SIZE];
         dma_coherent.write_bytes(0, &pattern1).unwrap();
@@ -205,7 +201,6 @@ mod dma_stream {
             .unwrap();
         let dma_stream = DmaStream::<FromAndToDevice>::map(segment.into(), false).unwrap();
 
-        // Test partial page operations
         let small_buf = [0xAAu8; 128];
         dma_stream.write_bytes(PAGE_SIZE - 64, &small_buf).unwrap();
         dma_stream
@@ -226,7 +221,6 @@ mod dma_stream {
         let dma_stream = DmaStream::<FromAndToDevice>::alloc(2, false).unwrap();
         assert_eq!(dma_stream.size(), 2 * PAGE_SIZE);
 
-        // Verify allocated memory is zeroed
         let mut buf_read = vec![1u8; 2 * PAGE_SIZE];
         dma_stream.sync_from_device(0..2 * PAGE_SIZE).unwrap();
         dma_stream.read_bytes(0, &mut buf_read).unwrap();
@@ -264,10 +258,8 @@ mod dma_stream {
 
         #[expect(clippy::reversed_empty_ranges)]
         const INVALID_RANGES: [core::ops::Range<usize>; 5] = [
-            // Reversed ranges:
             PAGE_SIZE..0,
             2 * PAGE_SIZE..PAGE_SIZE,
-            // Out-of-bounds ranges:
             PAGE_SIZE..4 * PAGE_SIZE,
             2 * PAGE_SIZE..4 * PAGE_SIZE,
             3 * PAGE_SIZE..4 * PAGE_SIZE,

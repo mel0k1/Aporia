@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 #![expect(dead_code)]
 
 use super::Signal;

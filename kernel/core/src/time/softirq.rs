@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::{boxed::Box, vec, vec::Vec};
 
 use aster_softirq::{SoftIrqLine, softirq_id::TIMER_SOFTIRQ_ID};
@@ -16,12 +14,10 @@ pub(super) fn init() {
     });
 }
 
-/// Registers a function that will be executed during timer softirq.
 pub(super) fn register_callback(func: fn()) {
     loop {
         let callbacks = TIMER_SOFTIRQ_CALLBACKS.read();
         match callbacks.get() {
-            // Initialized, copy the vector, push the function and update.
             Some(callbacks_vec) => {
                 let mut callbacks_cloned = callbacks_vec.clone();
                 callbacks_cloned.push(func);
@@ -29,7 +25,6 @@ pub(super) fn register_callback(func: fn()) {
                     break;
                 }
             }
-            // Uninitialized, initialize it.
             None => {
                 if callbacks
                     .compare_exchange(Some(Box::new(vec![func])))
@@ -39,7 +34,6 @@ pub(super) fn register_callback(func: fn()) {
                 }
             }
         }
-        // Contention on initialization or pushing, retry.
         core::hint::spin_loop();
     }
 }

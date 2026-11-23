@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::format;
 
 use device_id::{DeviceId, MinorId};
@@ -14,7 +12,6 @@ use crate::{
     register, unregister,
 };
 
-/// Represents a partition entry.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum PartitionInfo {
     Mbr(MbrEntry),
@@ -37,9 +34,6 @@ impl PartitionInfo {
     }
 }
 
-/// A MBR (Master Boot Record) partition table header.
-///
-/// See <https://wiki.osdev.org/MBR_(x86)#MBR_Format>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 struct MbrHeader {
@@ -56,9 +50,6 @@ impl MbrHeader {
     }
 }
 
-/// A MBR (Master Boot Record) partition entry.
-///
-/// See <https://wiki.osdev.org/Partition_Table>.
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Pod)]
 pub(super) struct MbrEntry {
@@ -76,8 +67,6 @@ impl MbrEntry {
     }
 
     fn is_valid(&self) -> bool {
-        // A System ID byte value of 0 is the definitive indicator for an unused entry.
-        // Any other illegal value (CHS Sector = 0 or Total Sectors = 0) may also indicate an unused entry.
         self.type_ != 0x00
             && self.start_chs.0[1] != 0
             && self.end_chs.0[1] != 0
@@ -85,22 +74,10 @@ impl MbrEntry {
     }
 }
 
-/// A CHS (Cylinder-Head-Sector) address.
-///
-/// In CHS addressing, sector numbers always start at 1; there is no sector 0.
-///
-/// The CHS address is stored as a 3-byte field:
-/// - Byte 0: Head number (8 bits)
-/// - Byte 1: Bits 0–5 are the sector number (6 bits, valid values 1–63);
-///   bits 6–7 are the upper two bits of the cylinder number
-/// - Byte 2: Lower 8 bits of the cylinder number (bits 0–7)
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Pod)]
 struct ChsAddr([u8; 3]);
 
-/// A GPT (GUID Partition Table) header.
-///
-/// See <https://wiki.osdev.org/GPT#LBA_1:_Partition_Table_Header>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 struct GptHeader {
@@ -127,21 +104,14 @@ impl GptHeader {
     }
 }
 
-/// A GPT (GUID Partition Table) partition entry.
-///
-/// See <https://wiki.osdev.org/GPT#LBA_2:_Partition_Entries>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Pod)]
 pub(super) struct GptEntry {
-    // Unique ID that defines the purpose and type of this Partition.
-    // A value of zero defines that this partition entry is not being used.
     type_guid: [u8; 16],
-    // GUID that is unique for every partition entry.
     guid: [u8; 16],
     start_lba: u64,
     end_lba: u64,
     attributes: u64,
-    // Null-terminated string containing a human-readable name of the partition.
     name: [u8; 72],
 }
 
@@ -154,7 +124,6 @@ impl GptEntry {
 pub(super) fn parse(device: &Arc<dyn BlockDevice>) -> Option<Vec<Option<PartitionInfo>>> {
     let mbr = device.read_val::<MbrHeader>(0).unwrap();
 
-    // 0xEE indicates a GPT Protective MBR, a fake partition covering the entire disk.
     let partitions = if mbr.check_signature() && mbr.entries[0].type_ != 0xEE {
         parse_mbr(device, &mbr)
     } else {
@@ -214,14 +183,11 @@ fn parse_ebr(
 fn parse_gpt(device: &Arc<dyn BlockDevice>) -> Vec<Option<PartitionInfo>> {
     let mut partitions = Vec::new();
 
-    // The primary GPT Header must be located in LBA 1.
     let gpt = device.read_val::<GptHeader>(SECTOR_SIZE).unwrap();
 
     if !gpt.check_signature() {
         return partitions;
     }
-
-    // TODO: Check the CRC32 of the header and the partition entries, check the backup GPT header.
 
     let entry_size = gpt.size_of_partition_entry as usize;
     let entries_per_sector = SECTOR_SIZE / entry_size;
@@ -289,10 +255,6 @@ impl PartitionNode {
     }
 }
 
-/// Manages the partitions of a whole-disk block device.
-///
-/// The manager owns the device's current partition list and the lock that
-/// serializes partition replacement.
 #[derive(Debug)]
 pub struct PartitionManager {
     inner: Mutex<Option<Vec<Arc<PartitionNode>>>>,
@@ -305,17 +267,13 @@ impl Default for PartitionManager {
 }
 
 impl PartitionManager {
-    /// Creates an empty partition manager.
     pub const fn new() -> Self {
         Self {
             inner: Mutex::new(None),
         }
     }
 
-    /// Replaces the managed partitions with the parsed partition information.
     pub(super) fn update(&self, device: &Arc<dyn BlockDevice>, infos: Vec<Option<PartitionInfo>>) {
-        // Lock order: partition lock -> `DEVICE_REGISTRY`
-
         let mut partitions = self.inner.lock();
 
         if let Some(old_partitions) = partitions.take() {
@@ -353,13 +311,6 @@ impl PartitionManager {
     }
 }
 
-/// Formats the name of a partition.
-///
-/// We perform the naming similar to the Linux implementation: insert "p" between
-/// the disk name and the partition number when the disk name ends with a digit
-/// (`nvme0n1p1`), and append the number otherwise (`vda1`).
-///
-/// Reference: <https://elixir.bootlin.com/linux/v7.2.2/source/block/partitions/core.c#L337>
 fn partition_name(disk_name: &str, partno: u32) -> String {
     if disk_name.ends_with(|c: char| c.is_ascii_digit()) {
         format!("{}p{}", disk_name, partno)

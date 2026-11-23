@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::{
     boxed::Box,
     format,
@@ -26,18 +24,6 @@ const DRM_MAJOR_ID: u16 = 226;
 const PRIMARY_MINOR_BASE: u32 = 0;
 const RENDER_MINOR_BASE: u32 = 128;
 
-/// Represents a DRM minor node exposed to userspace.
-///
-/// A `DrmMinor` corresponds to a single character device registered under
-/// `/dev/dri/` (such as `/dev/dri/cardX` or `/dev/dri/renderDX`). It does not
-/// own hardware state by itself; instead, it provides a userspace-facing
-/// access point with a specific permission and usage model.
-///
-/// Multiple `DrmMinor` instances may reference the same underlying
-/// `DrmDevice`, sharing the same driver instance and global device state.
-/// The semantic differences between minors (e.g. authentication requirements,
-/// ioctl visibility, access restrictions) are expressed via `type_` and
-/// enforced by the minor and ioctl layers.
 #[derive(Debug)]
 pub(super) struct DrmMinor {
     type_: DrmMinorType,
@@ -65,7 +51,6 @@ impl DrmMinor {
         self.registered_device.device()
     }
 
-    /// Opens a client through this minor and returns its master context, if applicable.
     pub(super) fn open_client(&self, client_id: u64) -> Option<Arc<DrmMaster>> {
         match self.type_ {
             DrmMinorType::Primary => Some(self.registered_device.open_primary_client(client_id)),
@@ -155,10 +140,6 @@ impl Device for DrmMinor {
     }
 }
 
-/// The userspace-facing role of a DRM device node.
-///
-/// Primary nodes provide display-management and authenticated legacy
-/// operations, while render nodes provide unprivileged rendering access.
 #[derive(Clone, Copy, Debug)]
 pub(super) enum DrmMinorType {
     Primary,

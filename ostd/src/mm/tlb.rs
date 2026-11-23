@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! TLB flush operations.
-
 use alloc::vec::Vec;
 use core::{mem::MaybeUninit, ops::Range, sync::atomic::Ordering};
 
@@ -17,9 +13,6 @@ use crate::{
     sync::{LocalIrqDisabled, RcuDrop, SpinLock},
 };
 
-/// A TLB flusher that is aware of which CPUs are needed to be flushed.
-///
-/// The flusher needs to stick to the current CPU.
 pub struct TlbFlusher<'a, G: PinCurrentCpu> {
     target_cpus: &'a AtomicCpuSet,
     pending_ipis: PendingIpis,
@@ -29,13 +22,6 @@ pub struct TlbFlusher<'a, G: PinCurrentCpu> {
 }
 
 impl<'a, G: PinCurrentCpu> TlbFlusher<'a, G> {
-    /// Creates a new TLB flusher with the specified CPUs to be flushed.
-    ///
-    /// The target CPUs should be a reference to an [`AtomicCpuSet`] that will
-    /// be loaded upon [`Self::dispatch_tlb_flush`].
-    ///
-    /// The flusher needs to stick to the current CPU. So please provide a
-    /// guard that implements [`PinCurrentCpu`].
     pub fn new(target_cpus: &'a AtomicCpuSet, pin_current_guard: G) -> Self {
         Self {
             target_cpus,
@@ -46,25 +32,10 @@ impl<'a, G: PinCurrentCpu> TlbFlusher<'a, G> {
         }
     }
 
-    /// Issues a pending TLB flush request.
-    ///
-    /// This function does not guarantee to flush the TLB entries on either
-    /// this CPU or remote CPUs. The flush requests are only performed when
-    /// [`Self::dispatch_tlb_flush`] is called.
     pub fn issue_tlb_flush(&mut self, op: TlbFlushOp) {
         self.ops_stack.push(op, None);
     }
 
-    /// Issues a TLB flush request that must happen before dropping the page.
-    ///
-    /// If we need to remove a mapped page from the page table, we can only
-    /// recycle the page after all the relevant TLB entries in all CPUs are
-    /// flushed. Otherwise if the page is recycled for other purposes, the user
-    /// space program can still access the page through the TLB entries. This
-    /// method is designed to be used in such cases.
-    ///
-    /// Furthermore, the frames will be dropped after the RCU grace period to
-    /// ensure that no RCU references are held to the frames.
     pub fn issue_tlb_flush_with(
         &mut self,
         op: TlbFlushOp,
@@ -73,12 +44,6 @@ impl<'a, G: PinCurrentCpu> TlbFlusher<'a, G> {
         self.ops_stack.push(op, Some(drop_after_flush));
     }
 
-    /// Dispatches all the pending TLB flush requests.
-    ///
-    /// All previous pending requests issued by [`Self::issue_tlb_flush`] or
-    /// [`Self::issue_tlb_flush_with`] starts to be processed after this
-    /// function. But it may not be synchronous. Upon the return of this
-    /// function, the TLB entries may not be coherent.
     pub fn dispatch_tlb_flush(&mut self) {
         let irq_guard = crate::irq::disable_local();
 
@@ -86,8 +51,6 @@ impl<'a, G: PinCurrentCpu> TlbFlusher<'a, G> {
             return;
         }
 
-        // `Release` to make sure our modification on the PT is visible to CPUs
-        // that are going to activate the PT.
         let mut target_cpus = self.target_cpus.load(Ordering::Release);
 
         let cur_cpu = irq_guard.current_cpu();
@@ -108,7 +71,6 @@ impl<'a, G: PinCurrentCpu> TlbFlusher<'a, G> {
             self.pending_ipis.extend(&pending_ipis);
         }
 
-        // Flush ourselves after sending all IPIs to save some time.
         if need_flush_on_self {
             self.ops_stack.flush_all();
         } else {
@@ -116,25 +78,8 @@ impl<'a, G: PinCurrentCpu> TlbFlusher<'a, G> {
         }
     }
 
-    /// Waits for all the previous TLB flush requests to be completed.
-    ///
-    /// After this function, all TLB entries corresponding to previous
-    /// dispatched TLB flush requests are guaranteed to be coherent.
-    ///
-    /// The TLB flush requests are issued with [`Self::issue_tlb_flush`] and
-    /// dispatched with [`Self::dispatch_tlb_flush`]. This method will not
-    /// dispatch any issued requests so it will not guarantee TLB coherence
-    /// of requests that are not dispatched.
-    ///
-    /// # Panics
-    ///
-    /// This method panics if the IRQs are disabled. Since the remote flush are
-    /// processed in IRQs, two CPUs may deadlock if they are waiting for each
-    /// other's TLB coherence.
     pub fn sync_tlb_flush(&mut self) {
         if self.ipi_sender.is_none() {
-            // We performed some TLB flushes in the boot context. The AP's boot
-            // process should take care of them.
             return;
         }
 
@@ -143,22 +88,9 @@ impl<'a, G: PinCurrentCpu> TlbFlusher<'a, G> {
     }
 }
 
-/// The operation to flush TLB entries.
-///
-/// The variants of this structure are:
-///  - Flushing all TLB entries except for the global entries;
-///  - Flushing the TLB entry associated with an address;
-///  - Flushing the TLB entries for a specific range of virtual addresses;
-///
-/// This is a `struct` instead of an `enum` because if trivially representing
-/// the three variants with an `enum`, it would be 24 bytes. To minimize the
-/// memory footprint, we encode all three variants into an 8-byte integer.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TlbFlushOp(Vaddr);
 
-// We require the address to be page-aligned, so the in-page offset part of the
-// address can be used to store the length. A sanity check to ensure that we
-// don't allow ranged flush operations with a too long length.
 const_assert!(TlbFlushOp::FLUSH_RANGE_NPAGES_MASK | (PAGE_SIZE - 1) == PAGE_SIZE - 1);
 
 impl TlbFlushOp {
@@ -166,7 +98,6 @@ impl TlbFlushOp {
     const FLUSH_RANGE_NPAGES_MASK: Vaddr =
         (1 << (usize::BITS - FLUSH_ALL_PAGES_THRESHOLD.leading_zeros())) - 1;
 
-    /// Performs the TLB flush operation on the current CPU.
     pub fn perform_on_current(&self) {
         use crate::arch::mm;
 
@@ -188,27 +119,14 @@ impl TlbFlushOp {
         }
     }
 
-    /// Creates a new TLB flush operation that flushes all TLB entries except
-    /// for the global entries.
     pub const fn for_all() -> Self {
         TlbFlushOp(Self::FLUSH_ALL_VAL)
     }
 
-    /// Creates a new TLB flush operation that flushes the TLB entry associated
-    /// with the provided virtual address.
     pub const fn for_single(addr: Vaddr) -> Self {
         TlbFlushOp(addr | 1)
     }
 
-    /// Creates a new TLB flush operation that flushes the TLB entries for the
-    /// specified virtual address range.
-    ///
-    /// If the range is too large, the resulting [`TlbFlushOp`] will flush all
-    /// TLB entries instead.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the range is not page-aligned or if the range is empty.
     pub const fn for_range(range: Range<Vaddr>) -> Self {
         assert!(
             range.start.is_multiple_of(PAGE_SIZE),
@@ -226,11 +144,6 @@ impl TlbFlushOp {
         TlbFlushOp(range.start | (num_pages as Vaddr))
     }
 
-    /// Returns the number of pages to flush.
-    ///
-    /// If it returns `u32::MAX`, it means to flush all the entries. Otherwise
-    /// the return value should be less than [`FLUSH_ALL_PAGES_THRESHOLD`] and
-    /// non-zero.
     fn num_pages(&self) -> u32 {
         if self.0 == Self::FLUSH_ALL_VAL {
             u32::MAX
@@ -243,13 +156,11 @@ impl TlbFlushOp {
     }
 }
 
-// The queues of pending requests on each CPU.
 cpu_local! {
     static FLUSH_OPS: SpinLock<OpsStack, LocalIrqDisabled> = SpinLock::new(OpsStack::new());
 }
 
 fn do_remote_flush() {
-    // No races because we are in IRQs or have disabled preemption.
     let current_cpu = crate::cpu::CpuId::current_racy();
 
     let mut new_op_queue = OpsStack::new();
@@ -258,27 +169,15 @@ fn do_remote_flush() {
 
         core::mem::swap(&mut *op_queue, &mut new_op_queue);
     }
-    // Unlock the locks quickly to avoid contention.
     new_op_queue.flush_all();
 }
 
-/// If the number of pending pages to flush exceeds this threshold, we flush all the
-/// TLB entries instead of flushing them one by one.
 const FLUSH_ALL_PAGES_THRESHOLD: usize = 32;
 
 struct OpsStack {
-    /// From 0 to `num_ops`, the array entry must be initialized.
     ops: [MaybeUninit<TlbFlushOp>; FLUSH_ALL_PAGES_THRESHOLD],
     num_ops: u32,
-    /// If this is `u32::MAX`, we should flush all entries irrespective of the
-    /// contents of `ops`. And in this case `num_ops` must be zero.
-    ///
-    /// Otherwise, it counts the number of pages to flush in `ops`.
     num_pages_to_flush: u32,
-    /// Keeps all the to-be-dropped frames.
-    ///
-    /// The elements cannot be modified after being pushed. And they must be
-    /// dropped after the RCU grace period and the TLB flushes.
     frame_keeper: Vec<Frame<dyn AnyFrameMeta>>,
 }
 
@@ -303,8 +202,6 @@ impl OpsStack {
     fn push(&mut self, op: TlbFlushOp, drop_after_flush: Option<RcuDrop<Frame<dyn AnyFrameMeta>>>) {
         if let Some(frame) = drop_after_flush {
             self.frame_keeper.reserve(1);
-            // SAFETY: By pushing into the `frame_keeper`, the frame will be
-            // dropped after the RCU grace period.
             let (frame, panic_guard) = unsafe { RcuDrop::into_inner(frame) };
             self.frame_keeper.push(frame);
             panic_guard.forget();
@@ -370,10 +267,10 @@ impl OpsStack {
     }
 
     fn ops_iter(&self) -> impl Iterator<Item = &TlbFlushOp> {
-        self.ops.iter().take(self.num_ops as usize).map(|op| {
-            // SAFETY: From 0 to `num_ops`, the array entry must be initialized.
-            unsafe { op.assume_init_ref() }
-        })
+        self.ops
+            .iter()
+            .take(self.num_ops as usize)
+            .map(|op| unsafe { op.assume_init_ref() })
     }
 }
 

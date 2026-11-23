@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use linux_boot_params::BootParams;
 use uefi_raw::{
     Guid,
@@ -33,31 +31,21 @@ fn find_rsdp_addr(boot_params: &BootParams) -> Option<u64> {
         return None;
     }
 
-    // In legacy 32-bit setup code, pointers above 4GiB are not addressable.
     let systab_addr = usize::try_from(systab_addr).ok()?;
 
     match efi.efi_loader_signature {
-        EFI64_LOADER_SIGNATURE => {
-            // SAFETY: The system table address is provided by the bootloader via Linux boot params.
-            unsafe { find_rsdp_addr_in_efi64(systab_addr as *const EfiSystemTable64) }
-        }
+        EFI64_LOADER_SIGNATURE => unsafe {
+            find_rsdp_addr_in_efi64(systab_addr as *const EfiSystemTable64)
+        },
         _ => None,
     }
 }
 
-/// Represents the 64-bit UEFI system table layout carried by Linux boot params.
-///
-/// The legacy i386 setup code may still receive an `EL64` loader signature,
-/// meaning `efi_systab` points to a 64-bit UEFI `SystemTable`. We define this
-/// local type because `uefi_raw::table::system::SystemTable` follows the target
-/// pointer width and therefore models only the 32-bit layout on this build
-/// target.
 #[repr(C)]
 struct EfiSystemTable64 {
     header: Header,
     firmware_vendor: u64,
     firmware_revision: u32,
-    // Remember that we are 32 bit, so the padding is needed.
     _padding: u32,
     stdin_handle: u64,
     stdin: u64,
@@ -71,7 +59,6 @@ struct EfiSystemTable64 {
     configuration_table: u64,
 }
 
-/// Represents one entry in a 64-bit UEFI configuration table array.
 #[repr(C)]
 struct EfiConfigurationTable64 {
     vendor_guid: Guid,
@@ -83,7 +70,6 @@ unsafe fn find_rsdp_addr_in_efi64(system_table_ptr: *const EfiSystemTable64) -> 
         return None;
     }
 
-    // SAFETY: The caller guarantees that the pointer originates from boot params.
     let system_table = unsafe { &*system_table_ptr };
     if system_table.header.signature != SystemTable::SIGNATURE {
         return None;
@@ -100,7 +86,6 @@ unsafe fn find_rsdp_addr_in_efi64(system_table_ptr: *const EfiSystemTable64) -> 
     }
     let tables = tables_addr as *const EfiConfigurationTable64;
 
-    // SAFETY: The caller guarantees that the system table and config table pointers are valid.
     unsafe { find_in_cfg_tables64(tables, nr_tables) }
 }
 
@@ -108,10 +93,8 @@ unsafe fn find_in_cfg_tables64(
     tables: *const EfiConfigurationTable64,
     nr_tables: usize,
 ) -> Option<u64> {
-    // Prefer ACPI2 over ACPI, same as the x64 EFI path.
     for acpi_guid in [ACPI2_GUID, ACPI_GUID] {
         for index in 0..nr_tables {
-            // SAFETY: `index` is bounded by `nr_tables`, and the caller guarantees table validity.
             let entry = unsafe { &*tables.add(index) };
             if entry.vendor_guid == acpi_guid {
                 return Some(entry.vendor_table);

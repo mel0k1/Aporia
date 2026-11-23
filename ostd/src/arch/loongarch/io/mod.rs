@@ -1,25 +1,9 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! I/O memory utilities.
-
 use alloc::vec::Vec;
 
 use crate::{boot::memory_region::MemoryRegionType, io::IoMemAllocatorBuilder};
 
 pub(crate) mod io_mem;
 
-/// Initializes the allocatable MMIO area based on the LoongArch memory
-/// distribution map.
-///
-/// Here we consider all the holes (filtering usable RAM) in the physical
-/// address space as MMIO regions.
-///
-/// # Safety
-///
-/// 1. This function must be called only once in the boot context of the
-///    bootstrapping processor.
-/// 2. This function must be called after the kernel page table is activated on
-///    the bootstrapping processor.
 pub(super) unsafe fn construct_io_mem_allocator_builder() -> IoMemAllocatorBuilder {
     let regions = &crate::boot::EARLY_INFO.get().unwrap().memory_regions;
     let reserved_filter = regions.iter().filter(|r| {
@@ -41,10 +25,5 @@ pub(super) unsafe fn construct_io_mem_allocator_builder() -> IoMemAllocatorBuild
         ranges.push(current_address..usize::MAX);
     }
 
-    // SAFETY:
-    // 1. This is the only place that creates an `IoMemAllocatorBuilder`. The
-    //    caller ensures that the function is only called once.
-    // 2. The caller ensures that the kernel page table is already activated.
-    // 3. The range is guaranteed not to access physical memory.
     unsafe { IoMemAllocatorBuilder::new(ranges) }
 }

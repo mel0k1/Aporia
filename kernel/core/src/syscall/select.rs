@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::time::Duration;
 
 use ostd::mm::VmIo;
@@ -83,11 +81,6 @@ pub(super) fn do_sys_select(
         ctx,
     )?;
 
-    // FIXME: The Linux select() and pselect6() system call
-    // modifies its timeout argument to reflect the amount of time not slept.
-    // However, the glibc wrapper function hides this behavior.
-    // Maybe we should follow the Linux behavior.
-
     let set_fdset = |fdset_addr: Vaddr, fdset: Option<FdSet>| -> Result<()> {
         if let Some(fdset) = fdset {
             debug_assert!(fdset_addr != 0);
@@ -110,7 +103,6 @@ fn do_select(
     timeout: Option<&Duration>,
     ctx: &Context,
 ) -> Result<usize> {
-    // Convert the `FdSet`s to an array of `PollFd`s
     let poll_fds = {
         let mut poll_fds = Vec::with_capacity(nfds as usize);
         for raw_fd in 0..nfds {
@@ -126,8 +118,6 @@ fn do_select(
             }
 
             let Ok(fd) = FileDesc::try_from(raw_fd) else {
-                // Linux will ignore FDs that are greater than the maximum FD ever opened by the
-                // process. So here we can break the loop and skip the remaining FDs.
                 break;
             };
             let poll_fd = PollFd::new(Some(fd), events);
@@ -136,7 +126,6 @@ fn do_select(
         poll_fds
     };
 
-    // Clear up the three input `FdSet`s, which will be used for output as well
     if let Some(fds) = readfds.as_mut() {
         fds.clear();
     }
@@ -147,13 +136,11 @@ fn do_select(
         fds.clear();
     }
 
-    // Do the `poll` syscall that is equivalent to the `select` syscall
     let num_revents = do_poll(&poll_fds, timeout, ctx)?;
     if num_revents == 0 {
         return Ok(0);
     }
 
-    // Convert `PollFd` results to `FdSet` results
     let mut total_revents = 0;
     for poll_fd in &poll_fds {
         let raw_fd = RawFileDesc::from(poll_fd.fd().unwrap());
@@ -181,8 +168,6 @@ fn do_select(
     Ok(total_revents)
 }
 
-/// Converts `select` RWE input to `poll` I/O event input
-/// according to Linux's behavior.
 fn convert_rwe_to_events(readable: bool, writable: bool, except: bool) -> IoEvents {
     let mut events = IoEvents::empty();
     if readable {
@@ -197,8 +182,6 @@ fn convert_rwe_to_events(readable: bool, writable: bool, except: bool) -> IoEven
     events
 }
 
-/// Converts `poll` I/O event results to `select` RWE results
-/// according to Linux's behavior.
 fn convert_events_to_rwe(events: IoEvents) -> Result<(bool, bool, bool)> {
     if events.contains(IoEvents::NVAL) {
         return Err(errno!(EBADF, "the file descriptor is invalid"));
@@ -220,7 +203,6 @@ struct FdSet {
 }
 
 impl FdSet {
-    /// Equivalent to FD_SET.
     pub(crate) fn set(&mut self, fd: RawFileDesc) -> Result<()> {
         let fd = fd as usize;
         if fd >= FD_SETSIZE {
@@ -230,7 +212,6 @@ impl FdSet {
         Ok(())
     }
 
-    /// Equivalent to FD_CLR.
     #[expect(unused)]
     pub(crate) fn unset(&mut self, fd: RawFileDesc) -> Result<()> {
         let fd = fd as usize;
@@ -241,7 +222,6 @@ impl FdSet {
         Ok(())
     }
 
-    /// Equivalent to FD_ISSET.
     pub(crate) fn is_set(&self, fd: RawFileDesc) -> bool {
         let fd = fd as usize;
         if fd >= FD_SETSIZE {
@@ -250,7 +230,6 @@ impl FdSet {
         (self.fds_bits[fd / USIZE_BITS] & (1 << (fd % USIZE_BITS))) != 0
     }
 
-    /// Equivalent to FD_ZERO.
     pub(crate) fn clear(&mut self) {
         for slot in self.fds_bits.iter_mut() {
             *slot = 0;

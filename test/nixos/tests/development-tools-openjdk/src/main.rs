@@ -1,27 +1,9 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! The test suite for OpenJDK on Asterinas NixOS.
-//!
-//! Supplements the `OpenJDK` coverage in `development-tools`.
-//!
-//! See `test/nixos/README.md#documentation-maintenance` for sync requirements
-//! between this test suite and the corresponding "Verified Usage" book section.
-
 use nixos_test_framework::*;
 
 nixos_test_main!();
 
 #[nixos_test]
 fn openjdk_regression(nixos_shell: &mut Session) -> Result<(), Error> {
-    // `jtreg -v1 -nr <path>` ends each invocation with a `Test results:` summary
-    // line. A fully successful run uses the exact form:
-    //
-    //   Test results: passed: <count>
-    //
-    // When any selected test fails, errors out, or is skipped, the summary is
-    // no longer this success-only form and instead includes additional result
-    // categories. Each invocation here runs `jtreg` for exactly one entry from
-    // `src/testcases.txt`, so matching the exact success summary is sufficient.
     let success_regex =
         Regex::new(r"(?m)^Test results: passed: [0-9]+$").map_err(|err| Error::Pty(err.into()))?;
 

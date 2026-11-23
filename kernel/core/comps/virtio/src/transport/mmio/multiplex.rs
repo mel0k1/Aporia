@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use core::fmt::Debug;
 
@@ -12,9 +10,6 @@ use ostd::{
     sync::RwLock,
 };
 
-/// Multiplexing Irqs. The two interrupt types (configuration space change and queue interrupt)
-/// of the virtio-mmio device share the same IRQ, so `MultiplexIrq` are used to distinguish them.
-/// Besides, virtio-mmio requires ack_interrupt after interrupt is handled.
 pub(super) struct MultiplexIrq {
     irq: IrqLine,
     queue_callbacks: Vec<Box<IrqCallbackFunction>>,
@@ -37,8 +32,6 @@ impl MultiplexIrq {
             interrupt_status,
         }));
 
-        // Holding a weak reference to prevent memory leakage due to
-        // circular reference.
         let weak = Arc::downgrade(&irq);
         let callback = move |trap_frame: &TrapFrame| {
             let Some(multiplex_irq) = weak.upgrade() else {
@@ -47,18 +40,14 @@ impl MultiplexIrq {
             let irq = multiplex_irq.read();
 
             let interrupt_status = irq.interrupt_status.read_once().unwrap();
-            // Acknowledging before invoking the callbacks to prevent the loss of unhandled
-            // interrupts due to race conditions.
             irq.interrupt_ack.write_once(&interrupt_status).unwrap();
 
-            // Used buffer notification
             if interrupt_status & 0x01 != 0 {
                 for callback in irq.queue_callbacks.iter() {
                     (callback)(trap_frame);
                 }
             }
 
-            // Configuration change notification
             if interrupt_status & 0x02 != 0 {
                 for callback in irq.cfg_callbacks.iter() {
                     (callback)(trap_frame);

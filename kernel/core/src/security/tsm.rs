@@ -1,16 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Trusted Security Manager (TSM).
-//!
-//! This module provides a cross-vendor ConfigFS interface
-//! for generating confidential-computing attestation reports.
-//! Userspace writes a request blob under `/sys/kernel/config/tsm/report/$name/inblob`
-//! and reads back the signed report from `outblob`,
-//! with optional knobs like `provider` and `generation`.
-//!
-//! For more information about the interface,
-//! checkout Linux's [documentation](https://www.kernel.org/doc/Documentation/ABI/testing/configfs-tsm).
-
 use alloc::{boxed::Box, string::ToString, sync::Arc};
 use core::fmt::Debug;
 
@@ -82,70 +69,13 @@ inherit_sys_branch_node!(ReportSet, fields, {
 
 const TSM_INBLOB_MAX: usize = 64;
 
-/// The state machine of a report directory.
-///
-/// The states and their transitions are summarized in the table below.
-///
-/// ```text
-/// ┌────────────────┐
-/// │InblobNeeded    │
-/// │(initial)       │
-/// └────────┬───────┘
-///          │
-///          │ write inblob
-/// ┌────────▼───────┐
-/// │InblobProvided  ◄─────────┐
-/// └────────┬───────┘         │
-///          │                 │
-///          │ read outblob    │ write inblob
-/// ┌────────▼───────┐         │
-/// │OutblobGenerated├─────────┘
-/// └────────────────┘
-/// ```
 #[derive(Debug)]
 enum TsmProviderState {
-    /// Inblob is needed.
-    ///
-    /// This is the initial state.
-    ///
-    /// The behaviors of the files under a report directory
-    /// are summarized in the table below:
-    ///
-    /// | Files        | Write behaviors| Read behaviors |
-    /// |--------------|----------------|-----------------|
-    /// | `inblob`     | Transist to `InblobProvided`  | Error due to WO |
-    /// | `outblob`    | Error due to RO| Error (-EINVAL) |
-    /// | `generation` | Error due to RO| Returns 0       |
-    ///
-    /// The initial value of `generation` is 0.
     InblobNeeded,
-    /// Inblob is provided by the userspace, but outblob is not generated.
-    ///
-    /// The behaviors of the files under a report directory
-    /// are summarized in the table below:
-    ///
-    /// | Files        | Write behaviors| Read behaviors |
-    /// |--------------|----------------|-----------------|
-    /// | `inblob`     | Update inblob  | Error due to WO |
-    /// | `outblob`    | Error due to RO| Transist to `OutblobGenerated` |
-    /// | `generation` | Error due to RO| Returns `generation` |
-    ///
-    /// Whenever @inblob or any option is written, the value of `generation`
-    /// increases by 1.
     InblobProvided {
         generation: u32,
         inblob: [u8; TSM_INBLOB_MAX],
     },
-    /// Outblob is generated and up-to-date.
-    ///
-    /// The behaviors of the files under a report directory
-    /// are summarized in the table below:
-    ///
-    /// | Files        | Write behaviors| Read behaviors |
-    /// |--------------|----------------|-----------------|
-    /// | `inblob`     | Transist to `InblobProvided` | Error due to WO |
-    /// | `outblob`    | Error due to RO| Returns `quote_buf` |
-    /// | `generation` | Error due to RO| Returns `generation`|
     OutblobGenerated {
         generation: u32,
         quote_buf: Box<[u8]>,
@@ -232,7 +162,6 @@ inherit_sys_leaf_node!(ReportNode, fields, {
                         Ok(quote) => {
                             let res = self.write_outblob(writer, &quote[offset..]);
 
-                            // Transition to `OutblobGenerated`
                             data.state = TsmProviderState::OutblobGenerated {
                                 generation,
                                 quote_buf: quote,
@@ -273,7 +202,6 @@ inherit_sys_leaf_node!(ReportNode, fields, {
                         let mut inblob = [0u8; TSM_INBLOB_MAX];
                         let read_len = self.read_inblob(reader, &mut inblob)?;
 
-                        // Transition to `InblobProvided`
                         data.state = TsmProviderState::InblobProvided {
                             generation: 1,
                             inblob,
@@ -297,7 +225,6 @@ inherit_sys_leaf_node!(ReportNode, fields, {
                         let read_len = self.read_inblob(reader, &mut inblob)?;
                         *generation = generation.wrapping_add(1);
 
-                        // Transition to `InblobProvided`
                         data.state = TsmProviderState::InblobProvided {
                             generation: *generation,
                             inblob,

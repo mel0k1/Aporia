@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd::{arch::cpu::context::UserContext, mm::VmIo, task::Task};
 
 use super::{
@@ -21,29 +19,14 @@ use crate::{
     thread::{AsThread, Tid},
 };
 
-/// Exits the current POSIX thread.
-///
-/// # Panics
-///
-/// If the current thread is not a POSIX thread, this method will panic.
 pub(crate) fn do_exit(term_status: TermStatus, ctx: &Context, user_ctx: &mut UserContext) {
     exit_internal(term_status, false, ctx, user_ctx);
 }
 
-/// Kills all threads and exits the current POSIX process.
-///
-/// # Panics
-///
-/// If the current thread is not a POSIX thread, this method will panic.
 pub(crate) fn do_exit_group(term_status: TermStatus, ctx: &Context, user_ctx: &mut UserContext) {
     exit_internal(term_status, true, ctx, user_ctx);
 }
 
-/// Exits the current POSIX thread or process.
-//
-// A mutable reference to `user_ctx` is needed because exiting a traced thread
-// may trigger a "exit" ptrace-event-stop, which snapshots the current user
-// register state and may later restore tracer-updated registers.
 fn exit_internal(
     term_status: TermStatus,
     is_exiting_group: bool,
@@ -70,16 +53,12 @@ fn exit_internal(
             tasks.set_exited_group();
         }
 
-        // According to Linux's behavior, the last thread's exit code will become the process's
-        // exit code, so here we should just overwrite the old value (if any).
         if !has_exited_group && !in_evecve {
             posix_process.status().set_exit_code(exit_code);
         }
 
         posix_thread.set_exit_code(exit_code);
 
-        // We should only change the thread status when running as the thread, so no race
-        // conditions can occur in between.
         if current_thread.is_exited() {
             return;
         }
@@ -88,9 +67,6 @@ fn exit_internal(
         tasks.remove_exited(&current_task)
     };
 
-    // This is put after `current_thread.exit()`,
-    // so `attach_tracee` will observe that the tracer has exited while
-    // holding the `tracees` lock, and can not race with `clear_tracees`.
     posix_thread.clear_tracees();
 
     if let Some(tracer) = posix_thread.tracer() {
@@ -102,18 +78,14 @@ fn exit_internal(
 
     wake_robust_list(thread_local, posix_thread.tid());
 
-    // According to Linux behavior, the main thread shouldn't be removed from the table until the
-    // process is reaped by its parent.
     if posix_thread.tid() != posix_process.pid() {
         pid_table::pid_table_mut().remove_thread(posix_thread.tid());
     }
 
-    // Drop fields in `PosixThread`.
     drop_after!(posix_thread.file_table().lock().take());
     drop_after!(posix_thread.fs.write().take());
     drop_after!(posix_thread.ns_proxy().lock().take());
 
-    // Drop fields in `ThreadLocal`.
     drop_after!(thread_local.vmar().borrow_mut().take());
     drop_after!(thread_local.remove_file_table());
     drop_after!(thread_local.remove_fs());
@@ -124,7 +96,6 @@ fn exit_internal(
     }
 }
 
-/// Sends `SIGKILL` to all other threads in the current process.
 pub(in crate::process) fn sigkill_other_threads(current_task: &Task, task_set: &TaskSet) {
     debug_assert!(
         task_set
@@ -143,7 +114,6 @@ pub(in crate::process) fn sigkill_other_threads(current_task: &Task, task_set: &
     }
 }
 
-/// Writes zero to `clear_child_tid` and performs a futex wake.
 fn wake_clear_ctid(thread_local: &ThreadLocal) {
     let clear_ctid = thread_local.clear_child_tid().get();
 
@@ -160,9 +130,6 @@ fn wake_clear_ctid(thread_local: &ThreadLocal) {
     thread_local.clear_child_tid().set(0);
 }
 
-/// Walks the robust futex list, marking futex dead and waking waiters.
-///
-/// This corresponds to Linux's `exit_robust_list`. Errors are silently ignored.
 fn wake_robust_list(thread_local: &ThreadLocal, tid: Tid) {
     let list_head = match thread_local.robust_list().borrow_mut().take() {
         Some(robust_list_head) => robust_list_head,

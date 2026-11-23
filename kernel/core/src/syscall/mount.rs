@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::SyscallReturn;
 use crate::{
     fs::{
@@ -19,10 +17,6 @@ pub(super) fn sys_mount(
     dst_name_addr: Vaddr,
     fs_type_addr: Vaddr,
     flags: u64,
-    // The `data` argument is interpreted by the different filesystems.
-    // Typically it is a string of comma-separated options understood by
-    // this filesystem. The current implementation only considers the case
-    // where it is `NULL`. Because it should be interpreted by the specific filesystems.
     data_addr: Vaddr,
     ctx: &Context,
 ) -> Result<SyscallReturn> {
@@ -49,7 +43,6 @@ pub(super) fn sys_mount(
     check_mount_api_capability(ctx)?;
 
     if mount_flags.contains(MountFlags::MS_REMOUNT) && mount_flags.contains(MountFlags::MS_BIND) {
-        // If `MS_BIND` is specified, only the mount flags are changed.
         do_remount_mnt(&dst_path, mount_flags, ctx)?;
     } else if mount_flags.contains(MountFlags::MS_REMOUNT) {
         do_remount_mnt_and_fs(&dst_path, mount_flags, data_addr, ctx)?;
@@ -88,14 +81,12 @@ pub(super) fn check_mount_api_capability(ctx: &Context) -> Result<()> {
     ))
 }
 
-/// Remounts the mount with new flags.
 fn do_remount_mnt(path: &Path, flags: MountFlags, ctx: &Context) -> Result<()> {
     let per_mount_flags = PerMountFlags::from(flags);
 
     path.remount(per_mount_flags, None, None, ctx)
 }
 
-/// Remounts the filesystem with new flags and data.
 fn do_remount_mnt_and_fs(
     path: &Path,
     flags: MountFlags,
@@ -114,10 +105,6 @@ fn do_remount_mnt_and_fs(
     path.remount(per_mount_flags, Some(fs_flags), data.as_deref(), ctx)
 }
 
-/// Binds a mount to a dst location.
-///
-/// If recursive is true, then bind the mount recursively.
-/// Such as use user command `mount --rbind src dst`.
 fn do_bind_mount(
     src_name_addr: Vaddr,
     dst_path: Path,
@@ -141,14 +128,12 @@ fn do_bind_mount(
     Ok(())
 }
 
-// All valid propagation flags.
 const MS_PROPAGATION: MountFlags = MountFlags::MS_PRIVATE
     .union(MountFlags::MS_SLAVE)
     .union(MountFlags::MS_SHARED)
     .union(MountFlags::MS_UNBINDABLE);
 
 fn do_change_type(target_path: Path, flags: MountFlags, ctx: &Context) -> Result<()> {
-    // All flags that are allowed during a propagation change.
     const ALLOWED_FLAGS: MountFlags = MS_PROPAGATION
         .union(MountFlags::MS_REC)
         .union(MountFlags::MS_SILENT);
@@ -181,7 +166,6 @@ fn do_change_type(target_path: Path, flags: MountFlags, ctx: &Context) -> Result
     Ok(())
 }
 
-/// Moves a mount from src location to dst location.
 fn do_move_mount_old(src_name_addr: Vaddr, dst_path: Path, ctx: &Context) -> Result<()> {
     let src_path = {
         let src_name = ctx
@@ -201,7 +185,6 @@ fn do_move_mount_old(src_name_addr: Vaddr, dst_path: Path, ctx: &Context) -> Res
     Ok(())
 }
 
-/// Mounts a new filesystem.
 fn do_new_mount(
     src_name_addr: Vaddr,
     flags: MountFlags,
@@ -245,7 +228,6 @@ fn do_new_mount(
     Ok(())
 }
 
-/// Gets the filesystem by fs_type and source.
 fn open_fs(
     source: Option<&str>,
     flags: MountFlags,
@@ -268,30 +250,30 @@ fn open_fs(
 bitflags! {
     #[derive(Clone, Copy, Debug, PartialEq)]
     struct MountFlags: u32 {
-        const MS_RDONLY      = 1 << 0;  // Mount read-only.
-        const MS_NOSUID      = 1 << 1;  // Ignore suid and sgid bits.
-        const MS_NODEV       = 1 << 2;  // Disallow access to device special files.
-        const MS_NOEXEC      = 1 << 3;  // Disallow program execution.
-        const MS_SYNCHRONOUS = 1 << 4;  // Writes are synced at once.
-        const MS_REMOUNT     = 1 << 5;  // Alter flags of a mounted FS.
-        const MS_MANDLOCK    = 1 << 6;  // Allow mandatory locks on an FS.
-        const MS_DIRSYNC     = 1 << 7;  // Directory modifications are synchronous.
-        const MS_NOSYMFOLLOW = 1 << 8;  // Do not follow symlinks.
-        const MS_NOATIME     = 1 << 10; // Do not update access times.
-        const MS_NODIRATIME  = 1 << 11; // Do not update directory access times.
-        const MS_BIND        = 1 << 12; // Bind directory at different place.
-        const MS_MOVE        = 1 << 13; // Move mount from old to new.
-        const MS_REC         = 1 << 14; // Create recursive mount.
-        const MS_SILENT      = 1 << 15; // Suppress certain messages in kernel log.
-        const MS_POSIXACL    = 1 << 16; // VFS does not apply the umask.
-        const MS_UNBINDABLE  = 1 << 17; // Change to unbindable.
-        const MS_PRIVATE     = 1 << 18; // Change to private.
-        const MS_SLAVE       = 1 << 19; // Change to slave.
-        const MS_SHARED      = 1 << 20; // Change to shared.
-        const MS_RELATIME    = 1 << 21; // Update atime relative to mtime/ctime.
-        const MS_KERNMOUNT   = 1 << 22; // This is a kern_mount call.
-        const MS_STRICTATIME = 1 << 24; // Always perform atime updates.
-        const MS_LAZYTIME    = 1 << 25; // Update the on-disk [acm]times lazily.
+        const MS_RDONLY      = 1 << 0;
+        const MS_NOSUID      = 1 << 1;
+        const MS_NODEV       = 1 << 2;
+        const MS_NOEXEC      = 1 << 3;
+        const MS_SYNCHRONOUS = 1 << 4;
+        const MS_REMOUNT     = 1 << 5;
+        const MS_MANDLOCK    = 1 << 6;
+        const MS_DIRSYNC     = 1 << 7;
+        const MS_NOSYMFOLLOW = 1 << 8;
+        const MS_NOATIME     = 1 << 10;
+        const MS_NODIRATIME  = 1 << 11;
+        const MS_BIND        = 1 << 12;
+        const MS_MOVE        = 1 << 13;
+        const MS_REC         = 1 << 14;
+        const MS_SILENT      = 1 << 15;
+        const MS_POSIXACL    = 1 << 16;
+        const MS_UNBINDABLE  = 1 << 17;
+        const MS_PRIVATE     = 1 << 18;
+        const MS_SLAVE       = 1 << 19;
+        const MS_SHARED      = 1 << 20;
+        const MS_RELATIME    = 1 << 21;
+        const MS_KERNMOUNT   = 1 << 22;
+        const MS_STRICTATIME = 1 << 24;
+        const MS_LAZYTIME    = 1 << 25;
     }
 }
 

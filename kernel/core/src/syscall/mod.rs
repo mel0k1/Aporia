@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! System call handlers.
-
 #![cfg_attr(
     any(
         target_arch = "riscv64",
@@ -202,11 +198,6 @@ mod wait4;
 mod waitid;
 mod write;
 
-/// This macro is used to define syscall handler.
-/// The first param is the number of parameters,
-/// The second param is the function name of syscall handler,
-/// The third is optional, means the args(if parameter number > 0),
-/// The fourth is optional, means if cpu ctx is required.
 macro_rules! syscall_handler {
     (0, $fn_name: ident, $args: ident, $ctx: expr) => {
         $fn_name($ctx)
@@ -311,21 +302,16 @@ macro_rules! dispatch_fn_inner {
         $crate::syscall::syscall_handler!($cnt, $handler, $args, $ctx, &$user_ctx)
     };
     ( $args: ident, $ctx: ident, $user_ctx: ident, $handler: ident ( args[ .. $cnt: tt ] , &mut user_ctx ) ) => {
-        // `$user_ctx` is already of type `&mut ostd::cpu::UserContext`,
-        // so no need to take `&mut` again
         $crate::syscall::syscall_handler!($cnt, $handler, $args, $ctx, $user_ctx)
     };
 }
 
 macro_rules! impl_syscall_nums_and_dispatch_fn {
-    // $args, $user_ctx, and $dispatcher_name are needed since Rust macro is hygienic
     ( $( $name: ident = $num: literal => $handler: ident $args: tt );* $(;)? ) => {
-        // First, define the syscall numbers
         $(
             pub(crate) const $name: u64 = $num;
         )*
 
-        // Then, define the dispatcher function
         pub(crate) fn syscall_dispatch(
             syscall_number: u64,
             args: [u64; 6],
@@ -351,7 +337,6 @@ macro_rules! impl_syscall_nums_and_dispatch_fn {
     }
 }
 
-// Export macros to sub-modules
 use dispatch_fn_inner;
 use impl_syscall_nums_and_dispatch_fn;
 use syscall_handler;
@@ -361,12 +346,9 @@ struct SyscallArgument {
     args: [u64; 6],
 }
 
-/// Syscall return
 #[derive(Clone, Copy, Debug)]
 enum SyscallReturn {
-    /// return isize, this value will be used to set rax
     Return(isize),
-    /// does not need to set rax
     NoReturn,
 }
 

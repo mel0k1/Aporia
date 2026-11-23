@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 pub(super) use abs::{
     AbstractHandle, alloc_ephemeral_abstract_name, create_abstract_name, lookup_abstract_name,
 };

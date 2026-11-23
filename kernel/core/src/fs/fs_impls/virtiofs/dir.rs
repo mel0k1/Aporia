@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Open directory handles for `virtiofs`.
-
 use aster_fuse::{FsyncFlags, FuseOpenFlags};
 
 use super::{inode::VirtioFsInode, open_handle::VirtioFsOpenHandle};
@@ -16,9 +12,6 @@ use crate::{
     process::signal::{PollHandle, Pollable},
 };
 
-/// A per-open directory object backed by a FUSE open handle.
-///
-/// Readdir and release requests carry this handle.
 pub(super) struct VirtioFsDir {
     inode: Arc<VirtioFsInode>,
     open_handle: Arc<VirtioFsOpenHandle>,
@@ -57,9 +50,6 @@ impl FileOps for VirtioFsDir {
     }
 
     fn readdir_at(&self, offset: usize, visitor: &mut dyn DirentVisitor) -> Result<usize> {
-        // FIXME: `readdir_at` should pass current status flags to the
-        // server, while `FileOps` interface currently does not expose them,
-        // so `FUSE_READDIR` uses the flags captured at open time.
         self.inode.readdir(
             self.open_handle.fh(),
             offset,

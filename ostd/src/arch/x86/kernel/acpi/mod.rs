@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-// Set this module's log prefix for `ostd::log`.
 macro_rules! __log_prefix {
     () => {
         "acpi: "
@@ -39,11 +36,6 @@ impl AcpiHandler for AcpiMemoryHandler {
     ) -> acpi::PhysicalMapping<Self, T> {
         let virtual_address = NonNull::new(paddr_to_vaddr(physical_address) as *mut T).unwrap();
 
-        // SAFETY: The caller should guarantee that `physical_address..physical_address + size` is
-        // part of the ACPI table. Then the memory region is mapped to `virtual_address` and is
-        // valid for read and immutable dereferencing.
-        // FIXME: The caller guarantee only holds if we trust the hardware to provide a valid ACPI
-        // table. Otherwise, if the table is corrupted, it may reference arbitrary memory regions.
         unsafe {
             acpi::PhysicalMapping::new(physical_address, virtual_address, size, size, self.clone())
         }
@@ -54,10 +46,6 @@ impl AcpiHandler for AcpiMemoryHandler {
 
 struct SyncAcpiTables(Option<AcpiTables<AcpiMemoryHandler>>);
 
-// SAFETY: This relies on the current implementation of `AcpiTables`,
-// which provides thread-safe access to read-only ACPI table data,
-// so `Sync` is sound for the wrapper.
-// FIXME: It depends on implementation details of `AcpiTables`, which should be avoided.
 unsafe impl Sync for SyncAcpiTables {}
 
 static ACPI_TABLES: Once<SyncAcpiTables> = Once::new();
@@ -75,7 +63,6 @@ pub(crate) fn get_acpi_tables() -> Option<&'static AcpiTables<AcpiMemoryHandler>
                 AcpiTables::from_rsdt(AcpiMemoryHandler {}, 1, addr).unwrap()
             },
             BootloaderAcpiArg::ScanBios => {
-                // SAFETY: The selected boot path permits legacy BIOS RSDP scanning.
                 let rsdp = unsafe { Rsdp::search_for_on_bios(AcpiMemoryHandler {}) };
                 match rsdp {
                     Ok(map) => unsafe {
@@ -99,35 +86,21 @@ pub(crate) fn get_acpi_tables() -> Option<&'static AcpiTables<AcpiMemoryHandler>
     acpi_tables.0.as_ref()
 }
 
-/// The platform information provided by the ACPI tables.
-///
-/// Currently, this structure contains only a limited set of fields, far fewer than those in all
-/// ACPI tables. However, the goal is to expand it properly to keep the simplicity of the OSTD code
-/// while enabling OSTD users to safely retrieve information from the ACPI tables.
 #[derive(Debug)]
 pub struct AcpiInfo {
-    /// The RTC CMOS RAM index to the century of data value; the "CENTURY" field in the FADT.
     pub century_register: Option<NonZeroU8>,
-    /// IA-PC Boot Architecture Flags; the "IAPC_BOOT_ARCH" field in the FADT.
     pub boot_flags: Option<IaPcBootArchFlags>,
-    /// An I/O port to reset the machine by writing the specified value.
     pub reset_port_and_val: Option<(u16, u8)>,
-    /// A memory region that is stolen for PCI configuration space.
     pub pci_ecam_region: Option<PciEcamRegion>,
 }
 
-/// A memory region that is stolen for PCI configuration space.
 #[derive(Debug)]
 pub struct PciEcamRegion {
-    /// The base address of the memory region.
     pub base_address: u64,
-    /// The start of the bus number.
     pub bus_start: u8,
-    /// The end of the bus number.
     pub bus_end: u8,
 }
 
-/// The [`AcpiInfo`] singleton.
 pub static ACPI_INFO: Once<AcpiInfo> = Once::new();
 
 pub(in crate::arch) fn init() {
@@ -144,7 +117,6 @@ pub(in crate::arch) fn init() {
     };
 
     if let Ok(fadt) = acpi_tables.find_table::<Fadt>() {
-        // A zero means that the century register does not exist.
         acpi_info.century_register = NonZeroU8::new(fadt.century);
         acpi_info.boot_flags = Some(fadt.iapc_boot_arch);
         if let Ok(reset_reg) = fadt.reset_register()
@@ -156,8 +128,6 @@ pub(in crate::arch) fn init() {
     };
 
     if let Ok(mcfg) = acpi_tables.find_table::<Mcfg>()
-        // TODO: Support multiple PCIe segment groups instead of assuming only one
-        // PCIe segment group is in use.
         && let Some(mcfg_entry) = mcfg.entries().first()
     {
         acpi_info.pci_ecam_region = Some(PciEcamRegion {

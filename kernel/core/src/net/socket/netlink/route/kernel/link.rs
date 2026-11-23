@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Handle link-related requests.
-
 use aster_bigtcp::wire::EthernetAddress;
 
 use super::util::{self, ResponseMode};
@@ -17,7 +13,6 @@ use crate::{
     util::net::CSocketAddrFamily,
 };
 
-/// The unspecified link-layer address.
 const UNSPECIFIED_LINK_ADDR: EthernetAddress = EthernetAddress([0; 6]);
 
 pub(super) fn do_get_link(
@@ -29,7 +24,6 @@ pub(super) fn do_get_link(
     let filter_by = FilterBy::from_request(request_segment)?;
 
     let mut response_segments: Vec<RtnlSegment> = iter_all_ifaces()
-        // Filter to include only requested links.
         .filter(|iface| match &filter_by {
             FilterBy::Index(index) => *index == iface.index(),
             FilterBy::Name(name) => *name == iface.name().as_cstr(),
@@ -73,8 +67,6 @@ impl<'a> FilterBy<'a> {
             return Ok(Self::Dump);
         }
 
-        // `index` takes precedence over `required_name`.
-
         let required_index = request_segment.body().index;
         if required_index != 0 {
             return Ok(Self::Index(required_index));
@@ -104,8 +96,6 @@ fn validate_getlink_request(request_segment: &LinkSegment, strict_check: bool) -
     }
 
     let body = request_segment.body();
-    // GETLINK reserves these fields.
-    // Reference: <https://elixir.bootlin.com/linux/v7.1/source/net/core/rtnetlink.c#L4141>.
     if body._pad != 0 || body.type_ != 0 || body.flags != 0 || body.change != 0 {
         return Err(errno!(
             EINVAL,
@@ -113,8 +103,6 @@ fn validate_getlink_request(request_segment: &LinkSegment, strict_check: bool) -
         ));
     }
 
-    // Linux accepts different attributes for link dumps and single-link queries
-    // when strict checking is enabled.
     let flags = GetRequestFlags::from_bits_truncate(request_segment.header().flags);
     let allowed = if flags.contains(GetRequestFlags::DUMP) {
         if body.index != 0 {
@@ -123,7 +111,6 @@ fn validate_getlink_request(request_segment: &LinkSegment, strict_check: bool) -
                 "filtering by interface index is not supported for link dumps"
             ));
         }
-        // Reference: <https://elixir.bootlin.com/linux/v7.1/source/net/core/rtnetlink.c#L2495>.
         [
             LinkAttrClass::MASTER,
             LinkAttrClass::LINKINFO,
@@ -132,7 +119,6 @@ fn validate_getlink_request(request_segment: &LinkSegment, strict_check: bool) -
         ]
         .as_slice()
     } else {
-        // Reference: <https://elixir.bootlin.com/linux/v7.1/source/net/core/rtnetlink.c#L4152>.
         [
             LinkAttrClass::IFNAME,
             LinkAttrClass::EXT_MASK,
@@ -169,10 +155,6 @@ fn iface_to_new_link(request_header: &CMsgSegHdr, iface: &Arc<Iface>) -> LinkSeg
         change: 0,
     };
 
-    // Linux may report dozens of attributes in a fixed order.
-    // See the reference below for the complete attribute list and ordering.
-    // TODO: Asterinas currently reports only a subset of these attributes.
-    // Reference: <https://elixir.bootlin.com/linux/v7.1/source/net/core/rtnetlink.c#L2050>.
     let mut attrs = Vec::with_capacity(5);
     attrs.extend([
         LinkAttr::Name(*iface.name()),

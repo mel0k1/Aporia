@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 mod addr;
 mod cred;
 mod ctrl_msg;

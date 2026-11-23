@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::sync::Arc;
 use core::ops::{Deref, DerefMut};
 
@@ -16,16 +14,6 @@ use crate::{
     node::{Height, XNode},
 };
 
-/// A type representing the state of a [`Cursor`] or a [`CursorMut`].
-///
-/// Currently, there are two possible states:
-///  - `Inactive`: The cursor is not positioned on any node.
-///  - `AtNode`: The cursor is positioned on some node and holds a shared reference
-///    to it.
-///
-/// A cursor never ends up on an interior node. In other words, when methods
-/// of `Cursor` or `CursorMut` finish, the cursor will either not positioned on any node
-/// or positioned on some leaf node.
 #[derive(Default)]
 enum CursorState<'a, P>
 where
@@ -83,33 +71,17 @@ impl<'a, P: NonNullPtr + Send + Sync> CursorState<'a, P> {
     }
 }
 
-/// A `Cursor` can traverse in the [`XArray`] by setting or increasing the
-/// target index and can perform read-only operations to the target item.
-///
-/// Multiple `Cursor`s of the same `XArray` can exist simultaneously, and their existence
-/// does not conflict with that of a [`CursorMut`].
-///
-/// A newly created `Cursor` can read all modifications that occurred before its creation.
-/// Additionally, a `Cursor` can ensure it reads all modifications made before a specific
-/// point by performing a [`Cursor::reset`] operation.
-///
-/// The typical way to obtain a `Cursor` instance is to call [`XArray::cursor`].
 pub struct Cursor<'a, P, M = NoneMark>
 where
     P: NonNullPtr + Send + Sync,
 {
-    /// The `XArray` where the cursor locates.
     xa: &'a XArray<P, M>,
-    /// The target index of the cursor.
     index: u64,
-    /// The atomic-mode guard that protects cursor operations.
     guard: &'a dyn InAtomicMode,
-    /// The state of the cursor.
     state: CursorState<'a, P>,
 }
 
 impl<'a, P: NonNullPtr + Send + Sync, M> Cursor<'a, P, M> {
-    /// Creates a `Cursor` to perform read-related operations in the `XArray`.
     pub(super) fn new<G: AsAtomicModeGuard>(
         xa: &'a XArray<P, M>,
         guard: &'a G,
@@ -123,10 +95,6 @@ impl<'a, P: NonNullPtr + Send + Sync, M> Cursor<'a, P, M> {
         }
     }
 
-    /// Traverses from the root node to the leaf node according to the target index.
-    ///
-    /// This method will not create new nodes. If the cursor can not reach the target
-    /// leaf node, the cursor will remain the inactive state.
     fn traverse_to_target(&mut self) {
         if self.state.is_at_node() {
             return;
@@ -145,10 +113,6 @@ impl<'a, P: NonNullPtr + Send + Sync, M> Cursor<'a, P, M> {
         self.continue_traverse_to_target();
     }
 
-    /// Traverses from an interior node to the leaf node according to the target index.
-    ///
-    /// This method will not create new nodes. If the cursor can not reach the target
-    /// leaf node, the cursor will be reset to the inactive state.
     fn continue_traverse_to_target(&mut self) {
         while !self.state.is_at_leaf() {
             let (current_node, operation_offset) =
@@ -167,9 +131,6 @@ impl<'a, P: NonNullPtr + Send + Sync, M> Cursor<'a, P, M> {
         }
     }
 
-    /// Finds the next marked item and moves the cursor to it.
-    ///
-    /// This method will return the index of the marked item, or `None` if no such item exists.
     fn find_marked(&mut self, mark: usize) -> Option<u64> {
         let mut index = self.index.checked_add(1)?;
         let (mut current_node, mut operation_offset) =
@@ -186,7 +147,6 @@ impl<'a, P: NonNullPtr + Send + Sync, M> Cursor<'a, P, M> {
             };
 
         loop {
-            // If we reach the end of the current node, go to its parent node.
             if operation_offset == SLOT_SIZE as u8 {
                 let Some(parent_node) = current_node.deref_target().parent(self.guard) else {
                     self.reset();
@@ -198,15 +158,12 @@ impl<'a, P: NonNullPtr + Send + Sync, M> Cursor<'a, P, M> {
                 continue;
             }
 
-            // Otherwise, check whether the remaining children contain marked items.
             let new_operation_offset = current_node
                 .next_marked(operation_offset, mark)
                 .unwrap_or(SLOT_SIZE as u8);
             let gap = (new_operation_offset - operation_offset) as u64;
             if gap != 0 {
                 let index_step = current_node.height().index_step();
-                // `index_step` is a power of two. In this case, we want to clear the lower bits
-                // since we should start from the beginning of the next child.
                 let Some(new_index) = (index & !(index_step - 1)).checked_add(gap * index_step)
                 else {
                     self.reset();
@@ -220,7 +177,6 @@ impl<'a, P: NonNullPtr + Send + Sync, M> Cursor<'a, P, M> {
                 }
             }
 
-            // Due to race conditions, the child may no longer exist. If so, we will retry.
             let Some(child_node) = current_node
                 .deref_target()
                 .entry_with(self.guard, operation_offset)
@@ -228,14 +184,12 @@ impl<'a, P: NonNullPtr + Send + Sync, M> Cursor<'a, P, M> {
                 continue;
             };
 
-            // If we're not at the leaf, then we continue looking down.
             if !current_node.is_leaf() {
                 current_node = child_node.left().unwrap();
                 operation_offset = current_node.entry_offset(index);
                 continue;
             }
 
-            // If we're at the leaf, then we have found an item.
             self.index = index;
             self.state = CursorState::AtNode {
                 node: current_node,
@@ -245,13 +199,6 @@ impl<'a, P: NonNullPtr + Send + Sync, M> Cursor<'a, P, M> {
         }
     }
 
-    /**** Public ****/
-
-    /// Loads the item at the target index.
-    ///
-    /// If the target item exists, this method will return a [`NonNullPtr::Ref`]
-    /// that acts exactly like a `&'_ P` wrapped in `Some(_)`. Otherwises, it will
-    /// return `None`.
     pub fn load(&mut self) -> Option<P::Ref<'a>> {
         self.traverse_to_target();
         let (node, operation_offset) = self.state.as_node()?;
@@ -260,26 +207,19 @@ impl<'a, P: NonNullPtr + Send + Sync, M> Cursor<'a, P, M> {
             .and_then(|item_entry| item_entry.right())
     }
 
-    /// Returns the target index of the cursor.
     pub fn index(&self) -> u64 {
         self.index
     }
 
-    /// Resets the target index to `index`.
     pub fn reset_to(&mut self, index: u64) {
         self.reset();
         self.index = index;
     }
 
-    /// Resets the cursor to the inactive state.
     pub fn reset(&mut self) {
         self.state = CursorState::Inactive;
     }
 
-    /// Increases the target index of the cursor by one.
-    ///
-    /// Once increased, the cursor will be positioned on the corresponding leaf node
-    /// if the leaf node exists.
     pub fn next(&mut self) {
         self.index = self.index.checked_add(1).unwrap();
 
@@ -305,27 +245,12 @@ impl<'a, P: NonNullPtr + Send + Sync, M> Cursor<'a, P, M> {
         self.continue_traverse_to_target();
     }
 
-    /// Moves the cursor to the next present item.
-    ///
-    /// If an item is present after the cursor's current index, the cursor will be
-    /// positioned on the corresponding leaf node and the index of the item will be
-    /// returned.
-    ///
-    /// Otherwise, the cursor will stay where it is and a [`None`] will be returned.
-    ///
-    /// Note that this method cannot provide an atomic guarantee for the following
-    /// operations on [`Cursor`]. For example, [`Self::load`] may fail due to
-    /// concurrent removals. If this is a concern, use [`CursorMut`] to avoid the
-    /// issue.
     pub fn next_present(&mut self) -> Option<u64> {
         self.find_marked(PRESENT_MARK)
     }
 }
 
 impl<P: NonNullPtr + Send + Sync, M: Into<XMark>> Cursor<'_, P, M> {
-    /// Checks whether the target item is marked with the input `mark`.
-    ///
-    /// If the target item does not exist, this method will also return false.
     pub fn is_marked(&mut self, mark: M) -> bool {
         self.traverse_to_target();
         self.state
@@ -334,40 +259,16 @@ impl<P: NonNullPtr + Send + Sync, M: Into<XMark>> Cursor<'_, P, M> {
             .unwrap_or(false)
     }
 
-    /// Moves the cursor to the next marked item.
-    ///
-    /// If an item is marked after the cursor's current index, the cursor will be
-    /// positioned on the corresponding leaf node and the index of the item will be
-    /// returned.
-    ///
-    /// Otherwise, the cursor will stay where it is and a [`None`] will be returned.
-    ///
-    /// Note that this method cannot provide an atomic guarantee for the following
-    /// operations on [`Cursor`]. For example, [`Self::load`] may return an item that
-    /// is not marked due to concurrent operations. If this is a concern, use
-    /// [`CursorMut`] to avoid the issue.
     pub fn next_marked(&mut self, mark: M) -> Option<u64> {
         self.find_marked(mark.into().index())
     }
 }
 
-/// A `CursorMut` can traverse in the [`XArray`] by setting or increasing the
-/// target index and can perform read-write operations to the target item.
-///
-/// An `XArray` can only have one `CursorMut` at a time, but a `CursorMut` can coexist
-/// with multiple `Cursors` simultaneously.
-///
-/// The read-related operations of a `CursorMut` always retrieve up-to-date information.
-///
-/// The typical way to obtain a `CursorMut` instance is to call [`LockedXArray::cursor_mut`].
-///
-/// [`LockedXArray::cursor_mut`]: super::LockedXArray::cursor_mut
 pub struct CursorMut<'a, P, M>(Cursor<'a, P, M>)
 where
     P: NonNullPtr + Send + Sync;
 
 impl<'a, P: NonNullPtr + Send + Sync, M> CursorMut<'a, P, M> {
-    /// Creates a `CursorMut` to perform read- and write-related operations in the `XArray`.
     pub(super) fn new<G: SpinGuardian>(
         xa: &'a XArray<P, M>,
         guard: &'a SpinLockGuard<'a, (), G>,
@@ -376,13 +277,10 @@ impl<'a, P: NonNullPtr + Send + Sync, M> CursorMut<'a, P, M> {
         Self(Cursor::new(xa, guard, index))
     }
 
-    /// Returns an `XLockGuard` that marks the `XArray` is locked.
     fn lock_guard(&self) -> XLockGuard<'_> {
-        // Having a `CursorMut` means that the `XArray` is locked.
         XLockGuard(self.guard)
     }
 
-    /// Increases the height of the `XArray` so that the `index`-th element can be stored.
     fn reserve(&self, index: u64) {
         if self.xa.head.read_with(self.guard).is_none() {
             let height = Height::from_index(index);
@@ -405,9 +303,6 @@ impl<'a, P: NonNullPtr + Send + Sync, M> CursorMut<'a, P, M> {
         }
     }
 
-    /// Traverses from the root node to the leaf node according to the target index.
-    ///
-    /// This method will potentially create new nodes.
     fn expand_and_traverse_to_target(&mut self) {
         if self.state.is_at_node() {
             return;
@@ -422,9 +317,6 @@ impl<'a, P: NonNullPtr + Send + Sync, M> CursorMut<'a, P, M> {
         self.continue_traverse_to_target_mut();
     }
 
-    /// Traverses from an interior node to the leaf node according to the target index.
-    ///
-    /// This method will potentially create new nodes.
     fn continue_traverse_to_target_mut(&mut self) {
         while !self.state.is_at_leaf() {
             let (current_node, operation_offset) =
@@ -450,9 +342,6 @@ impl<'a, P: NonNullPtr + Send + Sync, M> CursorMut<'a, P, M> {
         }
     }
 
-    /**** Public ****/
-
-    /// Stores a new `item` at the target index.
     pub fn store(&mut self, item: P) {
         self.expand_and_traverse_to_target();
         let (node, operation_offset) = self.state.as_node().unwrap();
@@ -463,13 +352,6 @@ impl<'a, P: NonNullPtr + Send + Sync, M> CursorMut<'a, P, M> {
         );
     }
 
-    /// Removes the item at the target index.
-    ///
-    /// Returns the removed item if it previously exists.
-    ///
-    /// If this operation leaves the current leaf node empty, the leaf and its
-    /// empty ancestors are removed from the `XArray`. The cursor is then reset
-    /// to the inactive state.
     pub fn remove(&mut self) -> Option<P::Ref<'a>> {
         self.traverse_to_target();
         let (node, off) = self.state.as_node()?;
@@ -486,9 +368,6 @@ impl<'a, P: NonNullPtr + Send + Sync, M> CursorMut<'a, P, M> {
 
         let (mut current, _) = core::mem::take(&mut self.state).into_node().unwrap();
 
-        // Remove the empty leaf node and propagate upwards, removing empty
-        // ancestors until a non-empty node or the root is reached. If the
-        // whole tree becomes empty, the `XArray`'s head is cleared too.
         loop {
             let Some(parent) = current.deref_target().parent(self.guard) else {
                 self.xa.head.update(None);
@@ -507,16 +386,10 @@ impl<'a, P: NonNullPtr + Send + Sync, M> CursorMut<'a, P, M> {
     }
 }
 
-/// An error indicating that the mark cannot be set because the item does not exist.
 #[derive(Debug)]
 pub struct SetMarkError;
 
 impl<P: NonNullPtr + Send + Sync, M: Into<XMark>> CursorMut<'_, P, M> {
-    /// Sets the input `mark` for the item at the target index.
-    ///
-    /// # Errors
-    ///
-    /// This method will fail with an error if the target item does not exist.
     pub fn set_mark(&mut self, mark: M) -> Result<(), SetMarkError> {
         self.traverse_to_target();
         self.state
@@ -532,11 +405,6 @@ impl<P: NonNullPtr + Send + Sync, M: Into<XMark>> CursorMut<'_, P, M> {
             .ok_or(SetMarkError)
     }
 
-    /// Unsets the input `mark` for the item at the target index.
-    ///
-    /// # Errors
-    ///
-    /// This method will fail with an error if the target item does not exist.
     pub fn unset_mark(&mut self, mark: M) -> Result<(), SetMarkError> {
         self.traverse_to_target();
         self.state

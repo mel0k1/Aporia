@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! The layer of cryptographical constructs.
-
 mod crypto_blob;
 mod crypto_chain;
 mod crypto_log;

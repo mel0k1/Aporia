@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use fdt_util::AcquireIrqLines;
 use ostd::arch::{
     irq::MappedIrqLine,
@@ -12,7 +10,6 @@ use crate::{
     console::{Uart, UartConsole, UartMut},
 };
 
-/// IRQ line for UART serial.
 static IRQ_LINE: Once<MappedIrqLine> = Once::new();
 
 pub(super) fn init() {

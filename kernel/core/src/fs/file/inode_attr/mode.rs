@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use aster_systree::SysPerms;
 
 use crate::prelude::*;
@@ -7,29 +5,17 @@ use crate::prelude::*;
 bitflags! {
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub(crate) struct InodeMode: u16 {
-        /// set-user-ID
         const S_ISUID = 0o4000;
-        /// set-group-ID
         const S_ISGID = 0o2000;
-        /// sticky bit
         const S_ISVTX = 0o1000;
-        /// read by owner
         const S_IRUSR = 0o0400;
-        /// write by owner
         const S_IWUSR = 0o0200;
-        /// execute/search by owner
         const S_IXUSR = 0o0100;
-        /// read by group
         const S_IRGRP = 0o0040;
-        /// write by group
         const S_IWGRP = 0o0020;
-        /// execute/search by group
         const S_IXGRP = 0o0010;
-        /// read by others
         const S_IROTH = 0o0004;
-        /// write by others
         const S_IWOTH = 0o0002;
-        /// execute/search by others
         const S_IXOTH = 0o0001;
     }
 }
@@ -90,59 +76,6 @@ impl From<SysPerms> for InodeMode {
     }
 }
 
-/// Changes an inode mode.
-///
-/// # Syntax
-///
-/// If you are familiar with the `chmod` tool, the syntax of the `chmod` macro
-/// should appear natural and self-explaining.
-///
-/// The `chmod` macro takes two or more arguments. The first argument is an
-/// initial value of the inode mode. The rest arguments are one or more
-/// symbolic mode, each of which dictates how the current value of the inode
-/// mode shall be changed.
-///
-/// The format of a symbolic mode is as follows:
-///
-/// ```
-/// [ugoa][+-=][perms]
-/// ```
-///
-/// where `[perms]` is either zero or more letters from `rwx`.
-///
-/// The user part, `[ugoa]`,
-/// controls the target users whose access to the file will be changed:
-/// * `u`: the user who owns it;
-/// * `g`: other users in the file owner's group;
-/// * `o`: other users not in the file owner's group;
-/// * `a`: all users.
-///
-/// The operator part, `[+-=]`,
-/// indicates how the file permission bits are changed:
-/// * `+`: `[perms]` are added to the target users' permissions;
-/// * `-`: `[perms]` are removed from the target users' permissions;
-/// * `=`: `[perms]` are set to the target users' permissions.
-///
-/// The permission part, `[perms]`, is a combination of `rwx`.
-/// * `r`: the read permission;
-/// * `w`: the write permission;
-/// * `x`: the execute/search permission.
-///
-/// # Examples
-///
-/// ```
-/// // Add the read and write permissions to everyone
-/// let mode0 = mkmod!(a+rw);
-/// assert!(mode0.bits() == 0o666);
-///
-/// // Add the execute permissions to the owner user
-/// let mode1 = chmod!(mode0, u+x);
-/// assert!(mode1.bits() == 0o766);
-///
-/// // Combine the above two steps into one invocation
-/// let mode2 = mkmod!(a+rw, u+x);
-/// assert!(mode2.bits() == 0o766);
-/// ```
 macro_rules! chmod {
     ($mode:expr) => { $mode };
 
@@ -171,10 +104,6 @@ macro_rules! chmod {
     }};
 }
 
-/// Makes an inode mode.
-///
-/// `mkmod` is equivalent to `chmod` with the first argument set to
-/// `InodeMode::empty()`. See [`chmod`] for details.
 macro_rules! mkmod {
     ($($args:tt)*) => {
         $crate::fs::file::chmod!($crate::fs::file::InodeMode::empty(), $($args)*)

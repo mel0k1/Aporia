@@ -1,4 +1,3 @@
-# template
 [components]
 init-order = {name = "init-order"}
 first-init = {name = "first-init"}

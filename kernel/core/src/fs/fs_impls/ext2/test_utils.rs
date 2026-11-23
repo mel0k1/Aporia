@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Test-only fixtures and helpers for ext2 kernel tests.
-
 use core::{
     fmt,
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -31,10 +27,6 @@ use crate::{
 const DOT_BYTE: &[u8] = b".";
 const DOT_DOT_BYTE: &[u8] = b"..";
 
-// ===========================================================================
-// Layer 0: Primitives — assertions, bit manipulation
-// ===========================================================================
-
 macro_rules! assert_errno {
     ($expr:expr, $errno:expr) => {
         match $expr {
@@ -56,10 +48,6 @@ pub(super) fn set_bit_lsb0(buf: &mut [u8], bit: usize) {
     let bit_in_byte = bit % 8;
     buf[byte] |= 1u8 << bit_in_byte;
 }
-
-// ===========================================================================
-// Layer 1: Mock devices
-// ===========================================================================
 
 pub(super) struct Ext2MemoryDisk {
     segment: Segment<()>,
@@ -160,10 +148,6 @@ impl BlockDevice for Ext2MemoryDisk {
         DeviceId::new(MajorId::new(1), MinorId::new(0))
     }
 }
-
-// ===========================================================================
-// Layer 2: Raw data factories
-// ===========================================================================
 
 pub(super) fn make_valid_raw_super_block(nr_block_groups: u32) -> RawSuperBlock {
     let mut raw = RawSuperBlock::default();
@@ -282,10 +266,6 @@ impl RawInodeBuilder {
         }
     }
 }
-
-// ===========================================================================
-// Layer 3: Disk layout writers
-// ===========================================================================
 
 pub(super) fn write_indirect_ptr(disk: &Ext2MemoryDisk, bid: u32, index: u32, next: u32) {
     let offset = Bid::new(bid as u64).to_offset() + (index as usize) * size_of::<u32>();
@@ -427,14 +407,12 @@ fn make_root_raw_inode(root_bid: u32) -> RawInode {
 pub(super) fn write_simple_root_dir_block(disk: &Ext2MemoryDisk, root_bid: u32) {
     let mut block = vec![0u8; BLOCK_SIZE];
 
-    // '.'
     block[0..4].copy_from_slice(&ROOT_INO.to_le_bytes());
     block[4..6].copy_from_slice(&(12u16).to_le_bytes());
     block[6] = 1;
     block[7] = 2;
     block[8] = DOT_BYTE[0];
 
-    // '..'
     block[12..16].copy_from_slice(&ROOT_INO.to_le_bytes());
     block[16..18].copy_from_slice(&((BLOCK_SIZE - 12) as u16).to_le_bytes());
     block[18] = 2;
@@ -446,27 +424,17 @@ pub(super) fn write_simple_root_dir_block(disk: &Ext2MemoryDisk, root_bid: u32) 
         .unwrap();
 }
 
-// ===========================================================================
-// Layer 4: Fixture — strategy enums, Ext2Fixture, Ext2FixtureBuilder
-// ===========================================================================
-
 #[derive(Clone)]
 pub(super) enum BlockBitmapInit {
-    /// Marks only mandatory per-group metadata blocks.
     MetadataOnly,
-    /// Marks metadata plus explicit extra blocks in group 0.
     MetadataPlus(Vec<u32>),
-    /// Marks all group-0 blocks allocated for ENOSPC testing.
     Full,
 }
 
 #[derive(Clone)]
 pub(super) enum InodeBitmapInit {
-    /// Marks only reserved group-0 inodes `[1, first_ino)`.
     ReservedOnly,
-    /// Marks reserved group-0 inodes plus explicit extra group-0 inodes.
     ReservedPlus(Vec<u32>),
-    /// Marks all group-0 inodes allocated.
     Full,
 }
 
@@ -587,8 +555,6 @@ impl Ext2FixtureBuilder {
         Ok((raw_sb, sb, descs, disk, layout))
     }
 
-    /// Marks the per-group metadata bits that every group must have for
-    /// mount-time bitmap validation to pass.
     fn mark_group_metadata_bits(
         bitmap: &mut [u8],
         sb: &SuperBlock,
@@ -627,7 +593,6 @@ impl Ext2FixtureBuilder {
     ) {
         let root_bid = layout.first_data_bid.saturating_add(1);
 
-        // Resolve bitmap strategies.
         let block_init = self.block_bitmap.clone().unwrap_or_else(|| {
             if self.init_root {
                 BlockBitmapInit::MetadataPlus(vec![root_bid])
@@ -643,7 +608,6 @@ impl Ext2FixtureBuilder {
             }
         });
 
-        // Block bitmaps — one pass per group.
         for (group_idx, desc) in descs.iter().enumerate() {
             let first = sb.group_first_block_no(group_idx);
             let last = sb.group_last_block_no(group_idx);
@@ -678,7 +642,6 @@ impl Ext2FixtureBuilder {
                 .unwrap();
         }
 
-        // Inode bitmap — group 0 only.
         {
             let mut bitmap = [0u8; BLOCK_SIZE];
             match &inode_init {
@@ -712,7 +675,6 @@ impl Ext2FixtureBuilder {
                 .unwrap();
         }
 
-        // Root directory data block (independent of bitmaps).
         if self.init_root {
             write_simple_root_dir_block(disk, root_bid);
         }
@@ -741,10 +703,6 @@ impl Ext2FixtureBuilder {
         })
     }
 }
-
-// ===========================================================================
-// Layer 5: Convenience helpers
-// ===========================================================================
 
 pub(super) fn create_file(dir: &Arc<Inode>, name: &str) -> Arc<Inode> {
     dir.create(name, InodeType::File, FilePerm::from_bits_truncate(0o644))

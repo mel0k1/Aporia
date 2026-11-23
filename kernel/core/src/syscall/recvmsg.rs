@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd::mm::VmIo;
 
 use super::SyscallReturn;
@@ -34,14 +32,11 @@ pub(super) fn sys_recvmsg(
         socket
             .recvmsg(&mut io_vec_writer, flags)
             .map_err(|err| match err.error() {
-                // FIXME: `recvmsg` should not be restarted if a timeout has been set on the socket using `setsockopt`.
                 Errno::EINTR => errno!(ERESTARTSYS),
                 _ => err,
             })?
     };
 
-    // Writing control messages may access the file table, so it should be called after dropping
-    // the file table borrow.
     drop(file_table);
 
     let addr = message_header.addr();

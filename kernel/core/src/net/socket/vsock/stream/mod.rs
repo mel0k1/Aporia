@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 mod connected;
 mod connecting;
 mod init;
@@ -28,8 +26,6 @@ use crate::{
 
 pub(crate) struct VsockStreamSocket {
     state: Mutex<Takeable<State>>,
-    // Note that for vsock, all pollee notifications and invalidations live in the transport module
-    // (e.g., `super::transport`) rather than in this module.
     pollee: Pollee,
     common: FileCommon,
 }
@@ -96,8 +92,6 @@ impl VsockStreamSocket {
                 Err((error, init_stream)) => (State::Init(init_stream), Some(Err(error))),
             }
         })
-
-        // The pollee should have already been invalidated in the transport module.
     }
 
     fn check_connect(&self) -> Result<()> {
@@ -179,12 +173,6 @@ impl VsockStreamSocket {
         }
     }
 
-    /// Locks the state and updates it if needed.
-    ///
-    /// If the current state is [`State::Connecting`] and the connect attempt has finished, this
-    /// method transitions the state to the latest one before returning the lock guard.
-    ///
-    /// Callers should always use this method instead of locking the state directly.
     fn lock_updated_state(&self) -> MutexGuard<'_, Takeable<State>> {
         let mut state = self.state.lock();
 
@@ -242,9 +230,6 @@ impl Socket for VsockStreamSocket {
             return result;
         }
 
-        // FIXME: Linux cancels pending packets and aborts the connection if a blocking `connect()`
-        // is interrupted by a signal. Here, we follow the behavior of IP sockets by continuing to
-        // establish the connection in the background.
         self.wait_events(IoEvents::OUT, None, || self.check_connect())
     }
 
@@ -271,8 +256,6 @@ impl Socket for VsockStreamSocket {
                 Err((error, init_stream)) => (State::Init(init_stream), Err(error)),
             }
         })
-
-        // The pollee should have already been invalidated in the transport module.
     }
 
     fn accept(&self, is_nonblocking: bool) -> Result<(Arc<dyn FileLike>, SocketAddr)> {
@@ -312,8 +295,6 @@ impl Socket for VsockStreamSocket {
         Ok(connected_stream.remote_addr().into())
     }
 
-    // TODO: Support setting socket options
-
     fn get_option(&self, option: &mut dyn SocketOption) -> Result<()> {
         sock_option_mut!(match option {
             socket_errors @ SocketError => {
@@ -323,7 +304,6 @@ impl Socket for VsockStreamSocket {
             _ => {}
         });
 
-        // TODO: Support getting other socket options
         Err(errno!(EOPNOTSUPP, "the socket option to be get is unknown"))
     }
 
@@ -333,7 +313,6 @@ impl Socket for VsockStreamSocket {
         message_header: MessageHeader,
         flags: SendFlags,
     ) -> Result<usize> {
-        // TODO: Deal with flags
         if !flags.is_all_supported() {
             warn!("unsupported flags: {:?}", flags);
         }
@@ -343,10 +322,6 @@ impl Socket for VsockStreamSocket {
             addr,
         } = message_header;
 
-        // According to the Linux man pages, `EISCONN` _may_ be returned when the destination
-        // address is specified for a connection-mode socket. In practice, `sendmsg` on vosck
-        // stream sockets will fail due to that. We follow the same behavior as the Linux
-        // implementation.
         if addr.is_some() {
             let state = self.lock_updated_state();
             match state.as_ref() {
@@ -366,13 +341,10 @@ impl Socket for VsockStreamSocket {
         }
 
         if !control_messages.is_empty() {
-            // TODO: Support sending control message
             warn!("sending control message is not supported");
         }
 
         self.block_on(IoEvents::OUT, None, || self.try_send(reader, flags))
-
-        // TODO: Trigger `SIGPIPE` if the error code is `EPIPE` and `MSG_NOSIGNAL` is not specified
     }
 
     fn recvmsg(
@@ -380,14 +352,12 @@ impl Socket for VsockStreamSocket {
         writer: &mut dyn MultiWrite,
         flags: RecvFlags,
     ) -> Result<(RecvOutput, MessageHeader)> {
-        // TODO: Deal with flags
         if !flags.is_all_supported() {
             warn!("unsupported flags: {:?}", flags);
         }
 
         let received_bytes = self.block_on(IoEvents::IN, None, || self.try_recv(writer, flags))?;
 
-        // TODO: Receive control message
         let message_header = MessageHeader::new(None, Vec::new());
 
         Ok((RecvOutput::new_for_stream(received_bytes), message_header))

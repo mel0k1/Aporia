@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::{boxed::Box, sync::Arc};
 use core::fmt::Debug;
 
@@ -25,28 +23,6 @@ use crate::{
     },
 };
 
-// When used through the legacy interface, the virtio common configuration structure looks as follows:
-//
-//                          virtio legacy ==> Mapped into PCI BAR0
-//  +---------------------------------------------------------------------------------------+
-//  |                       Device Features Bits[0:31] (Read-only)                          |
-//  +---------------------------------------------------------------------------------------+
-//  |                       Driver Features Bits[0:31] (Read & Write)                       |
-//  +---------------------------------------------------------------------------------------+
-//  |                              Virtqueue Address PFN (R/W)                              |
-//  +-------------------------------------------+-------------------------------------------+
-//  |             Queue Select (R/W)            |               Queue Size (R)              |
-//  +---------------------+---------------------+-------------------------------------------+
-//  |    ISR Status (R)   | Device Status (R/W) |             Queue Notify (R/W)            |
-//  +---------------------+---------------------+-------------------------------------------+
-//  |          MSIX Queue Vector (R/W)          |          MSIX Config Vector (R/W)         |
-//  +-------------------------------------------+-------------------------------------------+
-//  |                          Device Specific Configurations (R/W)                         |
-//  +---------------------------------------------------------------------------------------+
-//
-// When MSI-X capability is enabled, device-specific configuration starts at byte offset 24 in
-// virtio common configuration structure. When MSI-X capability is not enabled, device-specific
-// configuration starts at byte offset 20 in virtio header.
 const DEVICE_FEATURES_OFFSET: usize = 0x00;
 const DRIVER_FEATURES_OFFSET: usize = 0x04;
 const QUEUE_ADDR_PFN_OFFSET: usize = 0x08;
@@ -56,7 +32,6 @@ const QUEUE_NOTIFY_OFFSET: usize = 0x10;
 const DEVICE_STATUS_OFFSET: usize = 0x12;
 #[expect(dead_code)]
 const ISR_STATUS_OFFSET: usize = 0x13;
-// If MSI-X is enabled for the device, there are two additional fields.
 const CONFIG_MSIX_VECTOR_OFFSET: usize = 0x14;
 const QUEUE_MSIX_VECTOR_OFFSET: usize = 0x16;
 
@@ -112,7 +87,6 @@ impl VirtioPciLegacyTransport {
             num_queues += 1;
         }
 
-        // TODO: Support interrupt without MSI-X.
         let Ok(Some(msix)) = common_device.acquire_msix_capability() else {
             return Err(aster_device::common::Error::ResourceUnavailable);
         };
@@ -127,17 +101,6 @@ impl VirtioPciLegacyTransport {
         })
     }
 
-    /// Calculate the aligned virtqueue size.
-    ///
-    /// According to the VirtIO spec v0.9.5:
-    ///
-    /// Each virtqueue occupies two or more physically-contiguous pages (defined, for
-    /// the purposes of this specification, as 4096 bytes), and consists of three parts:
-    /// +------------------+------------------------------------------------+-----------+
-    /// | Descriptor Table | Available Ring (padding to next 4096 boundary) | Used Ring |
-    /// +------------------+------------------------------------------------+-----------+
-    ///
-    /// More details can be found at <http://ozlabs.org/~rusty/virtio-spec/virtio-0.9.5.pdf>.
     pub(crate) fn calc_virtqueue_size_aligned(queue_size: usize) -> usize {
         let align_mask = Self::QUEUE_ALIGN_SIZE - 1;
 
@@ -161,11 +124,6 @@ impl VirtioTransport for VirtioPciLegacyTransport {
         _avail_ring_ptr: &SafePtr<AvailRing, Arc<DmaCoherent>>,
         _used_ring_ptr: &SafePtr<UsedRing, Arc<DmaCoherent>>,
     ) -> Result<(), VirtioTransportError> {
-        // When using the legacy interface, there was no mechanism to negotiate
-        // the queue size! The transitional driver MUST retrieve the `Queue Size`
-        // field from the device and MUST allocate the total number of bytes
-        // (including descriptor, avail_ring and used_ring) for the virtqueue
-        // according to the specific formula, see `calc_virtqueue_size_aligned`.
         let queue_addr = descriptor_ptr.daddr();
         let page_frame_number = (queue_addr / PAGE_SIZE) as u32;
 
@@ -210,7 +168,6 @@ impl VirtioTransport for VirtioPciLegacyTransport {
     }
 
     fn read_device_features(&self) -> u64 {
-        // Only Feature Bits 0 to 31 are accessible through the Legacy Interface.
         let features = self
             .config_bar
             .read_once::<u32>(DEVICE_FEATURES_OFFSET)
@@ -219,8 +176,6 @@ impl VirtioTransport for VirtioPciLegacyTransport {
     }
 
     fn write_driver_features(&mut self, features: u64) -> Result<(), VirtioTransportError> {
-        // When used through the Legacy Interface, Transitional Devices MUST assume that
-        // Feature Bits 32 to 63 are not acknowledged by Driver.
         self.config_bar
             .write_once(DRIVER_FEATURES_OFFSET, features as u32)
             .unwrap();

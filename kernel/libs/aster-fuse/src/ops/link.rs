@@ -1,11 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! `FUSE_LINK` creates a hard link to an existing inode in a target directory.
-//!
-//! The request body contains [`LinkReq`] followed by the null-terminated new
-//! name under the target parent directory node. The reply body contains
-//! [`EntryReply`] for the linked inode.
-
 use ostd::mm::{Infallible, VmReader, VmWriter};
 
 use super::util;
@@ -16,7 +8,6 @@ use crate::{
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub struct LinkReq {
-    /// Existing inode that will receive the new hard link.
     oldnodeid: FuseNodeId,
 }
 

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use aster_rights::ReadDupOp;
 use takeable::Takeable;
 
@@ -38,7 +36,6 @@ use crate::{
 };
 
 pub(crate) struct UnixStreamSocket {
-    // Lock order: `state` first, `options` second
     state: RwMutex<Takeable<State>>,
     options: RwLock<OptionSet>,
     timeouts: SocketTimeouts,
@@ -62,20 +59,14 @@ impl State {
         let is_write_shutdown = self.is_write_shutdown();
 
         if is_read_shutdown {
-            // The socket is shut down in one direction: the remote socket has shut down for
-            // writing or the local socket has shut down for reading.
             events |= IoEvents::RDHUP | IoEvents::IN;
 
             if is_write_shutdown {
-                // The socket is shut down in both directions. Neither reading nor writing is
-                // possible.
                 events |= IoEvents::HUP;
             }
         }
 
         if is_write_shutdown && !matches!(self, State::Listen(_)) {
-            // The socket is shut down in another direction: The remote socket has shut down for
-            // reading or the local socket has shut down for writing.
             events |= IoEvents::OUT;
         }
 
@@ -133,15 +124,6 @@ impl OptionSet {
         }
     }
 
-    /// Creates a new option set for an accepted socket.
-    ///
-    /// This should work together with [`Self::apply_to_listener`] to pass the necessary flags from
-    /// a listening socket to an accepted socket. See the references below for a list of socket
-    /// options that should be inherited this way.
-    ///
-    /// Reference:
-    /// <https://elixir.bootlin.com/linux/v6.18.6/source/net/unix/af_unix.c#L1765>
-    /// <https://elixir.bootlin.com/linux/v6.18.6/source/include/net/sock.h#L543-L550>
     pub(super) fn new_accepted(is_pass_cred: bool) -> Self {
         let mut result = Self::new();
         if is_pass_cred {
@@ -318,10 +300,7 @@ impl Socket for UnixStreamSocket {
         match self.state.write().as_mut() {
             State::Init(init) => init.bind(addr),
             State::Connected(connected) => connected.bind(addr),
-            State::Listen(_) => {
-                // Listening sockets are always already bound.
-                addr.bind_unnamed()
-            }
+            State::Listen(_) => addr.bind_unnamed(),
         }
     }
 
@@ -340,9 +319,6 @@ impl Socket for UnixStreamSocket {
     fn listen(&self, backlog: usize) -> Result<()> {
         const SOMAXCONN: usize = 4096;
 
-        // Linux allows a maximum of `backlog + 1` sockets in the backlog queue. Although this
-        // seems to be mostly an implementation detail, we follow the exact Linux behavior to
-        // ensure that our regression tests pass with the Linux kernel.
         let backlog = backlog.saturating_add(1).min(SOMAXCONN);
 
         let mut state = self.state.write();
@@ -414,7 +390,6 @@ impl Socket for UnixStreamSocket {
     fn get_option(&self, option: &mut dyn SocketOption) -> Result<()> {
         sock_option_mut!(match option {
             socket_errors @ SocketError => {
-                // TODO: Support socket errors for UNIX sockets
                 socket_errors.set(None);
                 return Ok(());
             }
@@ -423,13 +398,11 @@ impl Socket for UnixStreamSocket {
 
         let state = self.state.read();
 
-        // Deal with UNIX-socket-specific socket-level options
         match do_unix_getsockopt(option, state.as_ref()) {
             Err(err) if err.error() == Errno::ENOPROTOOPT => (),
             res => return res,
         }
 
-        // Deal with socket-level options
         let options = self.options.read();
         match options
             .socket
@@ -439,7 +412,6 @@ impl Socket for UnixStreamSocket {
             res => return res,
         }
 
-        // TODO: Deal with socket options from other levels
         warn!("only socket-level options are supported");
 
         Err(errno!(ENOPROTOOPT, "the socket option to get is unknown"))
@@ -453,7 +425,6 @@ impl Socket for UnixStreamSocket {
             .set_option(option, &(state.as_ref(), &self.timeouts))
         {
             Err(err) if err.error() == Errno::ENOPROTOOPT => {
-                // TODO: Deal with socket options from other levels
                 warn!("only socket-level options are supported");
                 Err(errno!(ENOPROTOOPT, "the socket option to get is unknown"))
             }
@@ -467,7 +438,6 @@ impl Socket for UnixStreamSocket {
         message_header: MessageHeader,
         flags: SendFlags,
     ) -> Result<usize> {
-        // TODO: Deal with flags
         if !flags.is_all_supported() {
             warn!("unsupported flags: {:?}", flags);
         }
@@ -477,9 +447,6 @@ impl Socket for UnixStreamSocket {
             addr,
         } = message_header;
 
-        // According to the Linux man pages, `EISCONN` _may_ be returned when the destination
-        // address is specified for a connection-mode socket. In practice, `sendmsg` on UNIX stream
-        // sockets will fail due to that. We follow the same behavior as the Linux implementation.
         if !self.is_seqpacket() && addr.is_some() {
             match self.state.read().as_ref() {
                 State::Init(_) | State::Listen(_) => {
@@ -508,7 +475,6 @@ impl Socket for UnixStreamSocket {
         writer: &mut dyn MultiWrite,
         flags: RecvFlags,
     ) -> Result<(RecvOutput, MessageHeader)> {
-        // TODO: Deal with flags
         if !flags.is_all_supported() {
             warn!("unsupported flags: {:?}", flags);
         }
@@ -565,12 +531,7 @@ impl GetSocketLevelOption for (&State, SockType, &SocketTimeouts) {
 impl SetSocketLevelOption for (&State, &SocketTimeouts) {
     fn set_pass_cred(&self, pass_cred: bool) {
         match self.0 {
-            State::Init(_) => {
-                // TODO: According to the Linux man pages, "When this option is set and the socket
-                // is not yet connected, a unique name in the abstract namespace will be generated
-                // automatically." See <https://man7.org/linux/man-pages/man7/unix.7.html> for
-                // details.
-            }
+            State::Init(_) => {}
             State::Listen(listener) => listener.set_pass_cred(pass_cred),
             State::Connected(connected) => connected.set_pass_cred(pass_cred),
         }

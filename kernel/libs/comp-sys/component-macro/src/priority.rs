@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use std::{
     collections::HashMap, fs::File, io::Read, ops::Add, path::PathBuf, process::Command,
     str::FromStr,
@@ -14,7 +12,6 @@ use crate::COMPONENT_FILE_NAME;
 #[derive(Debug)]
 pub(crate) struct ComponentInfo {
     name: String,
-    /// The absolute path to the component
     path: String,
     priority: u16,
 }
@@ -29,9 +26,7 @@ impl ToTokens for ComponentInfo {
     }
 }
 
-/// Automatic generate all the component information
 pub(crate) fn component_generate() -> Vec<ComponentInfo> {
-    // extract components information
     let mut metadata = metadata();
 
     let mut component_packages = vec![];
@@ -42,7 +37,6 @@ pub(crate) fn component_generate() -> Vec<ComponentInfo> {
     for package in metadata["packages"].members_mut() {
         let name = package["name"].as_str().unwrap();
         if comps_name.contains(&name.to_string()) {
-            // remove useless depend
             let mut depends = JsonValue::Array(Vec::new());
             loop {
                 let depend = package["dependencies"].pop();
@@ -58,7 +52,6 @@ pub(crate) fn component_generate() -> Vec<ComponentInfo> {
         }
     }
 
-    // calculate priority
     let mut mapping: HashMap<String, u16> = HashMap::new();
     let mut component_packages_map: HashMap<String, &mut JsonValue> = HashMap::new();
     for i in component_packages.iter_mut() {
@@ -73,19 +66,12 @@ pub(crate) fn component_generate() -> Vec<ComponentInfo> {
     }
     drop(component_packages_map);
 
-    // priority calculation complete
     let mut components_info = Vec::new();
     for package in component_packages {
         let path = {
-            // Parse the package ID <https://doc.rust-lang.org/cargo/reference/pkgid-spec.html>
-            // and extract the path. Let's take `path+file:///path/to/comps/pci#aster-pci@0.1.0`
-            // as an example package ID.
             let id = package["id"].as_str().unwrap();
-            // Remove the prefix `path+file://`.
             assert!(id.starts_with("path+file://"));
             let id = id.trim_start_matches("path+file://");
-            // Remove the fragment part `#aster-pci@0.1.0`. Note that the package name part
-            // may be missing if the directory name is the same as the package name.
             id.split(['#', '@']).next().unwrap()
         };
         let component_info = {
@@ -106,7 +92,6 @@ pub(crate) fn component_generate() -> Vec<ComponentInfo> {
     components_info
 }
 
-/// Get the path to the Components.toml file
 pub(crate) fn get_component_toml_path() -> TokenStream {
     let metadata = metadata();
     let workspace_root = metadata["workspace_root"].as_str().unwrap();
@@ -129,14 +114,12 @@ fn is_component(package: &JsonValue) -> bool {
     false
 }
 
-/// Get all the components name, this function will also check if the Components.toml contain all the components.
 fn get_components_name(workspace_root: &str, packages: &JsonValue) -> Vec<String> {
     let file_components_name = read_component_file(workspace_root);
     let mut comps_name = Vec::new();
     for package in packages.members() {
         if is_component(package) {
             if !file_components_name.contains(&package["name"].as_str().unwrap().to_string()) {
-                // if the package is in the workspace_root
                 if package["id"].as_str().unwrap().contains(workspace_root) {
                     panic!(
                         "Package {} in the workspace that not written in the {} file",
@@ -151,7 +134,6 @@ fn get_components_name(workspace_root: &str, packages: &JsonValue) -> Vec<String
     comps_name
 }
 
-/// read component file, return all the components name
 fn read_component_file(workspace_root: &str) -> Vec<String> {
     let component_toml: toml::Value = {
         let mut component_file_path = workspace_root.to_owned();
@@ -183,7 +165,6 @@ fn read_component_file(workspace_root: &str) -> Vec<String> {
     panic!("Components.toml file not valid")
 }
 
-/// calculate the priority of one node
 fn calculate_priority(
     prioritys: &mut HashMap<String, u16>,
     package_mapping: &HashMap<String, &mut JsonValue>,

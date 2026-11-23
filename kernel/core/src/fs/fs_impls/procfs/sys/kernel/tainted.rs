@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use aster_util::printer::VmPrinter;
@@ -15,18 +13,15 @@ use crate::{
     security::lsm::hooks as lsm_hooks,
 };
 
-// Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/include/linux/panic.h#L76>
 const TAINT_FLAGS_COUNT: u64 = 20;
 const TAINT_FLAGS_MASK: u64 = (1 << TAINT_FLAGS_COUNT) - 1;
 
 static TAINTED_MASK: AtomicU64 = AtomicU64::new(0);
 
-/// Represents the inode at `/proc/sys/kernel/tainted`.
 pub(super) struct TaintedFileOps;
 
 impl TaintedFileOps {
     pub(super) fn new_inode(parent: Weak<dyn Inode>) -> Arc<dyn Inode> {
-        // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/kernel/sysctl.c#L1588>
         ProcFile::new(Self, parent, mkmod!(a+r, u+w))
     }
 }

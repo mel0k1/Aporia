@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd_pod::IntoBytes;
 use smoltcp::wire::{IpProtocol, IpRepr, UdpRepr};
 
@@ -23,20 +21,11 @@ pub(in crate::iface) fn parse(
 
     let dst_port = u16::from(header.dst);
     if dst_port == 0 {
-        // In practice, zero port numbers are not valid because none of the operating systems in
-        // production can bind to them. They are reserved by the IANA:
-        // <https://www.iana.org/assignments/service-names-port-numbers/service-names-port-numbers.xhtml>.
-        //
-        // However, UDP allows the source port to be omitted. "Source Port is an optional field [..]
-        // If not used, a value of zero is inserted."
-        // Reference: <https://datatracker.ietf.org/doc/html/rfc768>.
         return None;
     }
 
     if header.csum == 0 {
         if csum && matches!(ip_repr, IpRepr::Ipv6(_)) {
-            // "IPv6 receivers must discard UDP packets containing a zero checksum."
-            // Reference: <https://datatracker.ietf.org/doc/html/rfc8200#section-8.1>.
             return None;
         }
     } else if csum

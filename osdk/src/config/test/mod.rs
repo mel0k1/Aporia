@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use std::fs::{self, File};
 
 use super::*;
@@ -22,7 +20,6 @@ fn conditional_manifest() {
         toml::from_str(content).unwrap()
     };
 
-    // Default scheme
     let scheme = toml_manifest.get_scheme(None::<String>);
     assert!(
         scheme
@@ -39,12 +36,10 @@ fn conditional_manifest() {
         Some(Path::new("qemu-serial.log"))
     );
 
-    // Managed daemon scheme
     let daemon = &scheme.qemu.as_ref().unwrap().with_daemons.as_ref().unwrap()[0];
     assert_eq!(daemon.path, Path::new("test-service"));
     assert_eq!(daemon.args, ["--test"]);
 
-    // Iommu
     let mut scheme = toml_manifest.get_scheme(Some("iommu".to_owned())).clone();
     scheme.inherit(&toml_manifest.default_scheme);
     assert!(
@@ -65,7 +60,6 @@ fn conditional_manifest() {
     assert_eq!(daemon.path, Path::new("test-service"));
     assert_eq!(daemon.args, ["--test"]);
 
-    // Tdx
     let scheme = toml_manifest.get_scheme(Some("tdx".to_owned()));
     assert_eq!(
         scheme.qemu.as_ref().unwrap().path.as_ref().unwrap(),

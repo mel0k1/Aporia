@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use aster_bigtcp::wire::{Ipv4Address, Ipv6Address, PortNum};
 
 use crate::{

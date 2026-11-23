@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd_pod::IntoBytes;
 use smoltcp::wire::{Icmpv4DstUnreachable, Icmpv4Message};
 

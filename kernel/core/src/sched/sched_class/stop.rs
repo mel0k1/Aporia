@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::sync::Arc;
 
 use ostd::task::{
@@ -9,10 +7,6 @@ use ostd::task::{
 
 use super::{CurrentRuntime, SchedAttr, SchedClassRq};
 
-/// The per-cpu run queue for the STOP scheduling class.
-///
-/// This is a singleton class, meaning that only one thread can be in this class at a time.
-/// This is used for the most critical tasks, such as powering off and rebooting.
 pub(super) struct StopClassRq {
     entity: Option<Arc<Task>>,
 }
@@ -56,7 +50,6 @@ impl SchedClassRq for StopClassRq {
     }
 
     fn update_current(&mut self, _: &CurrentRuntime, _: &SchedAttr, _flags: UpdateFlags) -> bool {
-        // Stop entities has the lowest priority value. They should never be preempted.
         false
     }
 }

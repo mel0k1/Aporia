@@ -1,10 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Hardware RNG misc-device support.
-//!
-//! This module registers the `/dev/hwrng` character device and tracks the
-//! currently selected [`EntropyDevice`] backend.
-
 use aster_virtio::device::entropy::{self, device::EntropyDevice};
 use device_id::{DeviceId, MinorId};
 
@@ -22,13 +15,8 @@ use crate::{
 
 const HWRNG_MINOR: u32 = 183;
 
-/// The currently in-use hardware RNG device.
-//
-// TODO: Users can select a device by writing its name to `/sys/class/misc/hw_random/rng_current`,
-// which is not supported yet.
 static RNG_CURRENT: Mutex<Option<Arc<EntropyDevice>>> = Mutex::new(None);
 
-/// The `/dev/hwrng` device.
 #[derive(Debug)]
 struct HwRngDevice {
     id: DeviceId,
@@ -58,21 +46,14 @@ impl Device for HwRngDevice {
     }
 
     fn open(&self) -> Result<Box<dyn PerOpenFileOps>> {
-        // TODO: Reject non-read-only opens with `EINVAL`
-        // once device `open` callbacks receive `AccessMode`.
-        // Reference: <https://elixir.bootlin.com/linux/v6.18/source/drivers/char/hw_random/core.c#L169>.
         Ok(Box::new(HwRngFile))
     }
 }
 
-/// A file handle opened from `/dev/hwrng`.
 struct HwRngFile;
 
 impl Pollable for HwRngFile {
     fn poll(&self, mask: IoEvents, _poller: Option<&mut PollHandle>) -> IoEvents {
-        // Linux's `/dev/hwrng` does not implement `.poll`, so userspace sees the VFS
-        // default ("always ready").
-        // Reference: <https://elixir.bootlin.com/linux/v6.18/source/drivers/char/hw_random/core.c#L287-L292>.
         mask & (IoEvents::IN | IoEvents::OUT)
     }
 }
@@ -84,15 +65,11 @@ impl FileOps for HwRngFile {
         writer: &mut VmWriter,
         status_flags: StatusFlags,
     ) -> Result<usize> {
-        // Linux looks up the selected device at `read()`.
-        // Reference: <https://elixir.bootlin.com/linux/v6.18/source/drivers/char/hw_random/core.c#L215>.
         let dev = current_device()?;
         let is_nonblocking = status_flags.contains(StatusFlags::O_NONBLOCK);
 
         let mut total_copied: usize = 0;
         while writer.avail() > 0 {
-            // Clone the writer to keep the cursor at the correct position in case a page fault
-            // occurs later.
             let mut new_writer = writer.clone_exclusive();
 
             let res = if is_nonblocking {
@@ -132,8 +109,6 @@ impl FileOps for HwRngFile {
         _reader: &mut VmReader,
         _status_flags: StatusFlags,
     ) -> Result<usize> {
-        // FIXME: Opening this device with `O_WRONLY` or `O_RDWR` fails on Linux. Therefore, the
-        // write operation should never be reached. See the TODO in `HwRngDevice::open`.
         Err(errno!(
             EBADF,
             "the hardware RNG device does not support writing"

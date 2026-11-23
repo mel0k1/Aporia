@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::fmt::Display;
 
 use crate::{
@@ -41,18 +39,12 @@ impl PidFile {
 
         Self {
             process: Arc::downgrade(&process),
-            // Reference: <https://elixir.bootlin.com/linux/v7.0/source/kernel/fork.c#L1898>.
             common: FileCommon::new(pseudo_path, AccessMode::O_RDWR, status_flags),
         }
     }
 
     fn check_io_events(&self) -> IoEvents {
-        // "A PID file descriptor can be monitored using poll(2), select(2),
-        // and epoll(7).  When the process that it refers to terminates, these
-        // interfaces indicate the file descriptor as readable."
-        // Reference: <https://man7.org/linux/man-pages/man2/pidfd_open.2.html>.
         let Some(process) = self.process.upgrade() else {
-            // The process has been reaped.
             return IoEvents::IN | IoEvents::HUP;
         };
         if process.status().is_zombie() {
@@ -103,7 +95,6 @@ impl FileLike for PidFile {
                 writeln!(f, "mnt_id:\t{}", PidfdFs::mount_node().id())?;
                 writeln!(f, "ino:\t{}", PidfdFs::shared_inode().ino())?;
                 writeln!(f, "Pid:\t{}", self.pid)?;
-                // TODO: Currently we do not support PID namespaces. Just print the PID once.
                 writeln!(f, "NSpid:\t{}", self.pid)
             }
         }
@@ -121,7 +112,6 @@ impl FileLike for PidFile {
 impl Pollable for PidFile {
     fn poll(&self, mask: IoEvents, poller: Option<&mut PollHandle>) -> IoEvents {
         let Some(process) = self.process.upgrade() else {
-            // The process has been reaped.
             return mask & (IoEvents::IN | IoEvents::HUP);
         };
         process

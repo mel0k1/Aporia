@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use fdt::node::FdtNode;
 use ostd::{
     arch::{
@@ -9,18 +7,7 @@ use ostd::{
     irq::IrqLine,
 };
 
-/// An extension trait that provides [`acquire_irq_lines`] for [`FdtNode`].
-///
-/// [`acquire_irq_lines`]: Self::acquire_irq_lines
 pub trait AcquireIrqLines {
-    /// Allocates and maps `N` [`MappedIrqLine`]s according to the `interrupts` property of the
-    /// device tree node.
-    ///
-    /// The caller is expected to pass an accurate value of `N`. This method will fail if the node
-    /// contains too many or too few interrupt lines in the `interrupts` property.
-    ///
-    /// This method will also fail if any interrupt lines in the `interrupts` property is invalid or
-    /// unavailable.
     fn acquire_irq_lines<const N: usize>(&self) -> Option<[MappedIrqLine; N]>;
 }
 
@@ -46,9 +33,6 @@ impl AcquireIrqLines for FdtNode<'_, '_> {
         let interrupt_parent = if let Some(interrupt_parent) = self.property("interrupt-parent") {
             interrupt_parent
         } else if cfg!(target_arch = "aarch64")
-            // FIXME: We need to find the "interrupt-parent" property for the nearest ancestor.
-            // However, there are no APIs to iterate ancestors. This workaround uses the
-            // "interrupt-parent" property of the root node.
             && let device_tree = DEVICE_TREE.get().unwrap()
             && let Some(root_node) = device_tree.find_node("/")
             && let Some(interrupt_parent) = root_node.property("interrupt-parent")

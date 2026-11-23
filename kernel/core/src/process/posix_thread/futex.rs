@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use int_to_c_enum::TryFromInt;
 use ostd::{
     cpu::num_cpus,
@@ -19,14 +17,9 @@ type FutexBitSet = u32;
 
 const FUTEX_BITSET_MATCH_ANY: FutexBitSet = 0xFFFF_FFFF;
 
-/// Specifies whether a futex is scoped to the current process or shared through
-/// its backing mapping.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum FutexVisibility {
-    /// Uses the calling process's private futex namespace.
     Private,
-    /// Derives the futex identity from the backing mapping when possible, and
-    /// otherwise falls back to a process-local shared identity.
     Shared,
 }
 
@@ -80,7 +73,6 @@ pub(crate) fn futex_wait_bitset(
     let (futex_item, waiter) = FutexItem::create(futex_key);
 
     let (mut futex_bucket, val) = loop {
-        // Lock the futex bucket first to avoid race conditions.
         let futex_bucket = futex_bucket_ref.lock();
 
         let pf_result = ctx
@@ -92,7 +84,6 @@ pub(crate) fn futex_wait_bitset(
 
         drop(futex_bucket);
 
-        // The futex word is aligned on a 4-byte boundary, so it cannot cross the page boundary.
         user_space
             .vmar()
             .handle_page_fault(&PageFaultInfo::new(futex_addr, VmPerms::READ))
@@ -113,25 +104,16 @@ pub(crate) fn futex_wait_bitset(
 
     futex_bucket.add_item(futex_item);
 
-    // Release the lock.
     drop(futex_bucket);
 
     let result = waiter.pause_timeout(&timeout.into());
 
-    // If the futex wait operation was interrupted by a signal or timed out, the
-    // `FutexItem` must be dequeued and dropped. Otherwise, malicious user programs
-    // could repeatedly issue futex wait operations to exhaust kernel memory.
     let item = futex_bucket_ref.lock().remove_by_waker(&waiter.waker());
     if item.is_none() {
-        // The futex item will be removed asynchronously if and only if it has been woken up. In
-        // that case, we should report success to the user.
-        // FIXME: `pause_timeout` should return `Ok(())` in this case, but it currently may return
-        // errors due to race conditions.
         Ok(())
     } else if let Err(err) = result {
         Err(err)
     } else {
-        // Spurious wakeups. Return `EINTR` anyway.
         Err(errno!(
             EINTR,
             "the current thread is interrupted by a signal"
@@ -170,24 +152,8 @@ pub(crate) fn futex_wake_bitset(
     Ok(res)
 }
 
-/// This struct encodes the operation and comparison that are to be performed during
-/// the futex operation with `FUTEX_WAKE_OP`.
-///
-/// The encoding is as follows:
-///
-/// +---+---+-----------+-----------+
-/// |op |cmp|   oparg   |  cmparg   |
-/// +---+---+-----------+-----------+
-///   4   4       12          12    <== # of bits
-///
-/// Reference: <https://man7.org/linux/man-pages/man2/futex.2.html>.
 struct FutexWakeOpEncode {
     op: FutexWakeOp,
-    /// A flag indicating that the operation will use `1 << oparg`
-    /// as the operand instead of `oparg` when it is set `true`.
-    ///
-    /// e.g. With this flag, [`FutexWakeOp::FUTEX_OP_ADD`] will be interpreted
-    /// as `res = (1 << oparg) + oldval`.
     is_oparg_shift: bool,
     cmp: FutexWakeCmp,
     oparg: u32,
@@ -198,15 +164,10 @@ struct FutexWakeOpEncode {
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, TryFromInt)]
 enum FutexWakeOp {
-    /// Calculate `res = oparg`.
     FUTEX_OP_SET = 0,
-    /// Calculate `res = oparg + oldval`.
     FUTEX_OP_ADD = 1,
-    /// Calculate `res = oparg | oldval`.
     FUTEX_OP_OR = 2,
-    /// Calculate `res = oparg & !oldval`.
     FUTEX_OP_ANDN = 3,
-    /// Calculate `res = oparg ^ oldval`.
     FUTEX_OP_XOR = 4,
 }
 
@@ -214,17 +175,11 @@ enum FutexWakeOp {
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, TryFromInt)]
 enum FutexWakeCmp {
-    /// If (oldval == cmparg) do wake.
     FUTEX_OP_CMP_EQ = 0,
-    /// If (oldval != cmparg) do wake.
     FUTEX_OP_CMP_NE = 1,
-    /// If (oldval < cmparg) do wake.
     FUTEX_OP_CMP_LT = 2,
-    /// If (oldval <= cmparg) do wake.
     FUTEX_OP_CMP_LE = 3,
-    /// If (oldval > cmparg) do wake.
     FUTEX_OP_CMP_GT = 4,
-    /// If (oldval >= cmparg) do wake.
     FUTEX_OP_CMP_GE = 5,
 }
 
@@ -248,8 +203,6 @@ impl FutexWakeOpEncode {
     fn calculate_new_val(&self, old_val: u32) -> u32 {
         let oparg = if self.is_oparg_shift {
             if self.oparg > 31 {
-                // Linux might return EINVAL in the future
-                // Reference: https://elixir.bootlin.com/linux/v6.15.2/source/kernel/futex/waitwake.c#L211-L222
                 warn!("futex_wake_op: program tries to shift op by {}", self.oparg);
             }
 
@@ -318,7 +271,6 @@ pub(crate) fn futex_wake_op(
         drop(futex_bucket_1);
         drop(futex_bucket_2);
 
-        // The futex word is aligned on a 4-byte boundary, so it cannot cross the page boundary.
         user_space
             .vmar()
             .handle_page_fault(&PageFaultInfo::new(
@@ -342,10 +294,6 @@ pub(crate) fn futex_wake_op(
     Ok(res)
 }
 
-/// Wakes up to `max_nwakes` waiters on `futex_addr` and requeues up to
-/// `max_nrequeues` of the remaining waiters to `futex_new_addr`.
-///
-/// Returns the total number of waiters that are woken up or requeued.
 pub(crate) fn futex_requeue(
     futex_addr: Vaddr,
     max_nwakes: usize,
@@ -383,10 +331,6 @@ pub(crate) fn futex_requeue(
 
 static FUTEX_BUCKETS: Once<FutexBucketVec> = Once::new();
 
-/// Gets the futex hash bucket count.
-///
-/// This number is calculated the same way as Linux's:
-/// <https://elixir.bootlin.com/linux/v6.17/source/kernel/futex/core.c#L1981>.
 fn get_bucket_count() -> usize {
     ((1 << 8) * num_cpus()).next_power_of_two()
 }
@@ -395,12 +339,6 @@ fn get_futex_bucket(key: &FutexKey) -> (usize, &'static SpinLock<FutexBucket>) {
     FUTEX_BUCKETS.get().unwrap().get_bucket(key)
 }
 
-/// Locks the futex buckets associated with a given pair of keys in a consistent
-/// order to avoid deadlock.
-///
-/// The order is defined by comparing the respective bucket indices and then locking
-/// the one with the lowest index first. If both keys belong to the same bucket,
-/// lock it and return the second lock guard as `None`.
 fn lock_bucket_pairs(
     futex_key_1: &FutexKey,
     futex_key_2: &FutexKey,
@@ -426,7 +364,6 @@ fn lock_bucket_pairs(
     }
 }
 
-/// Initializes the futex system.
 pub(crate) fn init() {
     FUTEX_BUCKETS.call_once(|| FutexBucketVec::new(get_bucket_count()));
 }
@@ -448,8 +385,6 @@ impl FutexBucketVec {
     }
 
     pub(self) fn get_bucket(&self, key: &FutexKey) -> (usize, &SpinLock<FutexBucket>) {
-        // Since `self.size()` is known to be a power of 2, the following is
-        // equivalent to `key.hash % self.size()`, buf faster.
         let index = key.hash & (self.size() - 1);
         (index, &self.vec[index])
     }
@@ -497,8 +432,6 @@ impl FutexBucket {
         count
     }
 
-    /// Updates matching items' futex identity while preserving each item's bitset;
-    /// the bitset in `new_key` is ignored.
     pub(self) fn update_item_keys(
         &mut self,
         key: &FutexKey,
@@ -523,8 +456,6 @@ impl FutexBucket {
         count
     }
 
-    /// Moves matching items to another bucket while preserving each item's bitset;
-    /// the bitset in `new_key` is ignored.
     pub(self) fn requeue_items_to_another_bucket(
         &mut self,
         key: &FutexKey,
@@ -574,7 +505,6 @@ impl FutexItem {
     }
 }
 
-/// The identity used for futex namespace and backing selection.
 #[derive(Clone, Debug)]
 enum FutexIdentity {
     Private { vmar: VmarSnapshot, addr: Vaddr },
@@ -582,10 +512,8 @@ enum FutexIdentity {
     Shared { vmo: Weak<Vmo>, offset: usize },
 }
 
-/// The lookup key used for futex bucket selection and matching.
 #[derive(Clone, Debug)]
 struct FutexKey {
-    /// A hash value deterministically computed from the futex identity.
     hash: usize,
     identity: FutexIdentity,
     bitset: FutexBitSet,
@@ -598,9 +526,6 @@ impl FutexKey {
         user_space: &CurrentUserSpace<'_>,
         visibility: FutexVisibility,
     ) -> Result<Self> {
-        // "On all platforms, futexes are four-byte integers that must be aligned on a four-byte
-        // boundary."
-        // Reference: <https://man7.org/linux/man-pages/man2/futex.2.html>.
         if !addr.is_multiple_of(align_of::<u32>()) {
             return Err(errno!(
                 EINVAL,
@@ -649,9 +574,6 @@ impl FutexKey {
 
 impl FutexIdentity {
     fn hash(&self) -> usize {
-        // Use a distinct `initval` salt for each futex namespace so that
-        // `Private`, `SharedLocal`, and `Shared` keys do not collapse into the
-        // same buckets when their folded key material happens to match.
         match self {
             FutexIdentity::Private { vmar, addr } => {
                 let vmar_id = vmar.as_ptr() as u64;
@@ -708,7 +630,6 @@ impl FutexIdentity {
     }
 }
 
-// Reference: <https://elixir.bootlin.com/linux/v6.18.2/source/include/uapi/linux/futex.h#L11>
 #[expect(non_camel_case_types)]
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, TryFromInt)]
@@ -727,7 +648,6 @@ pub(crate) enum FutexOp {
 }
 
 bitflags! {
-    // Reference: <https://elixir.bootlin.com/linux/v6.18.2/source/include/uapi/linux/futex.h#L26>
     #[derive(Clone, Copy, Debug)]
     pub(crate) struct FutexFlags: u32 {
         const FUTEX_PRIVATE        = 128;

@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! PCI bus access
-
 use core::ops::RangeInclusive;
 
 use ostd::Error;
@@ -20,11 +16,7 @@ pub(crate) fn read32(_location: &PciDeviceLocation, _offset: u32) -> Result<u32,
     Err(Error::IoError)
 }
 
-/// Initializes the platform-specific module for accessing the PCI configuration space.
-///
-/// Returns a range for the PCI bus number, or [`None`] if there is no PCI bus.
 pub(crate) fn init() -> Option<RangeInclusive<u8>> {
-    // TODO: Support the PCI bus in ARM.
     None
 }
 

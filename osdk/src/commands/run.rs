@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use std::process::exit;
 
 use vsc::VscLaunchConfig;
@@ -47,7 +45,6 @@ pub fn execute_run_command(config: &Config, gdb_server_args: Option<&str>) {
 fn adapt_for_gdb_server(config: &mut Config, gdb_server_str: &str) -> Option<VscLaunchConfig> {
     let gdb_server_args = GdbServerArgs::from_str(gdb_server_str);
 
-    // Add GDB server arguments to QEMU.
     let qemu_gdb_args = {
         let gdb_stub_addr = gdb_server_args.host_addr.as_str();
         match gdb::stub_type_of(gdb_stub_addr) {
@@ -83,7 +80,6 @@ fn adapt_for_gdb_server(config: &mut Config, gdb_server_str: &str) -> Option<Vsc
         }
     }
 
-    // Ensure debug info added when debugging in the release profile.
     if config.run.build.profile.contains("release") {
         config
             .run
@@ -135,8 +131,8 @@ impl GdbServerArgs {
 mod gdb {
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub enum StubAddrType {
-        Unix, // Unix Domain Socket
-        Tcp,  // IP_ADDR:PORT
+        Unix,
+        Tcp,
     }
     pub fn stub_type_of(stub: &str) -> StubAddrType {
         if stub.split(':').next_back().unwrap().parse::<u16>().is_ok() {
@@ -146,8 +142,9 @@ mod gdb {
     }
 
     pub mod tcp_addr_util {
-        use crate::{error::Errno, error_msg};
         use std::process::exit;
+
+        use crate::{error::Errno, error_msg};
 
         fn strip_tcp_prefix(addr: &str) -> &str {
             addr.strip_prefix("tcp:").unwrap_or(addr)
@@ -173,17 +170,18 @@ mod gdb {
 }
 
 mod vsc {
-    use crate::{
-        commands::util::bin_file_name,
-        util::{get_cargo_metadata, get_kernel_crate},
-    };
-    use serde_json::{Value, from_str};
     use std::{
         fs::{read_to_string, write as write_file},
         path::Path,
     };
 
+    use serde_json::{Value, from_str};
+
     use super::{GdbServerArgs, gdb};
+    use crate::{
+        commands::util::bin_file_name,
+        util::{get_cargo_metadata, get_kernel_crate},
+    };
 
     const VSC_DIR: &str = ".vscode";
 
@@ -235,7 +233,6 @@ mod vsc {
 
     impl Drop for VscLaunchConfig {
         fn drop(&mut self) {
-            // remove generated files
             if !self.existence.vsc_dir {
                 std::fs::remove_dir_all(Path::new(&workspace_root()).join(VSC_DIR)).unwrap();
                 return;
@@ -249,7 +246,6 @@ mod vsc {
                 .unwrap();
                 return;
             }
-            // restore backup launch file
             if let Some(backup_launch_path) = &self.backup_launch_path {
                 std::fs::copy(
                     backup_launch_path,
@@ -263,12 +259,11 @@ mod vsc {
         }
     }
 
-    /// Exit if the QEMU GDB server configuration is not valid
     pub fn check_gdb_config(args: &GdbServerArgs) {
-        use crate::{error::Errno, error_msg};
         use std::process::exit;
 
-        // check GDB server address
+        use crate::{error::Errno, error_msg};
+
         let gdb_stub_addr = args.host_addr.as_str();
         if gdb_stub_addr.is_empty() {
             error_msg!("GDB server address is required to generate a VSCode launch file");
@@ -318,7 +313,6 @@ mod vsc {
                     .any(|x| x["name"].as_str() == item["name"].as_str())
                 {
                     println!("[{}/launch.json]{} already exists", VSC_DIR, item["name"]);
-                    // no override for configurations with the same name
                     continue;
                 }
                 original_items["configurations"]

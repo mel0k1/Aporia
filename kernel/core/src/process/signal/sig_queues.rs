@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use super::{
@@ -15,8 +13,6 @@ use crate::{
 };
 
 pub(crate) struct SigQueues {
-    // The number of pending signals.
-    // Useful for quickly determining if any signals are pending without locking `queues`.
     count: AtomicUsize,
     queues: Mutex<Queues>,
     signalfd_pollee: Pollee,
@@ -39,14 +35,12 @@ impl SigQueues {
         let mut queues = self.queues.lock();
         if queues.enqueue(signal) {
             self.count.fetch_add(1, Ordering::Relaxed);
-            // Avoid holding lock when notifying observers
             drop(queues);
             self.signalfd_pollee.notify(IoEvents::IN);
         }
     }
 
     pub(crate) fn dequeue(&self, blocked: &SigMask) -> Option<Box<dyn Signal>> {
-        // Fast path for the common case of no pending signals
         if self.is_empty() {
             return None;
         }
@@ -59,15 +53,11 @@ impl SigQueues {
         signal
     }
 
-    /// Returns the pending signals
     pub(crate) fn sig_pending(&self) -> SigSet {
         let queues = self.queues.lock();
         queues.sig_pending()
     }
 
-    /// Returns whether there's some pending signals that are not blocked and not ignored.
-    ///
-    /// Note that ignored but not blocked signals may be dequeued silently.
     pub(in crate::process) fn has_pending(
         &self,
         blocked: SigMask,
@@ -116,27 +106,12 @@ impl Queues {
     fn enqueue(&mut self, signal: Box<dyn Signal>) -> bool {
         let signum = signal.num();
         if signum.is_std() {
-            // Standard signals
-            //
-            // From signal(7):
-            //
-            // Standard signals do not queue.  If multiple instances of a standard
-            // signal are generated while that signal is blocked, then only one
-            // instance of the signal is marked as pending (and the signal will be
-            // delivered just once when it is unblocked).  In the case where a
-            // standard signal is already pending, the siginfo_t structure (see
-            // sigaction(2)) associated with that signal is not overwritten on
-            // arrival of subsequent instances of the same signal.  Thus, the
-            // process will receive the information associated with the first
-            // instance of the signal.
             let queue = self.get_std_queue_mut(signum);
             if queue.is_some() {
-                // If there is already a signal pending, just ignore all subsequent signals
                 return false;
             }
             *queue = Some(signal);
         } else {
-            // Real-time signals
             let queue = self.get_rt_queue_mut(signum);
             queue.push_back(signal);
         }
@@ -145,20 +120,6 @@ impl Queues {
     }
 
     fn dequeue(&mut self, blocked: &SigMask) -> Option<Box<dyn Signal>> {
-        // Deliver standard signals.
-        //
-        // According to signal(7):
-        // If both standard and real-time signals are pending for a process,
-        // POSIX leaves it unspecified which is delivered first. Linux, like
-        // many other implementations, gives priority to standard signals in
-        // this case.
-
-        // POSIX leaves unspecified which to deliver first if there are multiple
-        // pending standard signals. So we are free to define our own. The
-        // principle is to give more urgent signals higher priority (like SIGKILL).
-
-        // FIXME: the gvisor pty_test JobControlTest::ReleaseTTY requires that
-        // the SIGHUP signal should be handled before SIGCONT.
         const ORDERED_STD_SIGS: [SigNum; COUNT_STD_SIGS] = [
             SIGKILL, SIGTERM, SIGSTOP, SIGSEGV, SIGILL, SIGHUP, SIGCONT, SIGINT, SIGQUIT, SIGTRAP,
             SIGABRT, SIGBUS, SIGFPE, SIGUSR1, SIGUSR2, SIGPIPE, SIGALRM, SIGSTKFLT, SIGCHLD,
@@ -177,14 +138,6 @@ impl Queues {
             }
         }
 
-        // If no standard signals, then deliver real-time signals.
-        //
-        // According to signal (7):
-        // Real-time signals are delivered in a guaranteed order.  Multiple
-        // real-time signals of the same type are delivered in the order
-        // they were sent.  If different real-time signals are sent to a
-        // process, they are delivered starting with the lowest-numbered
-        // signal.  (I.e., low-numbered signals have highest priority.)
         for signum in MIN_RT_SIG_NUM..=MAX_RT_SIG_NUM {
             let signum = SigNum::try_from(signum).unwrap();
             if blocked.contains(signum) {
@@ -198,13 +151,9 @@ impl Queues {
             }
         }
 
-        // There must be pending but blocked signals
         None
     }
 
-    /// Returns whether the `SigQueues` has some pending signals which are not blocked.
-    ///
-    /// Note that signals are ignored but not blocked may be dequeued silently.
     fn has_pending(
         &mut self,
         blocked: SigMask,
@@ -221,7 +170,6 @@ impl Queues {
                 return false;
             }
 
-            // Dequeue signals that should be ignored but not blocked.
             if sig_dispositions.will_ignore(signal_ref) {
                 dequeued_signals += 1;
                 *signal = None;
@@ -238,7 +186,6 @@ impl Queues {
                 return false;
             }
 
-            // Dequeue signals that should be ignored but not blocked.
             if sig_dispositions.will_ignore(signal.as_ref()) {
                 dequeued_signals += rt_queue.len();
                 rt_queue.clear();
@@ -288,14 +235,12 @@ impl Queues {
     fn sig_pending(&self) -> SigSet {
         let mut pending = SigSet::new_empty();
 
-        // Process standard signal queues
         for (idx, signal) in self.std_queues.iter().enumerate() {
             if signal.is_some() {
                 pending += SigNum::from_u8(idx as u8 + MIN_STD_SIG_NUM);
             }
         }
 
-        // Process real-time signal queues
         for (idx, signals) in self.rt_queues.iter().enumerate() {
             if !signals.is_empty() {
                 pending += SigNum::from_u8(idx as u8 + MIN_RT_SIG_NUM);

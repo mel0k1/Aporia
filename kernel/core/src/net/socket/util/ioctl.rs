@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use aster_bigtcp::{
     iface::{InterfaceName, InterfaceType},
     wire::{EthernetAddress, Ipv4Address},
@@ -20,7 +18,6 @@ mod ioctl_defs {
     use super::{CIfConf, CIfReq};
     use crate::{ioc, util::ioctl::InOutData};
 
-    // Reference: <https://elixir.bootlin.com/linux/v7.1/source/include/uapi/linux/sockios.h#L56>.
     pub(super) type GetIfName       = ioc!(SIOCGIFNAME,     0x8910, InOutData<CIfReq>);
     pub(super) type GetIfConf       = ioc!(SIOCGIFCONF,     0x8912, InOutData<CIfConf>);
     pub(super) type GetIfFlags      = ioc!(SIOCGIFFLAGS,    0x8913, InOutData<CIfReq>);
@@ -32,19 +29,16 @@ mod ioctl_defs {
 }
 
 pub(crate) fn socket_ioctl<T: Socket>(socket: &T, raw_ioctl: RawIoctl) -> Result<i32> {
-    // Linux always handles `SIOCGIFCONF` first.
     match handle_get_ifconf(raw_ioctl) {
         Err(err) if err.error() == Errno::ENOTTY => (),
         res => return res,
     }
 
-    // Each socket handles commands specific to its protocol or socket type.
     match socket.protocol_ioctl(raw_ioctl) {
         Err(err) if err.error() == Errno::ENOTTY => {}
         res => return res,
     }
 
-    // Handle network device commands.
     network_device_ioctl(raw_ioctl)
 }
 
@@ -83,7 +77,6 @@ fn network_device_ioctl(raw_ioctl: RawIoctl) -> Result<i32> {
         cmd @ GetIfMetric => {
             let mut ifreq = cmd.read()?;
             ifreq.get_iface_by_name()?;
-            // Linux's per-interface metric is currently unused and always reported as zero.
             ifreq.data = CIfReqData::new_value(0);
             cmd.write(&ifreq)?;
             Ok(0)
@@ -122,9 +115,6 @@ fn network_device_ioctl(raw_ioctl: RawIoctl) -> Result<i32> {
     })
 }
 
-/// `struct ifconf` in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v7.1/source/include/uapi/linux/if.h#L286>.
 #[padding_struct]
 #[repr(C)]
 #[derive(Clone, Copy, Pod)]
@@ -169,9 +159,6 @@ impl CIfConf {
     }
 }
 
-/// `struct ifreq` in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v7.1/source/include/uapi/linux/if.h#L234>.
 #[repr(C)]
 #[derive(Clone, Copy, Pod)]
 pub(in crate::net::socket) struct CIfReq {
@@ -179,9 +166,6 @@ pub(in crate::net::socket) struct CIfReq {
     data: CIfReqData,
 }
 
-/// The `ifr_ifru` union in `struct ifreq` in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v7.1/source/include/uapi/linux/if.h#L241>.
 #[pod_union]
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -201,9 +185,6 @@ union CIfReqData {
     settings: CIfSettings,
 }
 
-/// `struct sockaddr` in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v7.1/source/include/linux/socket.h#L36>.
 #[repr(C)]
 #[derive(Clone, Copy, Pod)]
 struct CSocketAddr {
@@ -233,9 +214,6 @@ impl CSocketAddr {
     }
 }
 
-/// `struct if_settings` in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v7.1/source/include/uapi/linux/if.h#L207>.
 #[repr(C)]
 #[derive(Clone, Copy, Pod)]
 struct CIfSettings {
@@ -244,9 +222,6 @@ struct CIfSettings {
     data: Vaddr,
 }
 
-/// `struct ifmap` in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v7.1/source/include/uapi/linux/if.h#L196>.
 #[padding_struct]
 #[repr(C)]
 #[derive(Clone, Copy, Pod)]

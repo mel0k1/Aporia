@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! PCI bus access
-
 use core::ops::RangeInclusive;
 
 use fdt_util::AcquireIoMems;
@@ -32,32 +28,19 @@ pub(crate) fn read32(location: &PciDeviceLocation, offset: u32) -> Result<u32, E
         .read_once((encode_as_address_offset(location) | offset) as usize)
 }
 
-/// The maximum offset in the 12-bit configuration space when using [`encode_as_address_offset`].
 const PCI_ECAM_MAX_OFFSET: u32 = 0xffc;
 
 const PCI_ECAM_BUS_SHIFT: u32 = 20;
 const PCI_ECAM_DEVICE_SHIFT: u32 = 15;
 const PCI_ECAM_FUNCTION_SHIFT: u32 = 12;
 
-/// Encodes the bus, device, and function into an address offset in the PCI MMIO region.
 fn encode_as_address_offset(location: &PciDeviceLocation) -> u32 {
-    // We only support ECAM here for RISC-V platforms. Offsets are from
-    // <https://www.kernel.org/doc/Documentation/devicetree/bindings/pci/host-generic-pci.txt>.
     ((location.bus as u32) << PCI_ECAM_BUS_SHIFT)
         | ((location.device as u32) << PCI_ECAM_DEVICE_SHIFT)
         | ((location.function as u32) << PCI_ECAM_FUNCTION_SHIFT)
 }
 
-/// Initializes the platform-specific module for accessing the PCI configuration space.
-///
-/// Returns a range for the PCI bus number, or [`None`] if there is no PCI bus.
 pub(crate) fn init() -> Option<RangeInclusive<u8>> {
-    // We follow the Linux's PCI device tree to obtain the register information
-    // about the PCI bus. See also the specification at
-    // <https://www.kernel.org/doc/Documentation/devicetree/bindings/pci/host-generic-pci.txt>.
-    //
-    // TODO: Support multiple PCIe segment groups instead of assuming only one
-    // PCIe segment group is in use.
     let Some(pci) = DEVICE_TREE
         .get()
         .unwrap()
@@ -76,8 +59,6 @@ pub(crate) fn init() -> Option<RangeInclusive<u8>> {
             return None;
         }
         if prop.value[3] != 0 {
-            // TODO: We don't support this case because the base address corresponds to the first
-            // bus. Therefore, an offset must be applied to the bus value in `read32`/`write32`.
             warn!(
                 "node with a non-zero bus start `{}` is not supported yet",
                 prop.value[3]
@@ -86,7 +67,6 @@ pub(crate) fn init() -> Option<RangeInclusive<u8>> {
         }
         prop.value[3]..=prop.value[7]
     } else {
-        // "bus-range: Optional property [..] If absent, defaults to <0 255> (i.e. all buses)."
         0..=255
     };
 

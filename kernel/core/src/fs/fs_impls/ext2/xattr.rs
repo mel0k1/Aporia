@@ -1,76 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Extended attributes for the ext2 filesystem.
-//!
-//! Extended attributes are stored on disk blocks allocated outside of any inode.
-//! The `i_file_acl` field of the on-disk inode points to this allocated block.
-//! An inode with no attributes has `i_file_acl == 0` and no block is allocated.
-//!
-//! # On-disk layout
-//!
-//! The EA block is exactly one filesystem block and is structured as follows:
-//!
-//! ```text
-//!   +------------------+
-//!   | header (32B)     |
-//!   | entry 1 header   |  ┐
-//!   | entry 1 name     |  ├ entry 1
-//!   | entry 2 header   |  ┐  |
-//!   | entry 2 name     |  ├ entry 2  | growing downwards
-//!   | entry 3 header   |  ┐  |       v
-//!   | entry 3 name     |  ├ entry 3
-//!   | (terminator)     |
-//!   | (free space)     |
-//!   | . . .            |
-//!   | value 3          |  ┐
-//!   | value 1          |  │ growing upwards
-//!   | value 2          |  ┘
-//!   +------------------+
-//! ```
-//!
-//! The block header is followed by multiple entry descriptors. Each entry
-//! consists of an `XattrEntry` header immediately followed by the name
-//! bytes (whose length is given by `name_len`). Entries are variable in size,
-//! aligned to 4-byte (XATTR_ALIGN) boundaries, and sorted by
-//! `(name_index as u8, name_len, name bytes)` so that two extended attribute
-//! blocks can be compared efficiently.
-//!
-//! Attribute values are aligned to the end of the block, stored in no
-//! specific order. They are also padded to 4-byte boundaries, with no
-//! additional gaps between them.
-//!
-//! Each entry descriptor stores:
-//! - `name_index` — a `XattrNameIndex` byte that encodes the namespace
-//!   prefix (e.g., `user.`, `security.`).
-//! - `name_len` — byte length of the suffix that follows the header.
-//! - `value_offset` — byte offset of the value from the start of the block.
-//! - `value_len` — byte length of the value.
-//! - `hash` — per-entry hash covering name and value (currently always 0;
-//!   block sharing via mb_cache is not implemented).
-//!
-//! The entry list is terminated by an `XattrEntry` with `name_len == 0`
-//! (a 16-byte zeroed header), matching Linux's `IS_LAST_ENTRY` check.
-//!
-//! # Namespace mapping
-//!
-//! The VFS `XattrNamespace` is mapped to ext2's compact `XattrNameIndex`
-//! byte. The full attribute name stored in the VFS layer (e.g., `user.foo`)
-//! is split at the namespace boundary before storage: the index is written to
-//! `name_index` and only the suffix (`foo`) is stored in `name_len` bytes
-//! after the header. The prefix is reconstructed on read.
-//!
-//! # Locking
-//!
-//! All mutable state is held in `XattrCache` behind an internal `RwMutex`.
-//! Public methods on `Xattr` acquire the lock automatically for the duration
-//! of each operation. Callers (e.g. `Inode`) never see the lock and must not
-//! hold `Inode::inner` while calling into `Xattr`. When a mutation changes the
-//! block number (allocation or free), the caller reads the new `Xattr::bid`
-//! after the mutation returns and then acquires `inner` to update
-//! `InodeDesc.file_acl`.
-//!
-//! See the locking hierarchy documented on `Inode`.
-
 use core::cmp::Ordering;
 
 use super::{fs::Ext2, inode::Inode, prelude::*};
@@ -93,14 +20,12 @@ fn xattr_value_size(size: usize) -> usize {
     (size + XATTR_ROUND) & !XATTR_ROUND
 }
 
-/// External extended-attribute block state for one inode.
 #[derive(Debug)]
 pub(super) struct Xattr {
     cache: RwMutex<XattrCache>,
 }
 
 impl Xattr {
-    /// Creates a new xattr handle for the block referenced by `InodeDesc.file_acl`.
     pub(super) fn new(bid: Ext2Bid, inode: Weak<Inode>, fs: Weak<Ext2>) -> Self {
         Self {
             cache: RwMutex::new(XattrCache {
@@ -114,14 +39,10 @@ impl Xattr {
         }
     }
 
-    /// Returns the current xattr block number for `InodeDesc.file_acl`.
     pub(super) fn bid(&self) -> Ext2Bid {
         self.cache.read().bid()
     }
 
-    /// Creates or replaces one extended attribute.
-    ///
-    /// Allocates an xattr block if the inode does not have one yet.
     pub(super) fn set_xattr(
         &self,
         name: XattrName,
@@ -144,10 +65,6 @@ impl Xattr {
             .set_entry(target_index, target_name, value, flags)
     }
 
-    /// Reads one extended attribute value.
-    ///
-    /// When `vm_writer.avail() == 0`, returns the value length without copying
-    /// bytes to userspace.
     pub(super) fn get_xattr(&self, name: XattrName, vm_writer: &mut VmWriter) -> Result<usize> {
         let (target_index, target_name) = Self::parse_target_name(name)?;
         self.cache
@@ -155,10 +72,6 @@ impl Xattr {
             .get_entry(target_index, &target_name, vm_writer)
     }
 
-    /// Lists extended-attribute names in one namespace.
-    ///
-    /// When `list_writer.avail() == 0`, returns the required list size without
-    /// copying bytes to userspace.
     pub(super) fn list_xattr(
         &self,
         namespace: XattrNamespace,
@@ -167,25 +80,19 @@ impl Xattr {
         self.cache.write().list_entries(namespace, list_writer)
     }
 
-    /// Removes one extended attribute.
-    ///
-    /// Frees the xattr block if this was the last entry in it.
     pub(super) fn remove_xattr(&self, name: XattrName) -> Result<()> {
         let (target_index, target_name) = Self::parse_target_name(name)?;
         self.cache.write().remove_entry(target_index, &target_name)
     }
 
-    /// Frees the xattr block entirely (called during inode eviction).
     pub(super) fn delete_xattr_block(&self) -> Result<()> {
         self.cache.write().free_and_invalidate()
     }
 
-    /// Writes the dirty xattr block back to disk.
     pub(super) fn flush(&self) -> Result<()> {
         self.cache.write().flush()
     }
 
-    /// Parses a VFS [`XattrName`] into the ext2 `(name_index, name_suffix)` pair.
     fn parse_target_name(name: XattrName) -> Result<(XattrNameIndex, Vec<u8>)> {
         let name_index = XattrNameIndex::from(name.namespace());
         let stripped_name = name_index.strip_prefix(name.full_name())?;
@@ -196,17 +103,9 @@ impl Xattr {
     }
 }
 
-/// Persistent state for an ext2 xattr block.
-///
-/// Tracks the block buffer, block number, decoded entries, and dirty flag for
-/// one inode.
 #[derive(Debug)]
 struct XattrCache {
     block_buf: Option<USegment>,
-    /// Lazily decoded entries.
-    ///
-    /// Always populated after the first mutation or query; empty only for an
-    /// inode that has never had xattrs and has `bid == 0`.
     entries: Vec<XattrEntryData>,
     bid: Ext2Bid,
     dirty: bool,
@@ -312,14 +211,6 @@ impl XattrCache {
         Ok(())
     }
 
-    // TODO: The VFS `Inode::list_xattr` trait passes a single namespace,
-    // but `sys_listxattr` only queries one namespace (Trusted for root,
-    // User otherwise), which is wrong — Linux returns all visible
-    // namespaces.  As a workaround we replicate the old ext2 behavior:
-    // when the caller passes User, list only user.* entries; otherwise
-    // list all entries (matching root visibility in Linux).  The proper
-    // fix is to enumerate all visible namespaces in the syscall layer
-    // (see `kernel/core/src/syscall/listxattr.rs`).
     fn list_entries(
         &mut self,
         namespace: XattrNamespace,
@@ -360,7 +251,6 @@ impl XattrCache {
         }
     }
 
-    /// Finds the position of an entry key in the sorted entry list.
     fn find_entry_position(
         entries: &[XattrEntryData],
         target_index: XattrNameIndex,
@@ -387,10 +277,6 @@ impl XattrCache {
         (found_idx, insert_at)
     }
 
-    /// Loads the EA block from disk if it is not already loaded.
-    ///
-    /// For inodes with `bid == 0` (no block allocated), leaves the entry list
-    /// empty.
     fn load(&mut self) -> Result<()> {
         if self.block_buf.is_some() {
             return Ok(());
@@ -429,7 +315,6 @@ impl XattrCache {
         Ok(())
     }
 
-    /// Frees the EA block (if allocated) and invalidates the cache.
     fn free_and_invalidate(&mut self) -> Result<()> {
         if self.bid != 0 {
             let fs = self.fs()?;
@@ -442,7 +327,6 @@ impl XattrCache {
         Ok(())
     }
 
-    /// Writes the dirty xattr block back to disk.
     fn flush(&mut self) -> Result<()> {
         if !self.dirty {
             return Ok(());
@@ -463,11 +347,6 @@ impl XattrCache {
         Ok(())
     }
 
-    /// Serializes the xattr block into its on-disk layout.
-    ///
-    /// The block contains an `XattrHeader`, raw `XattrEntry` records with
-    /// inline names, value bytes packed from the end of the block, and a
-    /// terminator entry.
     fn write_entries_to_segment(&self, block: &USegment) -> Result<()> {
         let entries = &self.entries;
 
@@ -615,7 +494,6 @@ impl XattrCache {
             let mut name = vec![0u8; name_len];
             block_buf.read_bytes(offset + XATTR_ENTRY_HEADER_SIZE, &mut name)?;
 
-            // Entries must be strictly sorted by their key.
             if let Some(prev_entry) = entries.last() {
                 let ordering =
                     cmp_entry_key(prev_entry.name_index, &prev_entry.name, name_index, &name);
@@ -642,10 +520,6 @@ impl XattrCache {
         Ok(entries)
     }
 }
-/// The ext2 xattr namespace index stored in `name_index`.
-///
-/// Determines the namespace prefix prepended to the attribute name
-/// (e.g., `user.`, `security.`).
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, TryFromInt)]
 enum XattrNameIndex {
@@ -663,16 +537,12 @@ impl From<XattrNamespace> for XattrNameIndex {
             XattrNamespace::User => Self::User,
             XattrNamespace::Trusted => Self::Trusted,
             XattrNamespace::Security => Self::Security,
-            XattrNamespace::System => {
-                // TODO: POSIX ACL xattrs are not implemented yet.
-                Self::PosixAclAccess
-            }
+            XattrNamespace::System => Self::PosixAclAccess,
         }
     }
 }
 
 impl XattrNameIndex {
-    /// Returns the namespace prefix string (e.g. `"user."`).
     pub(super) fn prefix(self) -> &'static str {
         match self {
             Self::User => "user.",
@@ -684,7 +554,6 @@ impl XattrNameIndex {
         }
     }
 
-    /// Strips the namespace prefix from `full_name` and returns the remainder.
     pub(super) fn strip_prefix(self, full_name: &str) -> Result<&str> {
         full_name.strip_prefix(self.prefix()).ok_or_else(|| {
             errno!(
@@ -694,7 +563,6 @@ impl XattrNameIndex {
         })
     }
 
-    /// Maps the on-disk `name_index` byte back to a VFS [`XattrNamespace`].
     fn namespace(self) -> XattrNamespace {
         match self {
             Self::User => XattrNamespace::User,
@@ -705,19 +573,6 @@ impl XattrNameIndex {
     }
 }
 
-/// In-memory decoded xattr entry used as the working representation during mutations.
-///
-/// # Differences from Linux's `ext2_xattr_entry`
-///
-/// - **`name` is a separate `Vec<u8>`**: In the on-disk layout, the name
-///   bytes follow immediately after the `XattrEntry` header.  Because Rust
-///   does not permit safe mutable borrows of sub-ranges of a buffer, we
-///   store the name as an owned `Vec<u8>` during the in-memory phase.  It
-///   is written back to the correct offset in the block buffer on flush.
-/// - **`hash` is not stored here**: The per-entry hash in `XattrEntry::hash`
-///   is always written as zero.  Block sharing via `mb_cache` (which would
-///   require hash-based deduplication) is not implemented; `ref_count` is
-///   always 1.
 #[derive(Clone, Debug)]
 struct XattrEntryData {
     name_index: XattrNameIndex,
@@ -725,19 +580,16 @@ struct XattrEntryData {
     value: Vec<u8>,
 }
 
-/// On-disk header of an ext2 extended-attribute block (32 bytes).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 struct XattrHeader {
     magic: u32,
-    // TODO: support block_sharing, currently the `ref_count` is always 1
     ref_count: u32,
     nblocks: u32,
     hash: u32,
     reserved: [u32; 4],
 }
 
-/// On-disk extended-attribute entry header.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 struct XattrEntry {
@@ -749,9 +601,6 @@ struct XattrEntry {
     hash: u32,
 }
 
-/// Compare two xattr keys for sort order.
-///
-/// Ordering is `(name_index as u8, name_len, name bytes)`, matching Linux.
 fn cmp_entry_key(
     lhs_index: XattrNameIndex,
     lhs_name: &[u8],

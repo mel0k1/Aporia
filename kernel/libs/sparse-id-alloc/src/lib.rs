@@ -1,10 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! A sparse u32 ID allocator over a configurable range.
-//!
-//! The [`SparseIdAlloc`] type allocates the smallest available ID in an
-//! inclusive `u32` range and supports returning IDs later.
-
 #![cfg_attr(not(test), no_std)]
 #![deny(unsafe_code)]
 
@@ -12,28 +5,14 @@ extern crate alloc;
 
 use alloc::collections::BTreeMap;
 
-/// A sparse `u32` ID allocator over a configurable `[min, max]` range.
-///
-/// # Allocation policy
-///
-/// Always returns the smallest unallocated ID in the range, or `None`
-/// when every ID is in use.
 #[derive(Clone, Debug)]
 pub struct SparseIdAlloc {
     min: u32,
     max: u32,
-    /// Maximal runs of allocated IDs: start -> inclusive end.
-    /// Runs are disjoint and non-adjacent.
     allocated_runs: BTreeMap<u32, u32>,
 }
 
 impl SparseIdAlloc {
-    /// Creates a new allocator that hands out IDs from the inclusive range
-    /// `[min, max]`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `min > max`.
     pub const fn new(min: u32, max: u32) -> Self {
         assert!(min <= max, "min must be <= max");
         Self {
@@ -43,9 +22,6 @@ impl SparseIdAlloc {
         }
     }
 
-    /// Allocates and returns a new ID from the configured range.
-    ///
-    /// Returns `None` when every ID in `[min, max]` is in use.
     pub fn alloc(&mut self) -> Option<u32> {
         let first = self
             .allocated_runs
@@ -53,8 +29,6 @@ impl SparseIdAlloc {
             .map(|(&start, &end)| (start, end));
 
         match first {
-            // The range's lowest IDs are allocated; the smallest free ID
-            // is just past the first run (unless the range is exhausted).
             Some((start, end)) if start == self.min => {
                 if end == self.max {
                     return None;
@@ -68,7 +42,6 @@ impl SparseIdAlloc {
                 *self.allocated_runs.get_mut(&start).unwrap() = new_end;
                 Some(id)
             }
-            // `min` itself is free.
             _ => {
                 let id = self.min;
                 let end = id
@@ -81,12 +54,6 @@ impl SparseIdAlloc {
         }
     }
 
-    /// Releases the given ID.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `id` is not currently allocated (out of range, never
-    /// issued, or already freed).
     pub fn free(&mut self, id: u32) {
         let run = self
             .allocated_runs

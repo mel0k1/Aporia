@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd::power::{ExitCode, poweroff, restart};
 
 use super::SyscallReturn;
@@ -9,21 +7,18 @@ use crate::{
     security::lsm::hooks as lsm_hooks,
 };
 
-// Linux reboot magic constants.
 const LINUX_REBOOT_MAGIC1: u32 = 0xfee1dead;
 const LINUX_REBOOT_MAGIC2: u32 = 0x28121969;
 const LINUX_REBOOT_MAGIC2A: u32 = 0x05121996;
 const LINUX_REBOOT_MAGIC2B: u32 = 0x16041998;
 const LINUX_REBOOT_MAGIC2C: u32 = 0x20112000;
 
-/// Linux reboot commands.
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, TryFromInt)]
 enum RebootCmd {
     Restart = 0x01234567,
     Halt = 0xcdef0123,
     PowerOff = 0x4321fedc,
-    // TODO: Add more reboot sub-commands.
 }
 
 pub(super) fn sys_reboot(
@@ -38,7 +33,6 @@ pub(super) fn sys_reboot(
         magic1, magic2, op
     );
 
-    // Verify magic numbers
     if magic1 != LINUX_REBOOT_MAGIC1 {
         return Err(errno!(EINVAL, "the reboot magic is invalid"));
     }
@@ -58,7 +52,6 @@ pub(super) fn sys_reboot(
 
     let cmd = RebootCmd::try_from(op)?;
 
-    // TODO: Perform any necessary cleanup before powering off or restarting.
     match cmd {
         RebootCmd::Restart => restart(ExitCode::Success),
         RebootCmd::Halt | RebootCmd::PowerOff => poweroff(ExitCode::Success),

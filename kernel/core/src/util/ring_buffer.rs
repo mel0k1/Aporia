@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::{
     num::Wrapping,
     ops::{Deref, Range},
@@ -11,16 +9,9 @@ pub(crate) use ring_buffer::{Consumer, Producer, RbConsumer, RbProducer, RingBuf
 use super::{MultiRead, MultiWrite};
 use crate::prelude::*;
 
-/// Extension methods for writing bytes to a [`Producer<u8, _>`].
 pub(crate) trait ProducerU8Ext {
-    /// Writes data from `reader` to the ring buffer.
-    ///
-    /// Returns the number of bytes written.
     fn write_fallible(&mut self, reader: &mut dyn MultiRead) -> Result<usize>;
 
-    /// Writes up to `max_len` bytes from `reader` to the ring buffer.
-    ///
-    /// Returns the number of bytes written.
     fn write_fallible_with_max_len(
         &mut self,
         reader: &mut dyn MultiRead,
@@ -44,7 +35,6 @@ impl<R: Deref<Target = RingBuffer<u8>>> ProducerU8Ext for Producer<u8, R> {
         let offset = tail.0 & (self.capacity() - 1);
 
         let write_len = if offset + free_len > self.capacity() {
-            // Write into two separate parts
             let mut write_len = 0;
 
             let mut writer = self.segment().writer();
@@ -67,11 +57,7 @@ impl<R: Deref<Target = RingBuffer<u8>>> ProducerU8Ext for Producer<u8, R> {
     }
 }
 
-/// Extension methods for byte ring buffers.
 pub(crate) trait RingBufferU8Ext {
-    /// Picks data from an absolute ring-counter range into `writer` without consuming it.
-    ///
-    /// Returns the number of bytes copied.
     fn pick_fallible(
         &self,
         range: Range<Wrapping<usize>>,
@@ -89,7 +75,6 @@ impl RingBufferU8Ext for RingBuffer<u8> {
         let offset = range.start.0 & (self.capacity() - 1);
 
         if offset + len > self.capacity() {
-            // Read from two separate parts
             let mut read_len = 0;
 
             let mut reader = self.segment().reader();
@@ -109,16 +94,9 @@ impl RingBufferU8Ext for RingBuffer<u8> {
     }
 }
 
-/// Extension methods for reading bytes from a [`Consumer<u8, _>`].
 pub(crate) trait ConsumerU8Ext {
-    /// Reads data from the ring buffer into `writer`.
-    ///
-    /// Returns the number of bytes read.
     fn read_fallible(&mut self, writer: &mut dyn MultiWrite) -> Result<usize>;
 
-    /// Reads up to `max_len` bytes from the ring buffer into `writer`.
-    ///
-    /// Returns the number of bytes read.
     fn read_fallible_with_max_len(
         &mut self,
         writer: &mut dyn MultiWrite,

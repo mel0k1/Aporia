@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::format;
 
 use aster_framebuffer::{
@@ -31,7 +29,6 @@ use crate::{
     util::ioctl::RawIoctl,
 };
 
-/// The driver for VT (virtual terminal) devices.
 pub(crate) struct VtDriver {
     index: VtIndex,
     console: VtConsole,
@@ -73,8 +70,6 @@ impl VtDriver {
         let mut font_data = vec![0; font_size as usize];
         current_userspace!().read_bytes(*data as Vaddr, &mut font_data[..])?;
 
-        // In Linux, the most significant bit represents the first pixel, but `BitmapFont` requires
-        // the least significant bit to represent the first pixel. So now we reverse the bits.
         font_data
             .iter_mut()
             .for_each(|byte| *byte = byte.reverse_bits());
@@ -92,7 +87,6 @@ impl VtDriver {
 }
 
 impl TtyDriver for VtDriver {
-    // Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/linux/major.h#L18>.
     const DEVICE_MAJOR_ID: u32 = 4;
 
     fn devtmpfs_meta(&self, index: u32) -> Option<DevtmpfsNodeMeta> {
@@ -128,7 +122,6 @@ impl TtyDriver for VtDriver {
 
         dispatch_ioctl!(match raw_ioctl {
             cmd @ GetKeyboardType => {
-                // Reference: <https://elixir.bootlin.com/linux/v6.13/source/include/uapi/linux/kd.h#L36>.
                 const KB_101: u8 = 0x02;
 
                 cmd.write(&KB_101)?;
@@ -163,7 +156,6 @@ impl TtyDriver for VtDriver {
                 let font_op = cmd.read()?;
 
                 if font_op.op == CFontOp::OP_GET {
-                    // TODO: Add support for getting the font of the console device.
                     return Err(errno!(EINVAL, "getting font data is not supported"));
                 }
 
@@ -220,8 +212,6 @@ impl TtyDriver for VtDriver {
                 guard.handle_release_display(self.index, reldisp_type)?;
             }
             cmd @ ActivateVt => {
-                // Reference: <https://elixir.bootlin.com/linux/v6.17/source/drivers/tty/vt/vt_ioctl.c#L835-L854>
-
                 check_vt_ioctl_perm(tty)?;
 
                 let vt_index = VtIndex::try_from(cmd.get())?;
@@ -229,12 +219,9 @@ impl TtyDriver for VtDriver {
                 let vtm = VT_MANAGER.get().expect("`VT_MANAGER` is not initialized");
                 let mut guard = vtm.lock();
                 guard.allocate_vt(vt_index);
-                // Linux ignores `set_console` return semantics in `VT_ACTIVATE`.
                 let _ = guard.switch_vt(vt_index);
             }
             cmd @ WaitForVtActive => {
-                // Reference: <https://elixir.bootlin.com/linux/v6.17/source/drivers/tty/vt/vt_ioctl.c#L862-L870>
-
                 check_vt_ioctl_perm(tty)?;
 
                 let vt_index = VtIndex::try_from(cmd.get())?;
@@ -243,8 +230,6 @@ impl TtyDriver for VtDriver {
                 vtm.wait_for_vt_active(vt_index)?;
             }
             cmd @ DisallocateVt => {
-                // Reference: <https://elixir.bootlin.com/linux/v6.17/source/drivers/tty/vt/vt_ioctl.c#L893-L906>
-
                 let vtm = VT_MANAGER.get().expect("`VT_MANAGER` is not initialized");
 
                 if cmd.get() == 0 {
@@ -265,8 +250,6 @@ impl TtyDriver for VtDriver {
 }
 
 fn check_vt_ioctl_perm(tty: &Tty<VtDriver>) -> Result<()> {
-    // Reference: <https://elixir.bootlin.com/linux/v6.17/source/drivers/tty/vt/vt_ioctl.c#L743-L749>
-
     if current!()
         .terminal()
         .is_some_and(|terminal| terminal.id() == tty.id())
@@ -285,7 +268,6 @@ fn check_vt_ioctl_perm(tty: &Tty<VtDriver>) -> Result<()> {
 }
 
 impl VtDriver {
-    /// Creates a new VT driver with none VT console backend.
     pub(super) fn new(index: VtIndex) -> Self {
         Self {
             index,
@@ -294,17 +276,14 @@ impl VtDriver {
         }
     }
 
-    /// Gets the VT console associated with this driver.
     pub(super) fn vt_console(&self) -> &VtConsole {
         &self.console
     }
 
-    /// Gets the VT index associated with this driver.
     pub(super) fn index(&self) -> VtIndex {
         self.index
     }
 
-    /// Gets the open file counter of this VT driver.
     pub(super) fn open_file_counter(&self) -> &VtOpenFileCounter {
         &self.open_file_counter
     }

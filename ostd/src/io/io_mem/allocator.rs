@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! I/O Memory allocator.
-
 use alloc::vec::Vec;
 use core::ops::Range;
 
@@ -14,15 +10,11 @@ use crate::{
     util::range_alloc::RangeAllocator,
 };
 
-/// I/O memory allocator that allocates memory I/O access to device drivers.
 pub(super) struct IoMemAllocator {
     allocators: Vec<RangeAllocator>,
 }
 
 impl IoMemAllocator {
-    /// Acquires `range` for insensitive MMIO with the specified cache policy.
-    ///
-    /// If the range is not available, then the return value will be `None`.
     pub(super) fn acquire(
         &self,
         range: Range<usize>,
@@ -37,20 +29,9 @@ impl IoMemAllocator {
             .alloc_specific(&range)
             .ok()?;
 
-        // SAFETY:
-        // 1. The `IoMemAllocator` instance is built from an
-        //    `IoMemAllocatorBuilder` instance, which is constructed after the
-        //    kernel page table is activated.
-        // 2. The created `IoMem` is guaranteed not to access physical memory or
-        //    system device I/O.
         unsafe { Some(IoMem::new(range, PageFlags::RW, cache_policy)) }
     }
 
-    /// Recycles an MMIO range.
-    ///
-    /// # Safety
-    ///
-    /// The caller must have ownership of the MMIO region through the `IoMemAllocator::get` interface.
     #[expect(dead_code)]
     pub(super) unsafe fn recycle(&self, range: Range<usize>) {
         debug!("Recycling MMIO range: {:#x?}", range);
@@ -60,33 +41,16 @@ impl IoMemAllocator {
         allocator.free(range);
     }
 
-    /// Initializes usable memory I/O region.
-    ///
-    /// # Safety
-    ///
-    /// User must ensure the range doesn't belong to physical memory or system device I/O.
     unsafe fn new(allocators: Vec<RangeAllocator>) -> Self {
         Self { allocators }
     }
 }
 
-/// Builder for `IoMemAllocator`.
-///
-/// The builder must contains the memory I/O regions that don't belong to the physical memory. Also, OSTD
-/// must exclude the memory I/O regions of the system device before building the `IoMemAllocator`.
 pub(crate) struct IoMemAllocatorBuilder {
     allocators: Vec<RangeAllocator>,
 }
 
 impl IoMemAllocatorBuilder {
-    /// Initializes memory I/O region for devices.
-    ///
-    /// # Safety
-    ///
-    /// 1. This function must be called at most once.
-    /// 2. This function must be called after the kernel page table is activated
-    ///    on the bootstrapping processor.
-    /// 3. The caller must ensure the range doesn't belong to physical memory.
     pub(crate) unsafe fn new(ranges: Vec<Range<usize>>) -> Self {
         info!(
             "Creating new I/O memory allocator builder, ranges: {:#x?}",
@@ -99,11 +63,6 @@ impl IoMemAllocatorBuilder {
         Self { allocators }
     }
 
-    /// Reserves `range` from the allocator for sensitive MMIO with the specified cache policy.
-    ///
-    /// # Panics
-    ///
-    /// This function will panic if the specified range is not available.
     #[cfg_attr(target_arch = "loongarch64", expect(unused))]
     pub(crate) fn reserve(
         &self,
@@ -117,17 +76,9 @@ impl IoMemAllocatorBuilder {
 
         self.remove(range.start..range.end);
 
-        // SAFETY:
-        // 1. The `IoMemAllocatorBuilder` instance is constructed after the
-        //    kernel page table is activated.
-        // 2. The range falls within I/O memory area and does not overlap
-        //    with other system devices' I/O memory.
         unsafe { IoMem::new(range, PageFlags::RW, cache_policy) }
     }
 
-    /// Removes access to a specific memory I/O range.
-    ///
-    /// All drivers in OSTD must use this method to prevent peripheral drivers from accessing illegal memory I/O range.
     pub(crate) fn remove(&self, range: Range<usize>) {
         let Some(allocator) = find_allocator(&self.allocators, &range) else {
             panic!(
@@ -145,17 +96,9 @@ impl IoMemAllocatorBuilder {
     }
 }
 
-/// The I/O Memory allocator of the system.
 pub(super) static IO_MEM_ALLOCATOR: Once<IoMemAllocator> = Once::new();
 
-/// Initializes the static `IO_MEM_ALLOCATOR` based on builder.
-///
-/// # Safety
-///
-/// User must ensure all the memory I/O regions that belong to the system device have been removed by calling the
-/// `remove` function.
 pub(in crate::io) unsafe fn init(io_mem_builder: IoMemAllocatorBuilder) {
-    // SAFETY: The safety is upheld by the caller.
     IO_MEM_ALLOCATOR.call_once(|| unsafe { IoMemAllocator::new(io_mem_builder.allocators) });
 }
 
@@ -244,7 +187,7 @@ mod test {
 
     #[ktest]
     fn conflict_region() {
-        let max_paddr = 0x100_000_000_000; // 16 TiB
+        let max_paddr = 0x100_000_000_000;
 
         let io_mem_region_a = max_paddr..max_paddr + 0x200_0000;
         let io_mem_region_b =

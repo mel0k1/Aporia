@@ -1,13 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! The VFS registration type of overlayfs.
-//!
-//! [`OverlayFsType`] is the carrier the VFS registry sees: it publishes the
-//! filesystem name `overlay`, and each mount request under that name is
-//! answered by constructing one [`OverlayFs`] from the mount's creation
-//! context. Registration happens once at filesystem initialization; every
-//! later mount builds its state through that construction call.
-
 use super::OverlayFs;
 use crate::{
     fs::vfs::{

@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Compaction in `TxLsmTree`.
 use core::marker::PhantomData;
 
 use super::{
@@ -13,15 +10,12 @@ use crate::{
     prelude::*,
 };
 
-/// A `Compactor` is currently used for asynchronous compaction
-/// and specific compaction algorithm of `TxLsmTree`.
 pub(super) struct Compactor<K, V> {
     handle: Mutex<Option<JoinHandle<Result<()>>>>,
     phantom: PhantomData<(K, V)>,
 }
 
 impl<K: RecordKey<K>, V: RecordValue> Compactor<K, V> {
-    /// Create a new `Compactor` instance.
     pub(super) fn new() -> Self {
         Self {
             handle: Mutex::new(None),
@@ -29,14 +23,12 @@ impl<K: RecordKey<K>, V: RecordValue> Compactor<K, V> {
         }
     }
 
-    /// Record current compaction thread handle.
     pub(super) fn record_handle(&self, handle: JoinHandle<Result<()>>) {
         let mut handle_opt = self.handle.lock();
         assert!(handle_opt.is_none());
         let _ = handle_opt.insert(handle);
     }
 
-    /// Wait until the compaction is finished.
     pub(super) fn wait_compaction(&self) -> Result<()> {
         if let Some(handle) = self.handle.lock().take() {
             handle.join().unwrap()
@@ -45,11 +37,6 @@ impl<K: RecordKey<K>, V: RecordValue> Compactor<K, V> {
         }
     }
 
-    /// Core function for compacting overlapped records and building new SSTs.
-    ///
-    /// # Panics
-    ///
-    /// This method must be called within a TX. Otherwise, this method panics.
     pub(super) fn compact_records_and_build_ssts<D: BlockSet + 'static>(
         upper_records: impl Iterator<Item = (K, ValueEx<V>)>,
         lower_records: impl Iterator<Item = (K, ValueEx<V>)>,
@@ -105,8 +92,6 @@ impl<K: RecordKey<K>, V: RecordValue> Compactor<K, V> {
         Ok(created_ssts)
     }
 
-    /// Compact two `ValueEx<V>`s with the same key, returning
-    /// the compacted value and the dropped value if any.
     fn compact_value_ex(new: ValueEx<V>, old: ValueEx<V>) -> (ValueEx<V>, Option<V>) {
         match (new, old) {
             (ValueEx::Synced(new_v), ValueEx::Synced(old_v)) => {

@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! CPU execution context control.
-
 use alloc::boxed::Box;
 use core::arch::x86_64::{_fxrstor64, _fxsave64, _xrstor64, _xsave64};
 
@@ -35,14 +31,6 @@ cfg_select! {
     }
 }
 
-/// RFLAGS bits that non-privileged code may modify.
-///
-/// This is the union of the flags that Linux allows `ptrace` and `rt_sigreturn`
-/// to modify. Because the set allowed by `rt_sigreturn` is a strict subset of
-/// the `ptrace` set (it excludes `NT`), this is effectively the set of flags
-/// that `ptrace` may modify.
-/// Reference: <https://elixir.bootlin.com/linux/v7.1/source/arch/x86/include/asm/sighandling.h#L11-L14>.
-/// Reference: <https://elixir.bootlin.com/linux/v7.1/source/arch/x86/kernel/ptrace.c#L158-L163>.
 pub const USER_MODIFIABLE_RFLAGS: usize = (RFlags::CARRY_FLAG.bits()
     | RFlags::PARITY_FLAG.bits()
     | RFlags::AUXILIARY_CARRY_FLAG.bits()
@@ -55,7 +43,6 @@ pub const USER_MODIFIABLE_RFLAGS: usize = (RFlags::CARRY_FLAG.bits()
     | RFlags::ALIGNMENT_CHECK.bits()
     | RFlags::NESTED_TASK.bits()) as usize;
 
-/// Userspace CPU context, including general-purpose registers and exception information.
 #[repr(C)]
 #[derive(Clone, Debug)]
 pub struct UserContext {
@@ -65,9 +52,6 @@ pub struct UserContext {
 
 impl Default for UserContext {
     fn default() -> Self {
-        // RFLAGS bit 1 is reserved, and Linux always sets it to 1 on x86.
-        // Set the interrupt flag to enable the reception of external interrupts in user mode.
-        // Set the ID flag to indicate that the CPU supports the CPUID instruction.
         const USER_MODE_INITIAL_RFLAGS: usize =
             (1 << 1) | (RFlags::INTERRUPT_FLAG.bits() | RFlags::ID.bits()) as usize;
 
@@ -83,7 +67,6 @@ impl Default for UserContext {
     }
 }
 
-/// General registers.
 #[expect(missing_docs)]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -107,54 +90,40 @@ pub struct GeneralRegs {
     pub rip: usize,
 }
 
-/// The user-mode FS base register.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FsBase(usize);
 
 impl FsBase {
-    /// Creates a new `FsBase` with the given address.
     pub fn new(addr: usize) -> Self {
         Self(addr)
     }
 
-    /// Returns the stored address.
     pub fn addr(&self) -> usize {
         self.0
     }
 
-    /// Saves the current CPU FS base into this struct.
     pub fn save(&mut self) {
-        // SAFETY: Reading the user FS base does not affect kernel code.
         self.0 = unsafe { rdfsbase() as usize };
     }
 
-    /// Loads this struct's FS base onto the CPU.
     pub fn load(&self) {
-        // SAFETY: Writing the user FS base does not affect kernel code.
         unsafe { wrfsbase(self.0 as u64) }
     }
 }
 
-/// The user-mode GS base register.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct GsBase(usize);
 
 impl GsBase {
-    /// Creates a new `GsBase` with the given address.
     pub fn new(addr: usize) -> Self {
         Self(addr)
     }
 
-    /// Returns the stored address.
     pub fn addr(&self) -> usize {
         self.0
     }
 
-    /// Saves the current CPU GS base into this struct.
     pub fn save(&mut self, _guard: &DisabledLocalIrqGuard) {
-        // SAFETY:
-        // 1. In these steps, we have disabled the IRQ and are not using the kernel GS base.
-        // 2. Reading the user GS base does not affect kernel code.
         unsafe {
             swapgs();
             self.0 = rdgsbase() as usize;
@@ -162,11 +131,7 @@ impl GsBase {
         }
     }
 
-    /// Loads this struct's GS base onto the CPU.
     pub fn load(&self, _guard: &DisabledLocalIrqGuard) {
-        // SAFETY:
-        // 1. In these steps, we have disabled the IRQ and are not using the kernel GS base.
-        // 2. Writing the user GS base does not affect kernel code.
         unsafe {
             swapgs();
             wrgsbase(self.0 as u64);
@@ -175,76 +140,32 @@ impl GsBase {
     }
 }
 
-/// Architectural CPU exceptions (x86-64 vectors 0-31).
-///
-/// For the authoritative specification of each vector, see the
-/// Intel® 64 and IA-32 Architectures Software Developer’s Manual,
-/// Volume 3 “System Programming Guide”, Chapter 6 “Interrupt and Exception
-/// Handling”, in particular Section 6.15 “Exception and Interrupt
-/// Reference”.
-///
-/// Every enum variant corresponds to one exception defined by the
-/// Intel/AMD architecture.
-/// Variants that naturally carry an error code (or other error information)
-/// expose it through their associated data fields.
-//
-// TODO: Some exceptions (like `AlignmentCheck`) also push an
-//       error code onto the stack, but that detail is not yet represented
-//       in this type definition.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CpuException {
-    ///  0 – #DE  Divide-by-zero error.
     DivisionError,
-    ///  1 – #DB  Debug.
     Debug,
-    ///  2 – NMI  Non-maskable interrupt.
     NonMaskableInterrupt,
-    ///  3 – #BP  Breakpoint (INT3).
     BreakPoint,
-    ///  4 – #OF  Overflow.
     Overflow,
-    ///  5 – #BR  Bound-range exceeded.
     BoundRangeExceeded,
-    ///  6 – #UD  Invalid or undefined opcode.
     InvalidOpcode,
-    ///  7 – #NM  Device not available (FPU/MMX/SSE disabled).
     DeviceNotAvailable,
-    ///  8 – #DF  Double fault (always pushes an error code of 0).
     DoubleFault,
-    ///  9 – Coprocessor segment overrun (reserved on modern CPUs).
     CoprocessorSegmentOverrun,
-    /// 10 – #TS  Invalid TSS.
     InvalidTss(SelectorErrorCode),
-    /// 11 – #NP  Segment not present.
     SegmentNotPresent(SelectorErrorCode),
-    /// 12 – #SS  Stack-segment fault.
     StackSegmentFault(SelectorErrorCode),
-    /// 13 – #GP  General protection fault
     GeneralProtectionFault(Option<SelectorErrorCode>),
-    /// 14 – #PF  Page fault.
     PageFault(RawPageFaultInfo),
-    // 15: Reserved
-    /// 16 – #MF  x87 floating-point exception.
     X87FloatingPointException,
-    /// 17 – #AC  Alignment check.
     AlignmentCheck,
-    /// 18 – #MC  Machine check.
     MachineCheck,
-    /// 19 – #XM / #XF  SIMD/FPU floating-point exception.
     SIMDFloatingPointException,
-    /// 20 – #VE  Virtualization exception.
     VirtualizationException,
-    /// 21 – #CP  Control protection exception (CET).
     ControlProtectionException,
-    // 22-27: Reserved
-    /// 28 – #HV  Hypervisor injection exception.
     HypervisorInjectionException,
-    /// 29 – #VC  VMM communication exception (SEV-ES GHCB).
     VMMCommunicationException,
-    /// 30 – #SX  Security exception.
     SecurityException,
-    // 31: Reserved
-    /// Catch-all for reserved or undefined vector numbers.
     Reserved,
 }
 
@@ -260,7 +181,6 @@ impl CpuException {
             6 => Self::InvalidOpcode,
             7 => Self::DeviceNotAvailable,
             8 => {
-                // A double fault will always generate an error code with a value of zero.
                 debug_assert_eq!(error_code, 0);
                 Self::DoubleFault
             }
@@ -283,18 +203,15 @@ impl CpuException {
                     addr: page_fault_addr,
                 })
             }
-            // Reserved 15
             16 => Self::X87FloatingPointException,
             17 => Self::AlignmentCheck,
             18 => Self::MachineCheck,
             19 => Self::SIMDFloatingPointException,
             20 => Self::VirtualizationException,
             21 => Self::ControlProtectionException,
-            // Reserved 22-27
             28 => Self::HypervisorInjectionException,
             29 => Self::VMMCommunicationException,
             30 => Self::SecurityException,
-            // Reserved 31
             15 | 22..=27 | 31 => Self::Reserved,
             _ => return None,
         };
@@ -318,41 +235,26 @@ impl CpuException {
     }
 }
 
-/// Selector error code.
-///
-/// Reference: <https://wiki.osdev.org/Exceptions#Selector_Error_Code>.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct SelectorErrorCode(usize);
 
 impl UserContext {
-    // Methods shared across all architectures (i.e., general registers and exceptions).
-
-    /// Returns a reference to the general registers.
     pub fn general_regs(&self) -> &GeneralRegs {
         &self.user_context.general
     }
 
-    /// Returns a mutable reference to the general registers.
     pub fn general_regs_mut(&mut self) -> &mut GeneralRegs {
         &mut self.user_context.general
     }
 
-    /// Takes the CPU exception out.
     pub fn take_exception(&mut self) -> Option<CpuException> {
         self.exception.take()
     }
 
-    // Architecture-specific methods.
-
-    /// Gets the value of the RFLAGS register.
     pub fn rflags(&self) -> usize {
         self.user_context.rflags
     }
 
-    /// Sets the value of the RFLAGS register.
-    ///
-    /// We only allow the setting or clearing of the bits in [`USER_MODIFIABLE_RFLAGS`].
-    /// Any other bits will be ignored and will remain unchanged.
     pub fn set_rflags(&mut self, rflags: usize) {
         self.user_context.rflags = (self.user_context.rflags & !USER_MODIFIABLE_RFLAGS)
             | (rflags & USER_MODIFIABLE_RFLAGS);
@@ -363,7 +265,6 @@ impl UserContextApiInternal for UserContext {
     fn execute<T: UserModeHooks>(&mut self, hooks: &T) -> ReturnReason {
         const SYSCALL_TRAPNUM: usize = 0x100;
 
-        // Return when it is syscall or cpu exception type is Fault or Trap.
         loop {
             crate::task::scheduler::might_preempt();
 
@@ -377,8 +278,6 @@ impl UserContextApiInternal for UserContext {
                 #[cfg(feature = "cvm_guest")]
                 Some(CpuException::VirtualizationException) => {
                     let ve_handler = VirtualizationExceptionHandler::new();
-                    // Check out the doc of `VirtualizationExceptionHandler::new` to
-                    // see why IRQs must enabled _after_ instantiating a `VirtualizationExceptionHandler`.
                     drop(irq_guard);
                     ve_handler.handle(self);
                 }
@@ -442,33 +341,17 @@ impl UserContextApiInternal for UserContext {
     }
 }
 
-/// Types of CPU exceptions.
-///
-/// As defined by Intel, there are three types of x86-64 CPU exceptions:
-///  - **Faults** can be corrected and the program may continue as if nothing happened.
-///  - **Traps** are reported immediately after the execution of the trapping instruction.
-///  - **Aborts** represent some unrecoverable errors.
-///
-/// However, there are some special vectors. Vector 1 can be either a fault or a trap, and vector 2
-/// is an interrupt. Here, we also define `FaultOrTrap` and `Interrupt`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum CpuExceptionType {
-    /// Faults. They can be corrected and the program may continue as if nothing happened.
     Fault,
-    /// Traps. They are reported immediately after the execution of the trapping instruction.
     Trap,
-    /// Faults or traps.
     FaultOrTrap,
-    /// Interrupts.
     Interrupt,
-    /// Aborts. They represent some unrecoverable errors.
     Abort,
-    /// Reserved for future use.
     Reserved,
 }
 
 impl CpuExceptionType {
-    /// Returns whether this exception type is a fault or a trap.
     fn is_fault_or_trap(self) -> bool {
         match self {
             CpuExceptionType::Trap | CpuExceptionType::Fault | CpuExceptionType::FaultOrTrap => {
@@ -481,39 +364,23 @@ impl CpuExceptionType {
     }
 }
 
-/// Architecture-specific data reported with a page-fault exception.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RawPageFaultInfo {
-    /// The error code pushed by the CPU for this page fault.
     pub error_code: PageFaultErrorCode,
-    /// The linear (virtual) address that triggered the fault (contents of CR2).
     pub addr: Vaddr,
 }
 
 bitflags! {
-    /// Page Fault error code. Following the Intel Architectures Software Developer's Manual Volume 3
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub struct PageFaultErrorCode: usize {
-        /// 0 if no translation for the linear address.
         const PRESENT      = 1 << 0;
-        /// 1 if the access was a write.
         const WRITE        = 1 << 1;
-        /// 1 if the access was a user-mode access.
         const USER         = 1 << 2;
-        /// 1 if there is no translation for the linear address
-        /// because a reserved bit was set.
         const RESERVED     = 1 << 3;
-        /// 1 if the access was an instruction fetch.
         const INSTRUCTION  = 1 << 4;
-        /// 1 if the access was a data access to a linear address with a protection key for which
-        /// the protection-key rights registers disallow access.
         const PROTECTION   = 1 << 5;
-        /// 1 if the access was a shadow-stack access.
         const SHADOW_STACK = 1 << 6;
-        /// 1 if there is no translation for the linear address using HLAT paging.
         const HLAT         = 1 << 7;
-        /// 1 if the exception is unrelated to paging and resulted from violation of SGX-specific
-        /// access-control requirements.
         const SGX          = 1 << 15;
     }
 }
@@ -576,9 +443,6 @@ cpu_context_impl_getter_setter!(
     [rip, set_rip]
 );
 
-/// The FPU context of user task.
-///
-/// This could be used for saving both legacy and modern state format.
 #[derive(Debug)]
 pub struct FpuContext {
     xsave_area: Box<XSaveArea>,
@@ -586,7 +450,6 @@ pub struct FpuContext {
 }
 
 impl FpuContext {
-    /// Creates a new FPU context.
     pub fn new() -> Self {
         let mut area_size = size_of::<FxSaveArea>();
         if let Some(xsave_area_size) = XSAVE_AREA_SIZE.get() {
@@ -599,7 +462,6 @@ impl FpuContext {
         }
     }
 
-    /// Saves CPU's current FPU context to this instance.
     pub fn save(&mut self) {
         let mem_addr = self.as_bytes_mut().as_mut_ptr();
 
@@ -612,7 +474,6 @@ impl FpuContext {
         debug!("Save FPU context");
     }
 
-    /// Loads CPU's FPU context from this instance.
     pub fn load(&self) {
         let mem_addr = self.as_bytes().as_ptr();
 
@@ -627,29 +488,22 @@ impl FpuContext {
         debug!("Load FPU context");
     }
 
-    /// Returns the FPU context as a byte slice.
     pub fn as_bytes(&self) -> &[u8] {
         &self.xsave_area.as_bytes()[..self.area_size]
     }
 
-    /// Returns the FPU context as a mutable byte slice.
     pub fn as_bytes_mut(&mut self) -> &mut [u8] {
         &mut self.xsave_area.as_mut_bytes()[..self.area_size]
     }
 
-    /// Returns the legacy x87/SSE state area.
     pub fn fxsave_area(&self) -> &FxSaveArea {
         &self.xsave_area.fxsave_area
     }
 
-    /// Returns a mutable reference to the legacy x87/SSE state area.
     pub fn fxsave_area_mut(&mut self) -> &mut FxSaveArea {
         &mut self.xsave_area.fxsave_area
     }
 
-    /// Returns the XSAVE state-component flags.
-    ///
-    /// Returns `None` for a legacy FXSAVE context.
     pub fn features(&self) -> Option<XStateFeatures> {
         if self.area_size == size_of::<FxSaveArea>() {
             return None;
@@ -657,9 +511,6 @@ impl FpuContext {
         Some(self.xsave_area.features)
     }
 
-    /// Returns a mutable reference to the XSAVE state-component flags.
-    ///
-    /// Returns `None` for a legacy FXSAVE context.
     pub fn features_mut(&mut self) -> Option<&mut XStateFeatures> {
         if self.area_size == size_of::<FxSaveArea>() {
             return None;
@@ -693,7 +544,6 @@ impl Clone for FpuContext {
     }
 }
 
-/// The modern FPU context format (as saved and restored by the `XSAVE` and `XRSTOR` instructions).
 #[repr(C)]
 #[repr(align(64))]
 #[derive(Clone, Copy, Debug, Pod)]
@@ -715,12 +565,6 @@ impl XSaveArea {
 
         let mut xsave_area = Self::new_zeroed();
         xsave_area.fxsave_area.control = X87_INITIAL_CONTROL_WORD;
-        // Refer to Intel SDM, Volume 1, Section "x87 State". In the FXSAVE/XSAVE image the
-        // `tag` field contains an abridged x87 Tag Word (FTW) - a compact (8-bit) encoding
-        // used in saved/restore images. In this format, a bit value of 0 indicates the
-        // corresponding x87 register is empty (this is the inverse of the legacy 16-bit
-        // tag-word semantics). The `fninit` instruction clears all x87 registers, so the
-        // abridged tag must be initialized to 0 to represent an empty register set.
         xsave_area.fxsave_area.tag = 0;
         xsave_area.fxsave_area.mxcsr = 0x1F80;
         xsave_area.features = XStateFeatures::from_bits_retain(features);
@@ -729,65 +573,48 @@ impl XSaveArea {
     }
 }
 
-/// The legacy SSE/MMX FPU context format (as saved and restored by the `FXSAVE` and `FXRSTOR` instructions).
 #[repr(C)]
 #[repr(align(16))]
 #[derive(Clone, Copy, Debug, Pod)]
 pub struct FxSaveArea {
-    control: u16,         // x87 FPU Control Word
-    status: u16,          // x87 FPU Status Word
-    tag: u8,              // x87 FPU Tag Byte (abridged format)
-    reserved1: u8,        // Reserved
-    op: u16,              // x87 FPU Last Instruction Opcode
-    ip: u32,              // x87 FPU Instruction Pointer Offset
-    cs: u32,              // x87 FPU Instruction Pointer Selector
-    dp: u32,              // x87 FPU Instruction Operand (Data) Pointer Offset
-    ds: u32,              // x87 FPU Instruction Operand (Data) Pointer Selector
-    mxcsr: u32,           // MXCSR Register State
-    mxcsr_mask: u32,      // MXCSR Mask
-    st_space: [u32; 32], // x87 FPU or MMX technology registers (ST0-ST7 or MM0-MM7, 128 bits per field)
-    xmm_space: [u32; 64], // XMM registers (XMM0-XMM15, 128 bits per field)
-    reserved2: [u32; 12], // Reserved
-    reserved3: [u32; 12], // Software reserved
+    control: u16,
+    status: u16,
+    tag: u8,
+    reserved1: u8,
+    op: u16,
+    ip: u32,
+    cs: u32,
+    dp: u32,
+    ds: u32,
+    mxcsr: u32,
+    mxcsr_mask: u32,
+    st_space: [u32; 32],
+    xmm_space: [u32; 64],
+    reserved2: [u32; 12],
+    reserved3: [u32; 12],
 }
 
-/// XSAVE state-component flags (`XSTATE_BV`).
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/arch/x86/include/asm/fpu/types.h#L133-L134>.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub struct XStateFeatures(u64);
 
 bitflags! {
     impl XStateFeatures: u64 {
-        /// x87 floating-point state.
         const X87 = 1 << 0;
-        /// SSE state.
         const SSE = 1 << 1;
 
-        // Preserve extended state-component bits when updating the legacy state.
         const _   = !0;
     }
 }
 
-/// The initial x87 FPU control word.
-///
-/// Refer to Intel SDM, Table 10-1:
-/// "IA-32 and Intel® 64 Processor States Following Power-up, Reset, or INIT (Contd.)".
 pub const X87_INITIAL_CONTROL_WORD: u16 = 0x037f;
 
-/// The XSTATE features (user & supervisor) supported by the processor.
 static XSTATE_MAX_FEATURES: Once<u64> = Once::new();
 
-/// Mask features which are restored when returning to user space.
-///
-/// X87 | SSE | AVX | OPMASK | ZMM_HI256 | HI16_ZMM
 const XFEATURE_MASK_USER_RESTORE: u64 = 0b1110_0111;
 
-/// The real size in bytes of the XSAVE area containing all states enabled by XCRO | IA32_XSS.
 static XSAVE_AREA_SIZE: Once<usize> = Once::new();
 
-/// The max size in bytes of the XSAVE area.
 const MAX_XSAVE_AREA_SIZE: usize = 4096;
 
 pub(in crate::arch) fn enable_essential_features() {
@@ -802,15 +629,12 @@ pub(in crate::arch) fn enable_essential_features() {
         });
     }
 
-    // We now assume that all x86-64 CPUs should have the FPU. Otherwise, we should check
-    // `has_extensions(IsaExtensions::FPU)` here.
     {
         let mut cr0 = Cr0::read();
         cr0.remove(Cr0Flags::TASK_SWITCHED | Cr0Flags::EMULATE_COPROCESSOR);
 
         unsafe {
             Cr0::write(cr0);
-            // Flush out any pending x87 state.
             core::arch::asm!("fninit");
         }
     }

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::time::Duration;
 
 use ostd::{mm::VmIo, sync::Waiter};
@@ -80,8 +78,6 @@ fn do_clock_nanosleep(
         request_time
     };
 
-    // FIXME: sleeping thread can only be interrupted by signals that will call signal handler or terminate
-    // current process. i.e., the signals that should be ignored will not interrupt sleeping thread.
     let waiter = Waiter::new_pair().0;
 
     let timer_manager = {
@@ -90,12 +86,9 @@ fn do_clock_nanosleep(
             ClockId::CLOCK_BOOTTIME => BootTimeClock::timer_manager(),
             ClockId::CLOCK_MONOTONIC => MonotonicClock::timer_manager(),
             ClockId::CLOCK_REALTIME => RealTimeClock::timer_manager(),
-            // FIXME: We should better not expose this prof timer manager.
             ClockId::CLOCK_PROCESS_CPUTIME_ID => {
                 ctx.process.timer_manager().prof_timer().timer_manager()
             }
-            // Linux returns `EOPNOTSUPP` for `CLOCK_THREAD_CPUTIME_ID`,
-            // `CLOCK_MONOTONIC_RAW`, and the low-resolution coarse clocks.
             ClockId::CLOCK_THREAD_CPUTIME_ID
             | ClockId::CLOCK_MONOTONIC_RAW
             | ClockId::CLOCK_REALTIME_COARSE

@@ -1,10 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! This module offers `/proc/uptime` file support, which provides
-//! information about the system uptime and idle time.
-//!
-//! Reference: <https://man7.org/linux/man-pages/man5/proc_uptime.5.html>
-
 use core::time::Duration;
 
 use aster_util::printer::VmPrinter;
@@ -19,14 +12,10 @@ use crate::{
     time::{NSEC_PER_SEC, cpu_time_stats::CpuTimeStatsManager},
 };
 
-/// Represents the inode at `/proc/uptime`.
 pub(super) struct UptimeFileOps;
 
 impl UptimeFileOps {
     pub(super) fn new_inode(parent: Weak<dyn Inode>) -> Arc<dyn Inode> {
-        // Reference:
-        // <https://elixir.bootlin.com/linux/v6.16.5/source/fs/proc/uptime.c#L45>
-        // <https://elixir.bootlin.com/linux/v6.16.5/source/fs/proc/generic.c#L549-L550>
         ProcFile::new(Self, parent, mkmod!(a+r))
     }
 
@@ -47,7 +36,6 @@ impl UptimeFileOps {
     }
 }
 
-/// Splits a duration into seconds and the centiseconds printed by `/proc/uptime`.
 fn duration_to_seconds_and_centiseconds(duration: Duration) -> (u64, u32) {
     let centiseconds = duration.subsec_nanos() / (NSEC_PER_SEC as u32 / 100);
     (duration.as_secs(), centiseconds)

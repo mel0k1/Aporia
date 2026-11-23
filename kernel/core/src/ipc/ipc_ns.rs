@@ -1,14 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Defines the IPC namespace abstraction.
-//!
-//! An IPC namespace isolates System V IPC resources from other namespaces.
-//! It currently manages semaphore sets only, while message queues and shared
-//! memory remain to be added.
-//!
-//! Each namespace stores its semaphore sets in a per-namespace map keyed by
-//! IPC key and uses a dedicated ID allocator to assign semaphore identifiers.
-
 use aster_rights::ReadOp;
 use spin::Once;
 
@@ -29,26 +18,13 @@ use crate::{
     security::lsm::hooks as lsm_hooks,
 };
 
-/// The IPC namespace.
-///
-/// An IPC namespace isolates System V IPC objects
-/// (semaphores, message queues, shared memory).
-/// Each namespace maintains its own independent set
-/// of IPC resources and identifier allocator.
-///
-/// Lock ordering:
-/// `sem_ids` -> `SemaphoreSet::inner`.
 pub(crate) struct IpcNamespace {
-    /// Semaphore sets within this namespace.
     sem_ids: IpcIds<SemaphoreSet>,
-    /// Owner user namespace.
     owner: Arc<UserNamespace>,
-    /// Stashed dentry for nsfs.
     stashed_dentry: StashedDentry,
 }
 
 impl IpcNamespace {
-    /// Returns a reference to the singleton initial IPC namespace.
     pub(crate) fn get_init_singleton() -> &'static Arc<IpcNamespace> {
         static INIT: Once<Arc<IpcNamespace>> = Once::new();
 
@@ -74,9 +50,6 @@ impl IpcNamespace {
         })
     }
 
-    /// Clones a new IPC namespace from `self`.
-    ///
-    /// The new namespace starts with an empty set of IPC resources.
     pub(crate) fn new_clone(
         &self,
         owner: Arc<UserNamespace>,
@@ -90,7 +63,6 @@ impl IpcNamespace {
         Ok(Self::new(owner))
     }
 
-    /// Calls `op` with the semaphore set identified by `semid`.
     pub(crate) fn with_sem_set<T, F>(
         &self,
         semid: IpcId,
@@ -106,11 +78,6 @@ impl IpcNamespace {
         })?
     }
 
-    /// Removes the semaphore set identified by `semid`.
-    ///
-    /// The caller (`posix_thread`) should be the creator or the owner of the
-    /// semaphore set, or hold `CAP_SYS_ADMIN` in the owner user namespace.
-    /// Otherwise, this method will fail.
     pub(crate) fn remove_sem_set(&self, semid: IpcId, posix_thread: &PosixThread) -> Result<()> {
         let euid = posix_thread.credentials().euid();
         let can_remove_fn = |sem_set: &SemaphoreSet| -> Result<()> {
@@ -136,7 +103,6 @@ impl IpcNamespace {
         self.sem_ids.remove(semid, can_remove_fn)
     }
 
-    /// Returns the existing semaphore set or creates a new one.
     pub(crate) fn get_or_create_sem_set(
         &self,
         key: IpcKey,
@@ -149,8 +115,6 @@ impl IpcNamespace {
             return self.create_sem_set(num_sems, mode, credentials);
         }
 
-        // For now, we compute `semid` by hashing `key`. If the hash conflicts, we will simply
-        // return an error. See the TODO below.
         const { assert!(SEMMNI <= u32::MAX as usize) };
         let semid = IpcId::new(key.cast_unsigned() % SEMMNI as u32 + 1);
 
@@ -158,7 +122,6 @@ impl IpcNamespace {
             match self.sem_ids.with(semid, |sem_set| {
                 if sem_set.permission().key() != key {
                     if flags.contains(IpcFlags::IPC_CREAT) {
-                        // TODO: Manage all keys in a data structure (e.g., a map)
                         return Err(errno!(ENOSPC, "key hashes conflict"));
                     }
                     return Err(errno!(ENOENT, "the key does not exist"));
@@ -198,14 +161,12 @@ impl IpcNamespace {
 
     fn validate_sem_set(_sem_set: &SemaphoreSet, required_perm: PermissionMode) -> Result<()> {
         if !required_perm.is_empty() {
-            // TODO: Support permission check
             warn!("Semaphore doesn't support permission check now");
         }
 
         Ok(())
     }
 
-    /// Creates a new semaphore set and returns its ID.
     fn create_sem_set(
         &self,
         num_sems: usize,

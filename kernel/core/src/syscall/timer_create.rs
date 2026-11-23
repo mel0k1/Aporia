@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd::mm::VmIo;
 use spin::Once;
 
@@ -39,25 +37,17 @@ pub(super) fn sys_timer_create(
     ctx: &Context,
 ) -> Result<SyscallReturn> {
     let signal_meta = if sigevent_addr == 0 {
-        // If `sigevent_addr` is NULL, send SIGALRM.
         Some(SignalMeta {
             target: SignalTarget::Process(Arc::downgrade(&ctx.process)),
             num: SIGALRM,
             ptr: None,
         })
     } else {
-        // Otherwise, determine the signal through `sigevent`.
         let sig_event = ctx.user_space().read_val::<sigevent_t>(sigevent_addr)?;
         let sigev_notify = SigNotify::try_from(sig_event.sigev_notify)?;
         let signo = sig_event.sigev_signo;
         match sigev_notify {
-            // Do nothing when the timer is expired.
             SigNotify::SIGEV_NONE => None,
-            // Send a signal to the current process when the timer is expired.
-            //
-            // `SIGEV_THREAD` means to spawn a POSIX thread to run `sigev_function` (i.e.,
-            // `sig_event.sigev_un.sigev_thread`). However, this is handled by the user space
-            // library (e.g., glibc). The kernel treats it the same as `SIGEV_SIGNAL`.
             SigNotify::SIGEV_SIGNAL | SigNotify::SIGEV_THREAD => {
                 let signum = u8::try_from(signo)
                     .ok()
@@ -69,7 +59,6 @@ pub(super) fn sys_timer_create(
                     ptr: Some(sig_event.sigev_value.read_ptr()),
                 })
             }
-            // Send a signal to the specified thread when the timer is expired.
             SigNotify::SIGEV_THREAD_ID => {
                 let tid = sig_event.sigev_un.read_tid() as u32;
                 let thread = pid_table::pid_table_mut()
@@ -108,8 +97,6 @@ pub(super) fn sys_timer_create(
         return Err(error.into());
     }
 
-    // The partially initialized timer is visible to the user for a brief moment. However, user
-    // programs should not use this timer until the syscall has returned.
     if let Some(meta) = signal_meta {
         let work_item = meta.into_work_item(timer_id);
         timer.func().work_item.call_once(|| work_item);
@@ -127,9 +114,6 @@ pub(super) fn sys_timer_delete(timer_id: timer_t, ctx: &Context) -> Result<Sysca
     Ok(SyscallReturn::Return(0))
 }
 
-/// Creates a timer associated with the specified fixed or dynamic clock ID.
-///
-/// This timer will invoke the given callback function (`func`) when it expires.
 fn create_timer<F: TimerFn>(clockid: clockid_t, func: F, ctx: &Context) -> Result<Arc<Timer<F>>> {
     if clockid >= 0 {
         return create_timer_for_clock(ClockId::try_from(clockid)?, func, ctx);
@@ -161,9 +145,6 @@ fn create_timer<F: TimerFn>(clockid: clockid_t, func: F, ctx: &Context) -> Resul
     Ok(timer)
 }
 
-/// Creates a timer associated with the specified clock ID.
-///
-/// This timer will invoke the given callback function (`func`) when it expires.
 pub(crate) fn create_timer_for_clock<F: TimerFn>(
     clock_id: ClockId,
     func: F,
@@ -181,7 +162,6 @@ pub(crate) fn create_timer_for_clock<F: TimerFn>(
     Ok(timer)
 }
 
-/// A function that delivers a signal via a [`WorkItem`].
 struct SignalFn {
     work_item: Once<Arc<WorkItem>>,
 }
@@ -191,14 +171,12 @@ impl TimerFn for SignalFn {
         drop(guard);
 
         let Some(work_item) = self.work_item.get() else {
-            // The timer has not been initialized, or there is no action to perform (SIGEV_NONE).
             return;
         };
         submit_work_item(work_item.clone(), WorkPriority::High);
     }
 }
 
-/// Metadata to construct a [`TimerSignal`] and a [`WorkItem`] to deliver it.
 struct SignalMeta {
     target: SignalTarget,
     num: SigNum,
@@ -212,7 +190,6 @@ enum SignalTarget {
 
 impl SignalMeta {
     fn into_work_item(self, timer_id: i32) -> Arc<WorkItem> {
-        // Use the timer ID as the default `sigev_value` value when the `sigevent` struct is absent.
         let signal = TimerSignal::new(self.num, timer_id, self.ptr.unwrap_or(timer_id as Vaddr));
 
         match self.target {

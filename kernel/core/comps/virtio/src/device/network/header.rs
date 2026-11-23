@@ -1,9 +1,6 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use bitflags::bitflags;
 use int_to_c_enum::TryFromInt;
 
-/// VirtioNet header precedes each packet
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
 pub(super) struct VirtioNetHdr {
@@ -13,10 +10,7 @@ pub(super) struct VirtioNetHdr {
     gso_size: u16,
     csum_start: u16,
     csum_offset: u16,
-    num_buffers: u16, // Only if PCI is modern or VIRTIO_NET_F_MRG_RXBUF negotiated
-                      // hash_value: u32,        // Only if VIRTIO_NET_F_HASH_REPORT negotiated
-                      // hash_report: u16,       // Only if VIRTIO_NET_F_HASH_REPORT negotiated
-                      // padding_reserved: u16,  // Only if VIRTIO_NET_F_HASH_REPORT negotiated
+    num_buffers: u16,
 }
 
 bitflags! {

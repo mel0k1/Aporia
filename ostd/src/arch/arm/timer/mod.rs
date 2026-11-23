@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! The timer support.
-
 use core::{
     arch::asm,
     sync::atomic::{AtomicUsize, Ordering},
@@ -45,7 +41,6 @@ enum InitError {
 }
 
 fn init_impl() -> Result<(), InitError> {
-    // Reference: <https://www.kernel.org/doc/Documentation/devicetree/bindings/timer/arm%2Carch_timer.txt>
     const FDT_COMPATIBLE: &[&str; 2] = &["arm,armv8-timer", "arm,armv7-timer"];
 
     let device_tree = DEVICE_TREE.get().unwrap();
@@ -54,9 +49,6 @@ fn init_impl() -> Result<(), InitError> {
         .find_compatible(FDT_COMPATIBLE)
         .ok_or(InitError::NotPresent)?;
 
-    // FIXME: We need to find the "interrupt-parent" property for the nearest ancestor. However,
-    // there are no APIs to iterate ancestors. This workaround uses the "interrupt-parent" property
-    // of the root node.
     let intr_parent = if let Some(root) = device_tree.find_node("/")
         && let Some(parent) = root.property("interrupt-parent")
         && let Some(intr_parent) = parent.as_usize()
@@ -72,8 +64,6 @@ fn init_impl() -> Result<(), InitError> {
             .0
             .iter()
             .map(|chunk| u32::from_be_bytes(*chunk))
-        // "Interrupt list for secure, non-secure, virtual and hypervisor timers, in that order."
-        // Some timers may be missing, so we will stop once we find the one we need.
         && let Ok(_secure) = iter.next_chunk::<3>()
         && let Ok(_non_secure) = iter.next_chunk::<3>()
         && let Ok(_virtual) = iter.next_chunk::<3>()
@@ -101,11 +91,8 @@ fn init_impl() -> Result<(), InitError> {
     COUNTER_STEP.store((tsc_freq() / TIMER_FREQ) as usize, Ordering::Relaxed);
     COUNTER_VAL.store(read_tsc() as usize);
 
-    // SAFETY: It is safe to enable timer interrupts.
     unsafe {
         asm!(
-            // IMASK,  bit [1]:  0 - Timer interrupt is not masked.
-            // ENABLE, bit [0]:  1 - Timer enabled.
             "mov {tmp}, #1",
             "msr cntv_ctl_el0, {tmp}",
             tmp = out(reg) _,
@@ -132,7 +119,6 @@ fn set_next_timer() {
 
     COUNTER_VAL.store(new_val);
 
-    // SAFETY: It is safe to update the timer compare value.
     unsafe {
         asm!(
             "msr cntv_cval_el0, {new_val}",

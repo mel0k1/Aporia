@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::marker::PhantomData;
 
 use lending_iterator::LendingIterator;
@@ -18,44 +16,7 @@ use crate::{
     prelude::*,
 };
 
-/// The journal of a series of edits to a persistent state.
-///
-/// `EditJournal` is designed to cater the needs of a usage scenario
-/// where a persistent state is updated with incremental changes and in high
-/// frequency. Apparently, writing the latest value of the
-/// state to disk upon every update would result in a poor performance.
-/// So instead `EditJournal` keeps a journal of these incremental updates,
-/// which are called _edits_. Collectively, these edits can represent the latest
-/// value of the state. Edits are persisted in batch, thus the write performance
-/// is superior.
-/// Behind the scene, `EditJournal` leverages a `CryptoChain` to store the edit
-/// journal securely.
-///
-/// # Compaction
-///
-/// As the total number of edits amounts over time, so does the total size of
-/// the storage space consumed by the edit journal. To keep the storage
-/// consumption at bay, accumulated edits are merged into one snapshot periodically,
-/// This process is called compaction.
-/// The snapshot is stored in a location independent from the journal,
-/// using `CryptoBlob` for security. The MAC of the snapshot is stored in the
-/// journal. Each `EditJournal` keeps two copies of the snapshots so that even
-/// one of them is corrupted due to unexpected crashes, the other is still valid.
-///
-/// # Atomicity
-///
-/// Edits are added to an edit journal individually with the `add` method but
-/// are committed to the journal atomically via the `commit` method. This is
-/// done by buffering newly-added edits into an edit group, which is called
-/// the _current edit group_. Upon commit, the current edit group is persisted
-/// to disk as a whole. It is guaranteed that the recovery process shall never
-/// recover a partial edit group.
-pub(crate) struct EditJournal<
-    E: Edit<S>, /* Edit */
-    S,          /* State */
-    D,          /* BlockSet */
-    P,          /* Policy */
-> {
+pub(crate) struct EditJournal<E: Edit<S>, S, D, P> {
     state: S,
     journal_chain: CryptoChain<BlockRing<D>>,
     snapshots: SnapshotManager<S, D>,
@@ -64,24 +25,16 @@ pub(crate) struct EditJournal<
     write_buf: WriteBuf<E, S>,
 }
 
-/// The metadata of an edit journal.
-///
-/// The metadata is mainly useful when recovering an edit journal after a reboot.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(crate) struct EditJournalMeta {
-    /// The number of blocks reserved for storing a snapshot `CryptoBlob`.
     pub snapshot_area_nblocks: usize,
-    /// The key of a snapshot `CryptoBlob`.
     pub snapshot_area_keys: [Key; 2],
-    /// The number of blocks reserved for storing the journal `CryptoChain`.
     pub journal_area_nblocks: usize,
-    /// The key of the `CryptoChain`.
     pub journal_area_key: Key,
 }
 
 impl EditJournalMeta {
-    /// Returns the total number of blocks occupied by the edit journal.
     pub(crate) fn total_nblocks(&self) -> usize {
         self.snapshot_area_nblocks * 2 + self.journal_area_nblocks
     }
@@ -94,18 +47,14 @@ where
     D: BlockSet,
     P: CompactPolicy<E, S>,
 {
-    /// Format the disk for storing an edit journal with the specified
-    /// configurations, e.g., the initial state.
     pub(crate) fn format(
         disk: D,
         init_state: S,
         state_max_nbytes: usize,
         mut compaction_policy: P,
     ) -> Result<EditJournal<E, S, D, P>> {
-        // Create `SnapshotManager` to persist the init state.
         let snapshots = SnapshotManager::create(&disk, &init_state, state_max_nbytes)?;
 
-        // Create an empty `CryptoChain`.
         let mut journal_chain = {
             let chain_set = disk.subset(snapshots.nblocks() * 2..disk.nblocks())?;
             let block_ring = BlockRing::new(chain_set);
@@ -113,7 +62,6 @@ where
             CryptoChain::new(block_ring)
         };
 
-        // Persist the MAC of latest snapshot to `CryptoChain`.
         let mac = snapshots.latest_mac();
         let mut write_buf = WriteBuf::new(CryptoChain::<BlockRing<D>>::AVAIL_BLOCK_SIZE);
         write_buf.write(&Record::Version(mac))?;
@@ -132,35 +80,24 @@ where
         })
     }
 
-    /// Recover an existing edit journal from the disk with the given
-    /// configurations.
-    ///
-    /// If the recovery process succeeds, the edit journal is returned
-    /// and the state represented by the edit journal can be obtained
-    /// via the `state` method.
     pub(crate) fn recover(disk: D, meta: &EditJournalMeta, compaction: P) -> Result<Self> {
-        // Recover `SnapshotManager`.
         let snapshots = SnapshotManager::<S, D>::recover(&disk, meta)?;
         let latest_snapshot_mac = snapshots.latest_mac();
         let latest_snapshot = snapshots.latest_snapshot();
         let mut state = latest_snapshot.state.clone();
         let recover_from = latest_snapshot.recover_from;
 
-        // Recover `CryptoChain`.
         let snapshot_area_offset = meta.snapshot_area_nblocks * 2;
         let block_log =
             disk.subset(snapshot_area_offset..snapshot_area_offset + meta.journal_area_nblocks)?;
         let block_ring = BlockRing::new(block_log);
         let mut recover = CryptoChain::recover(meta.journal_area_key, block_ring, recover_from);
 
-        // Apply `EditGroup` found in `Recovery`.
         let mut should_apply = false;
         while let Some(buf) = recover.next() {
             let record_slice = RecordSlice::<E, S>::new(buf);
             for record in record_slice {
                 match record {
-                    // After each compaction, the first record should always be
-                    // `Record::Version`, storing the MAC of latest_snapshot.
                     Record::Version(snapshot_mac) => {
                         if snapshot_mac.as_bytes() == latest_snapshot_mac.as_bytes() {
                             should_apply = true;
@@ -175,8 +112,6 @@ where
             }
         }
 
-        // Set new_cursor of `CryptoChain`, so that new record could be appended
-        // right after the recovered records.
         let journal_chain = recover.open();
         let new_cursor = journal_chain.block_range().end;
         journal_chain.inner_log().set_cursor(new_cursor);
@@ -191,12 +126,10 @@ where
         })
     }
 
-    /// Returns the state represented by the journal.
     pub(crate) fn state(&self) -> &S {
         &self.state
     }
 
-    /// Returns the metadata of the edit journal.
     pub(crate) fn meta(&self) -> EditJournalMeta {
         EditJournalMeta {
             snapshot_area_nblocks: self.snapshots.nblocks(),
@@ -206,13 +139,11 @@ where
         }
     }
 
-    /// Add an edit to the current edit group.
     pub(crate) fn add(&mut self, edit: E) {
         let edit_group = self.curr_edit_group.get_or_insert_with(|| EditGroup::new());
         edit_group.push(edit);
     }
 
-    /// Commit the current edit group.
     pub(crate) fn commit(&mut self) {
         let Some(edit_group) = self.curr_edit_group.take() else {
             return;
@@ -232,14 +163,10 @@ where
     }
 
     fn write(&mut self, record: &Record<E, S>) {
-        // XXX: the serialized record should be less than write_buf.
         let is_first_try_success = self.write_buf.write(record).is_ok();
         if is_first_try_success {
             return;
         }
-
-        // TODO: sync disk first to ensure data are persisted before
-        // journal records.
 
         self.append_write_buf_to_journal();
 
@@ -257,25 +184,21 @@ where
 
         self.journal_chain
             .append(write_data)
-            // TODO: how to handle I/O error in journaling?
             .expect("we cannot handle I/O error in journaling gracefully");
         self.compaction_policy.on_append_journal(1);
         self.write_buf.clear();
 
         if self.compaction_policy.should_compact() {
-            // TODO: how to handle a compaction failure?
             let compacted_blocks = self.compact().expect("journal chain compaction failed");
             self.compaction_policy.done_compact(compacted_blocks);
         }
     }
 
-    /// Ensure that all committed edits are persisted to disk.
     pub(crate) fn flush(&mut self) -> Result<()> {
         self.append_write_buf_to_journal();
         self.journal_chain.flush()
     }
 
-    /// Abort the current edit group by removing all its contained edits.
     pub(crate) fn abort(&mut self) {
         if let Some(edits) = self.curr_edit_group.as_mut() {
             edits.clear();
@@ -287,20 +210,16 @@ where
             return Ok(0);
         }
 
-        // Persist current state to latest snapshot.
         let latest_snapshot =
             Snapshot::create(self.state().clone(), self.journal_chain.block_range().end);
         self.snapshots.persist(latest_snapshot)?;
 
-        // Persist the MAC of latest_snapshot.
         let mac = self.snapshots.latest_mac();
         self.write_buf.write(&Record::Version(mac))?;
         self.journal_chain.append(self.write_buf.as_slice())?;
         self.compaction_policy.on_append_journal(1);
         self.write_buf.clear();
 
-        // The latest_snapshot has been persisted, now trim the journal_chain.
-        // And ensure that there is at least one valid block after trimming.
         let old_chain_len = self.journal_chain.block_range().len();
         if old_chain_len > 1 {
             self.journal_chain
@@ -311,8 +230,6 @@ where
     }
 }
 
-/// The snapshot to be stored in a `CryptoBlob`, including the persistent state
-/// and some metadata.
 #[derive(Clone, Deserialize, Serialize)]
 struct Snapshot<S> {
     state: S,
@@ -320,7 +237,6 @@ struct Snapshot<S> {
 }
 
 impl<S> Snapshot<S> {
-    /// Create a new snapshot.
     pub(crate) fn create(state: S, recover_from: BlockId) -> Arc<Self> {
         Arc::new(Self {
             state,
@@ -328,21 +244,11 @@ impl<S> Snapshot<S> {
         })
     }
 
-    /// Return the length of metadata.
     pub(crate) fn meta_len() -> usize {
         size_of::<BlockId>()
     }
 }
 
-/// The snapshot manager.
-///
-/// It keeps two copies of `CryptoBlob`, so that even one of them is corrupted
-/// due to unexpected crashes, the other is still valid.
-///
-/// The `latest_index` indicates which `CryptoBlob` keeps the latest snapshot.
-/// When `persist` a new snapshot, we always choose the older `CryptoBlob` to write,
-/// then switch the `latest_index`. And the `VersionId` of two `CryptoBlob`s
-/// should be the same or differ by one, since they both start from zero when `create`.
 struct SnapshotManager<S, D> {
     blobs: [CryptoBlob<D>; 2],
     latest_index: usize,
@@ -355,19 +261,9 @@ where
     S: Serialize + for<'de> Deserialize<'de> + Clone,
     D: BlockSet,
 {
-    /// Consider `DEFAULT_LATEST_INDEX` as the `latest_index`, if the `VersionId`
-    /// of two `CryptoBlob` are the same, i.e.,
-    /// 1) when `create` a `SnapshotManager`, both `VersionId` are initialized to zero;
-    /// 2) when `recover` a `SnapshotManager`, one `CryptoBlob` may `recover_from` another,
-    ///    so that their `VersionId` would be the same.
-    ///
-    /// This value should only be `0` or `1`.
     const DEFAULT_LATEST_INDEX: usize = 0;
 
-    /// Creates a new `SnapshotManager` with specified configurations.
     pub(crate) fn create(disk: &D, init_state: &S, state_max_nbytes: usize) -> Result<Self> {
-        // Calculate the minimal blocks needed by `CryptoBlob`, in order to
-        // store a snapshot (state + metadata).
         let blob_bytes =
             CryptoBlob::<D>::HEADER_NBYTES + state_max_nbytes + Snapshot::<D>::meta_len();
         let blob_blocks = blob_bytes.div_ceil(BLOCK_SIZE);
@@ -376,12 +272,10 @@ where
         };
         let mut buf = Buf::alloc(blob_blocks)?;
 
-        // Serialize snapshot (state + metadata).
         let snapshot = Snapshot::create(init_state.clone(), 0);
         let serialized = postcard::to_slice(snapshot.as_ref(), buf.as_mut_slice())
             .map_err(|_| Error::with_msg(OutOfDisk, "serialize snapshot failed"))?;
 
-        // Persist snapshot to `CryptoBlob`.
         let block_set0 = disk.subset(0..blob_blocks)?;
         let block_set1 = disk.subset(blob_blocks..blob_blocks * 2)?;
         let blobs = [
@@ -396,9 +290,7 @@ where
         })
     }
 
-    /// Try to recover old `SnapshotManager` with specified disk and metadata.
     pub(crate) fn recover(disk: &D, meta: &EditJournalMeta) -> Result<Self> {
-        // Open two CryptoBlob.
         let mut blob0 = CryptoBlob::open(
             meta.snapshot_area_keys[0],
             disk.subset(0..meta.snapshot_area_nblocks)?,
@@ -408,7 +300,6 @@ where
             disk.subset(meta.snapshot_area_nblocks..meta.snapshot_area_nblocks * 2)?,
         );
 
-        // Try to read the snapshot stored in `CryptoBlob`.
         let mut buf = Buf::alloc(meta.snapshot_area_nblocks)?;
         let snapshot0_res = match blob0.read(buf.as_mut_slice()) {
             Ok(snapshot_len) => {
@@ -427,7 +318,6 @@ where
             Err(_) => Err(Error::with_msg(NotFound, "failed to read snapshot1")),
         };
 
-        // Recover `CryptoBlob` if one of them is corrupted.
         let snapshots_res = match (snapshot0_res.is_ok(), snapshot1_res.is_ok()) {
             (true, false) => {
                 blob1.recover_from(&blob0)?;
@@ -444,12 +334,9 @@ where
             ),
         };
 
-        // Determine the latest snapshot and its index
         let version0 = blob0.version_id().unwrap();
         let version1 = blob1.version_id().unwrap();
         let (snapshot_res, latest_index) = match Self::DEFAULT_LATEST_INDEX {
-            // If both `VersionId` are the same, we consider `DEFAULT_LATEST_INDEX`
-            // as the `latest_index`.
             0 | 1 if version0 == version1 => (
                 snapshots_res[Self::DEFAULT_LATEST_INDEX],
                 Self::DEFAULT_LATEST_INDEX,
@@ -467,46 +354,36 @@ where
         })
     }
 
-    /// Persists the latest snapshot.
     pub(crate) fn persist(&mut self, latest: Arc<Snapshot<S>>) -> Result<()> {
-        // Serialize the latest snapshot.
         let buf = postcard::to_slice(latest.as_ref(), self.buf.as_mut_slice())
             .map_err(|_| Error::with_msg(OutOfDisk, "serialize current state failed"))?;
 
-        // Persist the latest snapshot to `CryptoBlob`.
-        let index = (self.latest_index + 1) % 2; // switch the `latest_index`
+        let index = (self.latest_index + 1) % 2;
         self.blobs[index].write(buf)?;
         self.latest_index = index;
         self.snapshot = latest;
         Ok(())
     }
 
-    /// Returns the latest `Snapshot<S>`.
     pub(crate) fn latest_snapshot(&self) -> Arc<Snapshot<S>> {
         self.snapshot.clone()
     }
 
-    /// Returns the MAC of latest snapshot.
     pub(crate) fn latest_mac(&self) -> Mac {
         self.blobs[self.latest_index].current_mac().unwrap()
     }
 
-    /// Returns the number of blocks reserved for storing a snapshot `CryptoBlob`.
     pub(crate) fn nblocks(&self) -> usize {
         self.blobs[0].nblocks()
     }
 
-    /// Returns the keys of two `CryptoBlob`.
     pub(crate) fn keys(&self) -> [Key; 2] {
         [*self.blobs[0].key(), *self.blobs[1].key()]
     }
 }
 
-/// A journal record in an edit journal.
 enum Record<E: Edit<S>, S> {
-    /// A record refers to a state snapshot of a specific MAC.
     Version(Mac),
-    /// A record that contains an edit group.
     Edit(EditGroup<E, S>),
 }
 
@@ -604,22 +481,14 @@ impl<'de, E: Edit<S>, S> Deserialize<'de> for Record<E, S> {
     }
 }
 
-/// A buffer for writing journal records into an edit journal.
-///
-/// The capacity of `WriteBuf` is equal to the (available) block size of
-/// `CryptoChain`. Records that are written to an edit journal are first
-/// be inserted into the `WriteBuf`. When the `WriteBuf` is full or almost full,
-/// the buffer as a whole will be written to the underlying `CryptoChain`.
 struct WriteBuf<E: Edit<S>, S: Sized> {
     buf: Buf,
-    // The cursor for writing new records.
     cursor: usize,
     capacity: usize,
     phantom: PhantomData<(E, S)>,
 }
 
 impl<E: Edit<S>, S: Sized> WriteBuf<E, S> {
-    /// Creates a new instance.
     pub(crate) fn new(capacity: usize) -> Self {
         debug_assert!(capacity <= BLOCK_SIZE);
         Self {
@@ -630,9 +499,7 @@ impl<E: Edit<S>, S: Sized> WriteBuf<E, S> {
         }
     }
 
-    /// Writes a record into the buffer.
     pub(crate) fn write(&mut self, record: &Record<E, S>) -> Result<()> {
-        // Write the record at the beginning of the avail buffer
         match postcard::to_slice(record, self.avail_buf()) {
             Ok(serial_record) => {
                 self.cursor += serial_record.len();
@@ -650,12 +517,10 @@ impl<E: Edit<S>, S: Sized> WriteBuf<E, S> {
         }
     }
 
-    /// Clear all records in the buffer.
     pub(crate) fn clear(&mut self) {
         self.cursor = 0;
     }
 
-    /// Returns a slice containing the data in the write buffer.
     pub(crate) fn as_slice(&self) -> &[u8] {
         &self.buf.as_slice()[..self.cursor]
     }
@@ -669,9 +534,6 @@ impl<E: Edit<S>, S: Sized> WriteBuf<E, S> {
     }
 }
 
-/// A byte slice containing serialized edit records.
-///
-/// The slice allows deserializing and iterates the contained edit records.
 struct RecordSlice<'a, E, S> {
     buf: &'a [u8],
     phantom: PhantomData<(E, S)>,
@@ -679,7 +541,6 @@ struct RecordSlice<'a, E, S> {
 }
 
 impl<'a, E: Edit<S>, S> RecordSlice<'a, E, S> {
-    /// Create a new slice of edit records in serialized form.
     pub(crate) fn new(buf: &'a [u8]) -> Self {
         Self {
             buf,
@@ -688,7 +549,6 @@ impl<'a, E: Edit<S>, S> RecordSlice<'a, E, S> {
         }
     }
 
-    /// Returns if any error occurs while deserializing the records.
     pub(crate) fn any_error(&self) -> bool {
         self.any_error
     }
@@ -713,32 +573,16 @@ impl<E: Edit<S>, S> Iterator for RecordSlice<'_, E, S> {
     }
 }
 
-/// A compaction policy, which decides when is the good timing for compacting
-/// the edits in an edit journal.
 pub(crate) trait CompactPolicy<E: Edit<S>, S> {
-    /// Called when an edit group is committed.
-    ///
-    /// As more edits are accumulated, the compaction policy is more likely to
-    /// decide that now is the time to compact.
     fn on_commit_edits(&mut self, edits: &EditGroup<E, S>);
 
-    /// Called when some edits are appended to `CryptoChain`.
-    ///
-    /// The `appended_blocks` indicates how many blocks of journal area are
-    /// occupied by those edits.
     fn on_append_journal(&mut self, appended_blocks: usize);
 
-    /// Returns whether now is a good timing for compaction.
     fn should_compact(&self) -> bool;
 
-    /// Reset the state, as if no edits have ever been added.
-    ///
-    /// The `compacted_blocks` indicates how many blocks are reclaimed during
-    /// this compaction.
     fn done_compact(&mut self, compacted_blocks: usize);
 }
 
-/// A never-do-compaction policy. Mostly useful for testing.
 pub(crate) struct NeverCompactPolicy;
 
 impl<E: Edit<S>, S> CompactPolicy<E, S> for NeverCompactPolicy {
@@ -753,18 +597,13 @@ impl<E: Edit<S>, S> CompactPolicy<E, S> for NeverCompactPolicy {
     fn done_compact(&mut self, _compacted_blocks: usize) {}
 }
 
-/// A compaction policy, triggered when there's no-space left for new edits.
 pub(crate) struct DefaultCompactPolicy {
     used_blocks: usize,
     total_blocks: usize,
 }
 
 impl DefaultCompactPolicy {
-    /// Constructs a `DefaultCompactPolicy`.
-    ///
-    /// It is initialized via the total number of blocks of `EditJournal` and state.
     pub(crate) fn new<D: BlockSet>(disk_nblocks: usize, state_max_nbytes: usize) -> Self {
-        // Calculate the blocks used by `Snapshot`s.
         let snapshot_bytes =
             CryptoBlob::<D>::HEADER_NBYTES + state_max_nbytes + Snapshot::<D>::meta_len();
         let snapshot_blocks = snapshot_bytes.div_ceil(BLOCK_SIZE);
@@ -779,7 +618,6 @@ impl DefaultCompactPolicy {
         }
     }
 
-    /// Constructs a `DefaultCompactPolicy` from `EditJournalMeta`.
     pub(crate) fn from_meta(meta: &EditJournalMeta) -> Self {
         Self {
             used_blocks: 0,
@@ -838,13 +676,6 @@ mod tests {
         }
     }
 
-    /// A threshold-based compact policy. The `threshold` is the upper limit
-    /// of the number of `CryptoChain::append`.
-    ///
-    /// # Safety
-    ///
-    /// The `EditJournal` must have enough space to persist the threshold
-    /// of appended blocks, to avoid overlapping.
     struct ThresholdPolicy {
         appended: usize,
         threshold: usize,
@@ -880,7 +711,6 @@ mod tests {
         let mut buf = [0u8; 64];
         let mut offset = 0;
 
-        // Add `Record::Edit` to buffer.
         let mut group = EditGroup::<XEdit, XState>::new();
         for x in 0..10 {
             let edit = XEdit { x };
@@ -894,14 +724,12 @@ mod tests {
         println!("serialized edit_group len: {} data: {:?}", ser.len(), ser);
         offset += ser.len();
 
-        // Add `Record::Version` to buffer.
         let mac = Mac::random();
         let version = Record::<XEdit, XState>::Version(mac);
         let ser = postcard::to_slice(&version, &mut buf[offset..]).unwrap();
         println!("serialize edit_group len: {} data: {:?}", ser.len(), ser);
         offset += ser.len();
 
-        // Deserialize all `Record`.
         let record_slice = RecordSlice::<XEdit, XState>::new(&buf[..offset]);
         for record in record_slice {
             match record {
@@ -956,11 +784,6 @@ mod tests {
         assert_eq!(write_buf.cursor, 0);
     }
 
-    /// A test case for `EditJournal`.
-    ///
-    /// The `threshold` is used to control the compact frequency, see `ThresholdPolicy`.
-    /// The `commit_times` is used to control the number of `EditGroup` committed.
-    /// In addition, the `WriteBuf` will append to `CryptoChain` every two commits.
     fn append_and_recover(threshold: usize, commit_times: usize) {
         let disk = MemDisk::create(64).unwrap();
         let mut journal = EditJournal::format(
@@ -975,8 +798,6 @@ mod tests {
         assert_eq!(meta.journal_area_nblocks, 14);
         {
             println!("journaling started");
-            // The `WriteBuf` could hold two `EditGroup` in this test,
-            // so we would lose those commit states in `WriteBuf`.
             for _ in 0..commit_times {
                 for x in 0..1000 {
                     let edit = XEdit { x };
@@ -1009,24 +830,17 @@ mod tests {
 
     #[test]
     fn edit_journal() {
-        // No compact.
         append_and_recover(5, 1);
         append_and_recover(5, 10);
 
-        // Compact once.
         append_and_recover(5, 11);
         append_and_recover(5, 20);
 
-        // Compact twice.
         append_and_recover(5, 21);
 
-        // Compact many times.
         append_and_recover(5, 1000);
     }
 
-    /// A test case for `DefaultCompactPolicy`.
-    ///
-    /// The `commit_times` is used to control the number of `EditGroup` committed.
     fn default_compact_policy_when_commit(commit_times: usize) {
         let disk = MemDisk::create(16).unwrap();
 
@@ -1047,7 +861,6 @@ mod tests {
         assert_eq!(meta.journal_area_nblocks, 10);
         {
             println!("journaling started");
-            // The `WriteBuf` could hold two `EditGroup` in this test.
             for _ in 0..commit_times {
                 for x in 0..1000 {
                     let edit = XEdit { x };

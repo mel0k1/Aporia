@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 mod handler;
 mod keysym;
 
@@ -9,13 +7,11 @@ use aster_framebuffer::mode::{KeyboardMode, KeyboardModeFlags};
 
 use crate::prelude::*;
 
-/// Initializes the key symbol mapping table and keyboard event handler.
 pub(super) fn init_in_first_process() {
     keysym::init_in_first_process();
     handler::init_in_first_process();
 }
 
-/// A modifier key (Shift, Ctrl, Alt).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ModifierKey {
     Shift,
@@ -23,7 +19,6 @@ enum ModifierKey {
     Alt,
 }
 
-/// A numpad key (0-9, Dot, Enter, Plus, Minus, Asterisk, Slash).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum NumpadKey {
     Num0,
@@ -44,7 +39,6 @@ enum NumpadKey {
     Slash,
 }
 
-/// A cursor key (Up, Down, Left, Right).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum CursorKey {
     Up,
@@ -54,7 +48,6 @@ enum CursorKey {
 }
 
 bitflags::bitflags! {
-    /// A set of currently active modifier keys.
     #[derive(Clone, Copy, Debug)]
     struct ModifierKeyFlags: u8 {
         const SHIFT = 1 << 0;
@@ -62,7 +55,6 @@ bitflags::bitflags! {
         const CTRL  = 1 << 2;
     }
 
-    /// A set of currently enabled lock keys.
     #[derive(Clone, Copy, Debug)]
     struct LockKeyFlags: u8 {
         const CAPS_LOCK   = 1 << 0;
@@ -71,7 +63,6 @@ bitflags::bitflags! {
     }
 }
 
-/// State of modifier keys (Shift, Ctrl, Alt).
 #[derive(Debug)]
 struct ModifierKeysState {
     inner: AtomicU8,
@@ -84,23 +75,19 @@ impl ModifierKeysState {
         }
     }
 
-    /// Marks the given modifier keys as pressed.
     fn press(&self, keys: ModifierKeyFlags) {
         self.inner.fetch_or(keys.bits(), Ordering::Relaxed);
     }
 
-    /// Marks the given modifier keys as released.
     fn release(&self, keys: ModifierKeyFlags) {
         self.inner.fetch_and(!keys.bits(), Ordering::Relaxed);
     }
 
-    /// Returns the currently active modifier keys.
     fn flags(&self) -> ModifierKeyFlags {
         ModifierKeyFlags::from_bits_truncate(self.inner.load(Ordering::Relaxed))
     }
 }
 
-/// The keyboard state for each virtual terminal.
 pub(super) struct VtKeyboard {
     lock_key_flags: LockKeyFlags,
     mode: KeyboardMode,
@@ -112,33 +99,26 @@ impl Default for VtKeyboard {
         Self {
             lock_key_flags: LockKeyFlags::empty(),
             mode: KeyboardMode::Unicode,
-            // Linux default: REPEAT | META
-            // Reference: <https://elixir.bootlin.com/linux/v6.17.4/source/drivers/tty/vt/keyboard.c#L56>
             mode_flags: KeyboardModeFlags::REPEAT | KeyboardModeFlags::META,
         }
     }
 }
 
 impl VtKeyboard {
-    /// Returns the current lock key flags.
     fn lock_key_flags(&self) -> LockKeyFlags {
         self.lock_key_flags
     }
 
-    /// Toggles the given lock keys.
     fn toggle_lock_keys(&mut self, keys: LockKeyFlags) {
         self.lock_key_flags.toggle(keys);
     }
 
-    /// Returns the current keyboard mode.
     pub(super) fn mode(&self) -> KeyboardMode {
         self.mode
     }
 
-    /// Sets the keyboard mode.
     pub(super) fn set_mode(&mut self, mode: KeyboardMode) -> Result<()> {
         match mode {
-            // TODO: Add support for Raw mode.
             KeyboardMode::Raw => Err(errno!(EINVAL, "the keyboard mode is not supported")),
             KeyboardMode::Xlate
             | KeyboardMode::MediumRaw
@@ -150,7 +130,6 @@ impl VtKeyboard {
         }
     }
 
-    /// Returns the current keyboard mode flags.
     pub(super) fn mode_flags(&self) -> KeyboardModeFlags {
         self.mode_flags
     }

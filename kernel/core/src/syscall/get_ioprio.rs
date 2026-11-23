@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::sync::atomic::Ordering;
 
 use super::SyscallReturn;
@@ -13,7 +11,6 @@ use crate::{
 pub(super) enum IoPrioWho {
     Thread(Arc<Thread>),
     ProcessGroup(Arc<ProcessGroup>),
-    /// The threads belong to the same user
     User(Vec<Arc<Thread>>),
 }
 
@@ -25,7 +22,6 @@ impl IoPrioWho {
     pub(super) fn from_which_and_who(which: u32, who: u32, ctx: &Context) -> Result<Self> {
         match which {
             Self::IOPRIO_WHO_PROCESS => {
-                // In Linux, IOPRIO_WHO_PROCESS identifies a single thread by its TID
                 let target_tid = if who == 0 {
                     ctx.posix_thread.tid()
                 } else {
@@ -37,14 +33,8 @@ impl IoPrioWho {
                     .ok_or_else(|| errno!(ESRCH))?;
                 Ok(Self::Thread(thread))
             }
-            Self::IOPRIO_WHO_PGRP => {
-                // TODO: Implement process group support
-                Err(errno!(EINVAL))
-            }
-            Self::IOPRIO_WHO_USER => {
-                // TODO: Implement user support
-                Err(errno!(EINVAL))
-            }
+            Self::IOPRIO_WHO_PGRP => Err(errno!(EINVAL)),
+            Self::IOPRIO_WHO_USER => Err(errno!(EINVAL)),
             _ => Err(errno!(EINVAL)),
         }
     }
@@ -64,13 +54,7 @@ pub(super) fn sys_ioprio_get(which: u32, who: u32, ctx: &Context) -> Result<Sysc
                 .load(Ordering::Relaxed);
             Ok(SyscallReturn::Return(prio as _))
         }
-        IoPrioWho::ProcessGroup(_) => {
-            // TODO: Implement process group support
-            Err(errno!(EINVAL))
-        }
-        IoPrioWho::User(_) => {
-            // TODO: Implement user support
-            Err(errno!(EINVAL))
-        }
+        IoPrioWho::ProcessGroup(_) => Err(errno!(EINVAL)),
+        IoPrioWho::User(_) => Err(errno!(EINVAL)),
     }
 }

@@ -1,11 +1,6 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::{addr::CIfaddrMsg, link::CIfinfoMsg};
 use crate::prelude::*;
 
-/// `rtgenmsg` in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.13/source/include/uapi/linux/rtnetlink.h#L548>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(crate) struct CRtGenMsg {

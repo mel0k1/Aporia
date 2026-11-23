@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd::arch::serial::SERIAL_PORT;
 
 use crate::{
@@ -19,8 +17,6 @@ pub(super) fn init() {
         uart_console.clone(),
     );
 
-    // TODO: Set up the IRQ line and handle the received data.
-    // Suppress the dead code warnings of the related methods.
     let _ = || uart_console.trigger_input_callbacks();
     let _ = || uart.flush();
 

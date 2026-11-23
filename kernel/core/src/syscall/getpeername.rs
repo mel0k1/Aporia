@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::SyscallReturn;
 use crate::{
     fs::file::file_table::{RawFileDesc, get_file_fast},
@@ -20,7 +18,6 @@ pub(super) fn sys_getpeername(
     let socket = file.as_socket_or_err()?;
 
     let peer_addr = socket.peer_addr()?;
-    // FIXME: trunscate write len if addrlen is not big enough
     write_socket_addr_to_user(&peer_addr, addr, addrlen_ptr)?;
 
     Ok(SyscallReturn::Return(0))

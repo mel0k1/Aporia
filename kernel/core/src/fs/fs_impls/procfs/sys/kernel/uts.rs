@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use aster_util::printer::VmPrinter;
 use ostd::task::Task;
 
@@ -14,12 +12,10 @@ use crate::{
     process::posix_thread::{AsPosixThread, PosixThread},
 };
 
-/// Represents the inode at `/proc/sys/kernel/hostname`.
 pub(super) struct HostnameFileOps;
 
 impl HostnameFileOps {
     pub(super) fn new_inode(parent: Weak<dyn Inode>) -> Arc<dyn Inode> {
-        // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/kernel/utsname_sysctl.c#L108>
         ProcFile::new(Self, parent, mkmod!(a+r, u+w))
     }
 }
@@ -39,12 +35,10 @@ impl ProcFileOps for HostnameFileOps {
     }
 }
 
-/// Represents the inode at `/proc/sys/kernel/domainname`.
 pub(super) struct DomainnameFileOps;
 
 impl DomainnameFileOps {
     pub(super) fn new_inode(parent: Weak<dyn Inode>) -> Arc<dyn Inode> {
-        // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/kernel/utsname_sysctl.c#L116>
         ProcFile::new(Self, parent, mkmod!(a+r, u+w))
     }
 }
@@ -64,12 +58,10 @@ impl ProcFileOps for DomainnameFileOps {
     }
 }
 
-/// Represents the inode at `/proc/sys/kernel/osrelease`.
 pub(super) struct OsReleaseFileOps;
 
 impl OsReleaseFileOps {
     pub(super) fn new_inode(parent: Weak<dyn Inode>) -> Arc<dyn Inode> {
-        // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/kernel/utsname_sysctl.c#L94>
         ProcFile::new(Self, parent, mkmod!(a+r))
     }
 }
@@ -80,12 +72,10 @@ impl ProcFileOps for OsReleaseFileOps {
     }
 }
 
-/// Represents the inode at `/proc/sys/kernel/version`.
 pub(super) struct VersionFileOps;
 
 impl VersionFileOps {
     pub(super) fn new_inode(parent: Weak<dyn Inode>) -> Arc<dyn Inode> {
-        // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/kernel/utsname_sysctl.c#L101>
         ProcFile::new(Self, parent, mkmod!(a+r))
     }
 }
@@ -141,9 +131,6 @@ fn write_current_uts_name(
     let ns_proxy = thread_local.borrow_ns_proxy();
     let uts_ns = ns_proxy.uts_ns();
 
-    // We need to edit the old name. The lock is released before writing the
-    // new value, so concurrent updates can race. Linux does the same thing:
-    // <https://elixir.bootlin.com/linux/v6.16.5/source/kernel/utsname_sysctl.c#L57-L59>.
     let mut value = if offset != 0 {
         let current_uts_name = uts_ns.uts_name();
         let current_value = get_value(&current_uts_name);
@@ -155,8 +142,6 @@ fn write_current_uts_name(
     let mut writer = VmWriter::from(&mut value[offset..]).to_fallible();
     let copied_len = reader.read_fallible(&mut writer)?;
 
-    // Truncate at the first newline. Any bytes after the first nul byte will be
-    // zeroed by `UtsField::from_bytes_until_nul`.
     for byte in &mut value[offset..offset + copied_len] {
         if *byte == b'\n' {
             *byte = 0;

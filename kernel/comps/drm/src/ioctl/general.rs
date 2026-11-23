@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use aster_core::prelude::*;
 use int_to_c_enum::TryFromInt;
 use ostd::mm::VmIo;
@@ -12,8 +10,6 @@ impl DrmFile {
         let name = device.name();
         let desc = device.desc();
 
-        // These fields are legacy in modern DRM userspace flows.
-        // They are still reported to preserve `DRM_IOCTL_VERSION` ABI compatibility.
         let date = "0";
         let major = 0;
         let minor = 0;
@@ -27,8 +23,6 @@ impl DrmFile {
             args.version_minor = minor;
             args.version_patchlevel = patch_level;
 
-            // Linux copies the ioctl argument back even if copying one of the
-            // referenced string fields fails.
             let copy_result: Result<()> = (|| {
                 copy_drm_field(&userspace, args.name, &mut args.name_len, name.as_bytes())?;
                 copy_drm_field(&userspace, args.date, &mut args.date_len, date.as_bytes())?;
@@ -46,10 +40,6 @@ impl DrmFile {
     pub(super) fn drm_get_unique(&self, cmd: ioctl_defs::GetUnique) -> Result<i32> {
         let mut args: DrmUnique = cmd.read()?;
 
-        // Linux keeps this empty until `DRM_IOCTL_SET_VERSION` has
-        // initialized the legacy bus ID for this master context.
-        // `SET_VERSION` is not implemented yet, so an empty value is
-        // the only compatible result.
         args.unique_len = 0;
         cmd.write(&args)?;
         Ok(0)
@@ -72,12 +62,7 @@ impl DrmFile {
 
         let value = match cap {
             DrmGetCapability::TimestampMonotonic => 1,
-            DrmGetCapability::Prime => {
-                // TODO: Report PRIME import and export support after
-                // `DRM_IOCTL_PRIME_FD_TO_HANDLE` and `DRM_IOCTL_PRIME_HANDLE_TO_FD`
-                // are implemented.
-                0
-            }
+            DrmGetCapability::Prime => 0,
             DrmGetCapability::SyncObj => device.has_features(DrmFeatures::SYNCOBJ) as u64,
             DrmGetCapability::SyncObjTimeline => {
                 device.has_features(DrmFeatures::SYNCOBJ_TIMELINE) as u64
@@ -99,11 +84,7 @@ impl DrmFile {
         let mode_config = kms_ops.mode_config();
 
         let result = match cap {
-            DrmGetCapability::DumbBuffer => {
-                // `DrmGemOps` currently requires `create_dumb`,
-                // so checking `as_gem_ops()` is sufficient to report dumb-buffer support.
-                device.as_gem_ops().is_some() as u64
-            }
+            DrmGetCapability::DumbBuffer => device.as_gem_ops().is_some() as u64,
             DrmGetCapability::VblankHighCrtc => 1,
             DrmGetCapability::DumbPreferredDepth => {
                 u64::from(mode_config.preferred_dumb_buffer_depth())
@@ -123,13 +104,8 @@ impl DrmFile {
                     .map_or(DRM_DEFAULT_CURSOR_HEIGHT, |size| u64::from(size.height()))
             }
             DrmGetCapability::Addfb2Modifiers => mode_config.supports_fb_modifiers() as u64,
-            DrmGetCapability::PageFlipTarget => {
-                // TODO: Report support once every CRTC exposes a target-aware page-flip operation.
-                0
-            }
+            DrmGetCapability::PageFlipTarget => 0,
             DrmGetCapability::CrtcInVblankEvent => 1,
-            // TODO: Derive this from atomic CRTC operations
-            // once atomic modesetting is implemented.
             DrmGetCapability::AtomicAsyncPageFlip => 0,
             _ => 0,
         };
@@ -170,9 +146,6 @@ fn copy_drm_field(
     Ok(())
 }
 
-/// `struct drm_version` in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm.h#L139>.
 #[padding_struct]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
@@ -189,9 +162,6 @@ pub(super) struct DrmVersion {
     desc: usize,
 }
 
-/// `struct drm_unique` in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm.h#L156>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(super) struct DrmUnique {
@@ -199,9 +169,6 @@ pub(super) struct DrmUnique {
     unique: usize,
 }
 
-/// DRM device capabilities accepted by `DRM_IOCTL_GET_CAP`.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm.h#L628>.
 #[repr(u64)]
 #[derive(Debug, TryFromInt)]
 enum DrmGetCapability {
@@ -222,9 +189,6 @@ enum DrmGetCapability {
     AtomicAsyncPageFlip = 0x15,
 }
 
-/// `struct drm_get_cap` in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm.h#L786>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(super) struct DrmGetCap {
@@ -232,9 +196,6 @@ pub(super) struct DrmGetCap {
     value: u64,
 }
 
-/// `struct drm_auth` in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm.h#L461>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(super) struct DrmAuth {

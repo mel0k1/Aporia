@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::sync::atomic::{AtomicU8, Ordering::Relaxed};
 
 use atomic_integer_wrapper::define_atomic_version_of_integer_like_type;
@@ -9,9 +7,6 @@ use ostd::sync::SpinLock;
 pub(crate) use super::real_time::{RealTimePolicy, RealTimePriority};
 use crate::sched::nice::Nice;
 
-/// The User-chosen scheduling policy.
-///
-/// The scheduling policies are specified by the user, usually through its priority.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) enum SchedPolicy {
     #[expect(dead_code)]
@@ -30,26 +25,19 @@ impl Default for SchedPolicy {
     }
 }
 
-/// The Linux scheduling policy code.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.17.7/source/include/uapi/linux/sched.h#L112>.
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, TryFromInt)]
 pub(crate) enum LinuxSchedPolicy {
     Normal = 0,
     Fifo = 1,
     RoundRobin = 2,
-    Batch = 3, // Not supported.
-    Iso = 4,   // Reserved but not implemented yet on Linux.
+    Batch = 3,
+    Iso = 4,
     Idle = 5,
-    Deadline = 6, // Not supported.
-    Ext = 7,      // Not supported.
+    Deadline = 6,
+    Ext = 7,
 }
 
-/// Projects internal scheduling policies onto Linux's user-visible policy codes.
-///
-/// This projection is many-to-one: `Stop` is reported as `Fifo`, and the
-/// kernel-only `Idle` policy is reported as `Normal`.
 impl From<SchedPolicy> for LinuxSchedPolicy {
     fn from(policy: SchedPolicy) -> Self {
         match policy {
@@ -123,7 +111,6 @@ impl SchedPolicyState {
     pub(crate) fn set(&self, mut policy: SchedPolicy, update: impl FnOnce(SchedPolicy)) {
         let mut this = self.policy.disable_irq().lock();
 
-        // Keep the old base slice factor if the new policy doesn't specify one.
         if let (
             SchedPolicy::RealTime {
                 rt_policy:

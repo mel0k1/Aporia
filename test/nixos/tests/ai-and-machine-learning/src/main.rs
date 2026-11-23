@@ -1,17 +1,6 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! The test suite for AI and machine learning applications on Asterinas NixOS.
-//!
-//! See `test/nixos/README.md#documentation-maintenance` for sync requirements
-//! between this test suite and the corresponding "Verified Usage" book section.
-
 use nixos_test_framework::*;
 
 nixos_test_main!();
-
-// ============================================================================
-// Deep Learning Frameworks - PyTorch
-// ============================================================================
 
 #[nixos_test]
 fn pytorch_run_script(nixos_shell: &mut Session) -> Result<(), Error> {
@@ -22,10 +11,6 @@ fn pytorch_run_script(nixos_shell: &mut Session) -> Result<(), Error> {
     Ok(())
 }
 
-// ============================================================================
-// Deep Learning Frameworks - TensorFlow
-// ============================================================================
-
 #[nixos_test]
 fn tensorflow_run_script(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd_and_expect(
@@ -34,10 +19,6 @@ fn tensorflow_run_script(nixos_shell: &mut Session) -> Result<(), Error> {
     )?;
     Ok(())
 }
-
-// ============================================================================
-// LLM Inference Engines - Ollama
-// ============================================================================
 
 #[nixos_test]
 fn ollama_start_server(nixos_shell: &mut Session) -> Result<(), Error> {
@@ -54,15 +35,8 @@ fn ollama_start_server(nixos_shell: &mut Session) -> Result<(), Error> {
     Ok(())
 }
 
-// ============================================================================
-// AI Coding Agents - Codex
-// ============================================================================
-
 #[nixos_test]
 fn codex_show_help(nixos_shell: &mut Session) -> Result<(), Error> {
-    // CI does not provide a Codex API key, so we cannot test real requests or
-    // interactive workflows. This smoke test only verifies that the Codex
-    // package is installed and that its offline CLI entrypoint works.
     nixos_shell.run_cmd_and_expect("codex --help", "Run Codex non-interactively")?;
     Ok(())
 }

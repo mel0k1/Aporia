@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::arch::{asm, global_asm};
 
 use linux_boot_params::BootParams;
@@ -11,7 +9,6 @@ global_asm!(include_str!("setup.S"));
 
 const ASTER_ENTRY_POINT: *const () = 0x8001000 as _;
 
-// SAFETY: The name does not collide with other symbols.
 #[unsafe(export_name = "main_legacy32")]
 extern "cdecl" fn main_legacy32(boot_params_ptr: *mut BootParams) -> ! {
     crate::println!(
@@ -19,15 +16,10 @@ extern "cdecl" fn main_legacy32(boot_params_ptr: *mut BootParams) -> ! {
         crate::x86::image_load_offset(),
     );
 
-    // SAFETY: We get boot parameters from the boot loader, so by contract the pointer is valid and
-    // the underlying memory is initialized. We are an exclusive owner of the memory region, so we
-    // can create a mutable reference of the plain-old-data type.
     let boot_params = unsafe { &mut *boot_params_ptr };
 
-    // Fill the ACPI RSDP address in the boot parameters if it is not already filled by the bootloader.
     efi::fill_acpi_rsdp_addr(boot_params);
 
-    // SAFETY: We get boot parameters from the boot loader. By contract they are correct.
     unsafe { alloc::init(boot_params) };
 
     crate::println!("[setup] Loading the payload as an ELF file");
@@ -37,9 +29,6 @@ extern "cdecl" fn main_legacy32(boot_params_ptr: *mut BootParams) -> ! {
         "[setup] Entering the Asterinas entry point at {:p}",
         ASTER_ENTRY_POINT,
     );
-    // SAFETY:
-    // 1. The entry point address is correct and matches the kernel ELF file.
-    // 2. The boot parameter pointer is valid and points to the correct boot parameters.
     unsafe { call_aster_entrypoint(ASTER_ENTRY_POINT, boot_params_ptr) };
 }
 
@@ -61,7 +50,6 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     crate::println!("[PANIC]: {}", info);
 
     loop {
-        // SAFETY: `hlt` has no effect other than to stop the CPU and wait for another interrupt.
         unsafe { asm!("hlt", options(nomem, nostack, preserves_flags)) };
     }
 }

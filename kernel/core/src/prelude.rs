@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 #![expect(unused)]
 
 pub(crate) use alloc::{

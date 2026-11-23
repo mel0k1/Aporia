@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd::mm::VmIo;
 
 use super::SyscallReturn;
@@ -120,8 +118,6 @@ pub(super) fn sys_ptrace(
                 .map_err(|_| errno!(EINVAL, "unsupported register set"))?;
             let len = regset.validate_and_truncate_len(iov.len as usize)?;
 
-            // Linux skips the destination address check for zero-length GETREGSET.
-            // Use zero so `writer()` accepts the empty range even if `iov.base` is invalid.
             let base = if len == 0 { 0 } else { iov.base };
             let mut writer = user_space.writer(base, len)?;
             tracee.ptrace_get_regset(regset, &mut writer)?;
@@ -139,8 +135,6 @@ pub(super) fn sys_ptrace(
                 .map_err(|_| errno!(EINVAL, "unsupported register set"))?;
             let len = regset.validate_and_truncate_len(iov.len as usize)?;
 
-            // Linux checks the source address for zero-length SETREGSET.
-            // Keep `iov.base` so `reader()` rejects addresses outside user space.
             let mut reader = user_space.reader(iov.base, len)?;
             tracee.ptrace_set_regset(regset, &mut reader)?;
 
@@ -219,64 +213,29 @@ fn parse_ptrace_injected_signal(data: usize) -> Result<Option<SigNum>> {
 #[derive(Debug, Clone, Copy, TryFromInt)]
 #[expect(non_camel_case_types)]
 enum PtraceRequest {
-    /// Indicates that this thread should be traced by its parent.
     PTRACE_TRACEME = 0,
-    /// Reads a word from the thread's text space at address `addr`.
     PTRACE_PEEKTEXT = 1,
-    /// Reads a word from the thread's data space at address `addr`.
     PTRACE_PEEKDATA = 2,
-    /// Reads a word from the thread's user area at offset `addr`.
     #[cfg(target_arch = "x86_64")]
     PTRACE_PEEKUSER = 3,
-    /// Writes the word `data` to the thread's text space at address `addr`.
     PTRACE_POKETEXT = 4,
-    /// Writes the word `data` to the thread's data space at address `addr`.
     PTRACE_POKEDATA = 5,
-    /// Writes the word `data` to the thread's user area at offset `addr`.
     #[cfg(target_arch = "x86_64")]
     PTRACE_POKEUSER = 6,
-    /// Continues the thread.
     PTRACE_CONT = 7,
-    /// Kills the thread.
     PTRACE_KILL = 8,
-    /// Single-steps the thread.
     #[cfg(target_arch = "x86_64")]
     PTRACE_SINGLESTEP = 9,
-    /// Gets all general-purpose registers used by the thread.
     #[cfg(target_arch = "x86_64")]
     PTRACE_GETREGS = 12,
-    /// Sets all general-purpose registers used by the thread.
     #[cfg(target_arch = "x86_64")]
     PTRACE_SETREGS = 13,
-    /// Continues and stops at the next entry to or return from syscall.
     PTRACE_SYSCALL = 24,
-    /// Sets ptrace options.
     PTRACE_SETOPTIONS = 0x4200,
-    /// Gets the message of the last ptrace-event-stop.
     PTRACE_GETEVENTMSG = 0x4201,
-    /// Gets the `siginfo` of the last ptrace-stop.
     PTRACE_GETSIGINFO = 0x4202,
-    /// Gets the register set selected by the ELF note type in `addr`.
     #[cfg(target_arch = "x86_64")]
     PTRACE_GETREGSET = 0x4204,
-    /// Sets the register set selected by the ELF note type in `addr`.
     #[cfg(target_arch = "x86_64")]
     PTRACE_SETREGSET = 0x4205,
-    // TODO: Support other operations.
-    // /// Gets all floating-point registers used by the thread.
-    // PTRACE_GETFPREGS = 14,
-    // /// Sets all floating-point registers used by the thread.
-    // PTRACE_SETFPREGS = 15,
-    // /// Attaches to a thread that is already running.
-    // PTRACE_ATTACH = 16,
-    // /// Detaches from an attached thread.
-    // PTRACE_DETACH = 17,
-    // /// Gets all extended floating-point registers used by the thread.
-    // PTRACE_GETFPXREGS = 18,
-    // /// Sets all extended floating-point registers used by the thread.
-    // PTRACE_SETFPXREGS = 19,
-    // /// Continues and stops at the next syscall, which will not be executed.
-    // PTRACE_SYSEMU = 31,
-    // /// Single-steps the thread, and the next syscall will not be executed.
-    // PTRACE_SYSEMU_SINGLESTEP = 32,
 }

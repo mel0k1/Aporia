@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::sync::atomic::Ordering;
 
 use super::{INIT_PROCESS_PID, Pid, Process, pid_table};
@@ -8,52 +6,26 @@ use crate::{
     process::signal::signals::kernel::KernelSignal,
 };
 
-/// Exits the current POSIX process.
-///
-/// This is for internal use. Do NOT call this directly. When the last thread in the process exits,
-/// [`do_exit`] or [`do_exit_group`] will invoke this method automatically.
-///
-/// [`do_exit`]: crate::process::posix_thread::do_exit
-/// [`do_exit_group`]: crate::process::posix_thread::do_exit_group
 pub(super) fn exit_process(current_process: &Process) {
     current_process.status().set_vfork_child(false);
 
-    // Drop fields in `Process`.
     drop_after!(current_process.lock_vmar().set_vmar(None));
 
-    // Move the children to the reaper process and send them signals. The children should see a new
-    // parent when they receive the signal.
     let children = move_children_to_reaper_process(current_process);
     send_parent_death_signal(&children);
     drop(children);
 
-    // Mark the current process as a zombie. After this point, it may be reaped concurrently and
-    // removed from the process tree. For example, the process may no longer have a live parent if
-    // the parent exits after reaping the process.
-    //
-    // This must happen after `move_children_to_reaper_process`. See the comments in
-    // `find_reaper_process` for details.
     current_process.status().set_zombie();
 
     current_process.pidfile_pollee.notify(IoEvents::IN);
 
     send_child_death_signal(current_process);
 
-    // Remove the process from the cgroup.
     let mut cgroup_guard = CgroupMembership::write_lock();
     cgroup_guard.move_process_to_root(current_process);
     drop(cgroup_guard);
 }
 
-/// Drops a value after releasing the lock or borrow guard.
-///
-/// For example, [`ThreadLocal::vmar`] needs to be borrowed during a context switch. This means that
-/// the kernel may panic if we borrow it as mutable and tries to acquire a mutex while dropping the
-/// last [`VmarHandle`]. This utility macro ensures that the value is dropped only after the borrow
-/// guard has been released, preventing all these issues.
-///
-/// [`ThreadLocal::vmar`]: super::posix_thread::ThreadLocal::vmar
-/// [`VmarHandle`]: crate::vm::vmar::VmarHandle
 macro_rules! drop_after {
     ($expr:expr) => {
         let val = $expr;
@@ -63,11 +35,6 @@ macro_rules! drop_after {
 
 pub(super) use drop_after;
 
-/// Moves the children to a reaper process.
-///
-/// Returns the moved children. Note that no new processes can become this process's children after
-/// this point, so the returned children reliably represent the set of children at the time the
-/// process exits.
 fn move_children_to_reaper_process(current_process: &Process) -> BTreeMap<Pid, Arc<Process>> {
     if current_process.is_init_process() {
         return BTreeMap::new();
@@ -89,14 +56,7 @@ fn move_children_to_reaper_process(current_process: &Process) -> BTreeMap<Pid, A
     children
 }
 
-/// Finds a reaper process for `current_process`.
-///
-/// If there is no reaper process for `current_process`, returns `None`.
 fn find_reaper_process(current_process: &Process) -> Option<Arc<Process>> {
-    // The current process is not yet zombie (see `exit_process`), so it cannot have been reaped,
-    // and it is still present in its parent's children map. An exiting parent will move the
-    // current process to a new reaper (updating this `Weak` reference) before becoming zombie
-    // itself. Therefore, the parent is always alive and `upgrade` cannot fail.
     let mut parent = current_process.parent().lock().process().upgrade().unwrap();
 
     loop {
@@ -118,33 +78,20 @@ fn find_reaper_process(current_process: &Process) -> Option<Arc<Process>> {
         if let Some(grandparent) = grandparent {
             parent = grandparent;
         } else {
-            // The grandparent was concurrently reaped and dropped, so we lost the path up the
-            // ancestor chain. Retry from the current process's parent to pick up the latest reaper
-            // assignment. This `upgrade` won't fail for the same reason explained above.
             parent = current_process.parent().lock().process().upgrade().unwrap();
         }
     }
 }
 
-/// Moves the children of `current_process` to be the children of `reaper_process`.
-///
-/// Returns the moved children on success. Otherwise, if the `reaper_process` is zombie, returns
-/// `Err(())`.
 fn move_process_children(
     current_process: &Process,
     reaper_process: &Arc<Process>,
 ) -> Result<BTreeMap<Pid, Arc<Process>>, ()> {
-    // Lock order: children of process -> parent of process
     let mut reaper_process_children = reaper_process.children().lock();
     let Some(reaper_process_children) = reaper_process_children.as_mut() else {
-        // The reaper process has exited, and it is not the init process
-        // (since we never clear the init process's children).
         return Err(());
     };
 
-    // We hold the lock of children while updating the children's parents.
-    // This ensures when dealing with CLONE_PARENT,
-    // the retrial will see an up-to-date real parent.
     let mut current_children = current_process.children().lock();
     let children = current_children.take().unwrap();
 
@@ -157,24 +104,17 @@ fn move_process_children(
     Ok(children)
 }
 
-/// Sends parent-death signals to the children.
-//
-// FIXME: According to the Linux implementation, the signal should be sent when the POSIX thread
-// that created the child exits, not when the whole process exits. For more details, see the
-// "CAVEATS" section in <https://man7.org/linux/man-pages/man2/pr_set_pdeathsig.2const.html>.
 fn send_parent_death_signal(children: &BTreeMap<Pid, Arc<Process>>) {
     for child in children.values() {
         let Some(signum) = child.parent_death_signal() else {
             continue;
         };
 
-        // FIXME: Set `si_pid` in the `siginfo_t` argument.
         let signal = Box::new(KernelSignal::new(signum));
         child.enqueue_signal(signal);
     }
 }
 
-/// Sends a child-death signal to the parent.
 fn send_child_death_signal(current_process: &Process) {
     let Some(parent) = current_process.parent().lock().process().upgrade() else {
         return;

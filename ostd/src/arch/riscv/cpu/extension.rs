@@ -1,13 +1,8 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! RISC-V ISA extensions.
-
 use bitflags::bitflags;
 use spin::Once;
 
 use crate::arch::boot::DEVICE_TREE;
 
-/// Detects available RISC-V ISA extensions.
 pub(in crate::arch) fn init() {
     let mut global_isa_extensions = IsaExtensions::all();
 
@@ -15,9 +10,6 @@ pub(in crate::arch) fn init() {
     let mut cpu_count = 0;
 
     for cpu in device_tree.cpus() {
-        // FIXME: We should find a robust method to identify the management
-        // harts. Here we simply skip those harts without MMU, which is supposed
-        // to work in most cases.
         if cpu.property("mmu-type").is_none() {
             continue;
         }
@@ -45,7 +37,6 @@ pub(in crate::arch) fn init() {
     GLOBAL_ISA_EXTENSIONS.call_once(|| global_isa_extensions);
 }
 
-/// Checks if the specified set of ISA extensions are available.
 pub fn has_extensions(required: IsaExtensions) -> bool {
     GLOBAL_ISA_EXTENSIONS.get().unwrap().contains(required)
 }
@@ -66,7 +57,6 @@ fn parse_isa_string(isa: &fdt::node::NodeProperty) -> IsaExtensions {
         isa_str[ext_start..].split('_')
     };
 
-    // Parse single-letter extensions from first part
     if let Some(first_part) = ext_iter.next() {
         for ch in first_part.chars() {
             if let Some(ext_data) = EXTENSION_TABLE
@@ -78,7 +68,6 @@ fn parse_isa_string(isa: &fdt::node::NodeProperty) -> IsaExtensions {
         }
     }
 
-    // Parse multi-letter extensions from remaining parts
     for part in ext_iter {
         if let Some(ext_data) = EXTENSION_TABLE.iter().find(|e| e.name == part) {
             extensions |= ext_data.flag;
@@ -108,7 +97,6 @@ fn parse_isa_extensions_list(isa_extensions: &fdt::node::NodeProperty) -> IsaExt
 
 static GLOBAL_ISA_EXTENSIONS: Once<IsaExtensions> = Once::new();
 
-/// A macro for RISC-V ISA extension definition and lookup table generation.
 macro_rules! define_isa_extensions {
     (
         $(
@@ -116,7 +104,6 @@ macro_rules! define_isa_extensions {
         )*
     ) => {
         bitflags! {
-            /// RISC-V ISA extensions.
             #[derive(Clone, Copy, Debug)]
             pub struct IsaExtensions: u128 {
                 $(
@@ -143,7 +130,6 @@ struct ExtensionData {
 }
 
 define_isa_extensions! {
-    // Standard single-letter extensions (0-25)
     A =  0, "a", "Atomic instructions";
     C =  2, "c", "Compressed instructions";
     D =  3, "d", "Double-precision floating-point";
@@ -154,7 +140,6 @@ define_isa_extensions! {
     Q = 16, "q", "Quad-precision floating-point";
     V = 21, "v", "Vector extension";
 
-    // Multi-letter extensions
     SSCOFPMF    = 26, "sscofpmf",    "Supervisor-mode counter overflow and privilege mode filtering";
     SSTC        = 27, "sstc",        "Supervisor-mode timer interrupts";
     SVINVAL     = 28, "svinval",     "Fine-grained address-translation cache invalidation";
@@ -255,7 +240,6 @@ mod tests {
             Self { data }
         }
 
-        // For the extensions list parser
         fn value(&self) -> &[u8] {
             &self.data
         }
@@ -296,21 +280,17 @@ mod tests {
 
     #[ktest]
     fn isa_string_edge_cases() {
-        // Empty string
         let result = parse_isa_string_wrapper("");
         assert!(result.is_empty());
 
-        // Empty after prefix
         let result = parse_isa_string_wrapper("rv64");
         assert!(result.is_empty());
 
-        // No prefix
         let result = parse_isa_string_wrapper("imafdc");
         assert!(result.contains(IsaExtensions::I));
         assert!(result.contains(IsaExtensions::M));
         assert!(result.contains(IsaExtensions::A));
 
-        // Only multi-letter extensions
         let result = parse_isa_string_wrapper("rv64_zicsr_zifencei");
         assert!(result.contains(IsaExtensions::ZICSR));
         assert!(result.contains(IsaExtensions::ZIFENCEI));
@@ -319,7 +299,6 @@ mod tests {
 
     #[ktest]
     fn isa_string_unknown_extensions() {
-        // Should ignore unknown extensions without crashing
         let result = parse_isa_string_wrapper("rv64imafdc_zunknown_zicsr_zifencei");
         assert!(result.contains(IsaExtensions::I));
         assert!(result.contains(IsaExtensions::M));
@@ -349,23 +328,19 @@ mod tests {
 
     #[ktest]
     fn isa_extensions_list_edge_cases() {
-        // Empty list
         let result = parse_isa_extensions_list_wrapper(&[]);
         assert!(result.is_empty());
 
-        // List with empty strings
         let result = parse_isa_extensions_list_wrapper(&["", "i", "", "m", ""]);
         assert!(result.contains(IsaExtensions::I));
         assert!(result.contains(IsaExtensions::M));
 
-        // Only empty strings
         let result = parse_isa_extensions_list_wrapper(&["", "", ""]);
         assert!(result.is_empty());
     }
 
     #[ktest]
     fn isa_extensions_list_unknown_extensions() {
-        // Should ignore unknown extensions without crashing
         let result = parse_isa_extensions_list_wrapper(&[
             "i", "m", "a", "f", "d", "c", "zunknown", "zicsr", "zifencei",
         ]);

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 mod epoll;
 mod event_file;
 #[expect(clippy::module_inception)]

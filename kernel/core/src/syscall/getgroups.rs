@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd::mm::VmIo;
 
 use super::SyscallReturn;
@@ -16,8 +14,6 @@ pub(super) fn sys_getgroups(
         return Err(errno!(EINVAL, "size cannot be negative"));
     }
 
-    // Copy the supplementary groups out of the read guard before writing to user space, since the
-    // write may take a page fault and sleep.
     let groups = {
         let credentials = ctx.posix_thread.credentials();
         let groups = credentials.groups();

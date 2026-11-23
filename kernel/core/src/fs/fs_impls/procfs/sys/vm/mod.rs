@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use crate::{
     fs::{
         file::{InodeType, mkmod},
@@ -18,14 +16,10 @@ use crate::{
 
 mod mmap_min_addr;
 
-/// Represents the inode at `/proc/sys/vm`.
 pub(super) struct VmDirOps;
 
 impl VmDirOps {
     pub(super) fn new_inode(parent: Weak<dyn Inode>) -> Arc<dyn Inode> {
-        // Reference:
-        // <https://elixir.bootlin.com/linux/v6.16.5/source/security/min_addr.c#L59>
-        // <https://elixir.bootlin.com/linux/v6.16.5/source/fs/proc/proc_sysctl.c#L978>
         ProcDir::new(Self, parent, mkmod!(a+rx))
     }
 

@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! This module is used to compress kernel ELF.
-
 use std::{
     ffi::{OsStr, OsString},
     str::FromStr,
@@ -10,8 +6,6 @@ use std::{
 use miniz_oxide::deflate::{compress_to_vec, compress_to_vec_zlib};
 use serde::{Deserialize, Serialize};
 
-/// The DEFLATE compression level (0-10) used for the payload. 6 matches the
-/// common default and balances ratio against build time.
 const COMPRESSION_LEVEL: u8 = 6;
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -50,7 +44,6 @@ impl From<&OsStr> for PayloadEncoding {
     }
 }
 
-/// Encoding the kernel ELF using the provided format.
 pub fn encode_kernel(kernel: Vec<u8>, encoding: PayloadEncoding) -> Vec<u8> {
     match encoding {
         PayloadEncoding::Raw => kernel,
@@ -59,21 +52,8 @@ pub fn encode_kernel(kernel: Vec<u8>, encoding: PayloadEncoding) -> Vec<u8> {
     }
 }
 
-/// Compress the input data to a vector, using the specified compression level (0-10), and with a gzip wrapper.
 fn compress_to_vec_gzip(input: &[u8], level: u8) -> Vec<u8> {
-    // `miniz_oxide` does not produce the gzip wrapper, so build it manually:
-    // the fixed 10-byte header, the raw DEFLATE body, then the CRC32 and the
-    // uncompressed size (mod 2^32) as the footer.
-    //
-    // Reference: <https://datatracker.ietf.org/doc/html/rfc1952>.
-    let mut out = vec![
-        0x1F, 0x8B, // Magic.
-        0x08, // CM: DEFLATE.
-        0x00, // FLG: no optional fields.
-        0x00, 0x00, 0x00, 0x00, // MTIME: none.
-        0x00, // XFL.
-        0xFF, // OS: unknown.
-    ];
+    let mut out = vec![0x1F, 0x8B, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF];
     out.extend_from_slice(&compress_to_vec(input, level));
     out.extend_from_slice(&crc32fast::hash(input).to_le_bytes());
     out.extend_from_slice(&(input.len() as u32).to_le_bytes());

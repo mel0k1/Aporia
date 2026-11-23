@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 pub(in crate::arch::iommu) struct InterruptEntryCache(pub u128);
 
 impl InterruptEntryCache {

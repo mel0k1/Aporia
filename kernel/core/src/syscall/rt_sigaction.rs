@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd::mm::VmIo;
 
 use super::{SyscallReturn, rt_sigprocmask::RequireFullSize};
@@ -34,7 +32,6 @@ pub(super) fn sys_rt_sigaction(
         sigset_size
     );
 
-    // Validate the size of the signal set
     RequireFullSize::new(sigset_size)?;
 
     let sig_dispositions = ctx.process.sig_dispositions().lock();
@@ -69,19 +66,6 @@ pub(super) fn sys_rt_sigaction(
     Ok(SyscallReturn::Return(0))
 }
 
-/// Discard signals if the new action is to ignore the signal.
-///
-/// Ref: <https://elixir.bootlin.com/linux/v6.13/source/kernel/signal.c#L4323>
-//
-// POSIX 3.3.1.3:
-// Setting a signal action to SIG_IGN for a signal that is
-// pending shall cause the pending signal to be discarded,
-// whether or not it is blocked.
-//
-// Setting a signal action to SIG_DFL for a signal that is
-// pending and whose default action is to ignore the signal
-// (for example, SIGCHLD), shall cause the pending signal to
-// be discarded, whether or not it is blocked
 fn discard_signals_if_ignored(ctx: &Context, signum: SigNum) {
     let mask = SigSet::new_full() - signum;
 

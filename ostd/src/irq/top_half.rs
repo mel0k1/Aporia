@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! The top half of interrupt handling.
-
 use core::{fmt::Debug, ops::Deref};
 
 use id_alloc::IdAlloc;
@@ -17,20 +13,8 @@ use crate::{
     sync::{RwLock, SpinLock, WriteIrqDisabled},
 };
 
-/// A type alias for the IRQ callback function.
 pub type IrqCallbackFunction = dyn Fn(&TrapFrame) + Sync + Send + 'static;
 
-/// An Interrupt ReQuest (IRQ) line.
-///
-/// Users can use [`alloc`] or [`alloc_specific`] to allocate a (specific) IRQ line.
-///
-/// The IRQ number is guaranteed to be an external IRQ number and users can use [`on_active`] to
-/// safely register callback functions on this IRQ line. When the IRQ line is dropped, all the
-/// registered callbacks will be unregistered automatically.
-///
-/// [`alloc`]: Self::alloc
-/// [`alloc_specific`]: Self::alloc_specific
-/// [`on_active`]: Self::on_active
 #[must_use]
 #[derive(Debug)]
 pub struct IrqLine {
@@ -39,7 +23,6 @@ pub struct IrqLine {
 }
 
 impl IrqLine {
-    /// Allocates an available IRQ line.
     pub fn alloc() -> Result<Self> {
         get_or_init_allocator()
             .lock()
@@ -48,7 +31,6 @@ impl IrqLine {
             .ok_or(Error::NotEnoughResources)
     }
 
-    /// Allocates a specific IRQ line.
     pub fn alloc_specific(irq_num: u8) -> Result<Self> {
         get_or_init_allocator()
             .lock()
@@ -67,14 +49,10 @@ impl IrqLine {
         }
     }
 
-    /// Gets the IRQ number.
     pub fn num(&self) -> u8 {
         self.inner.index + IRQ_NUM_MIN
     }
 
-    /// Registers a callback that will be invoked when the IRQ is active.
-    ///
-    /// For each IRQ line, multiple callbacks may be registered.
     pub fn on_active<F>(&mut self, callback: F)
     where
         F: Fn(&TrapFrame) + Sync + Send + 'static,
@@ -95,15 +73,10 @@ impl IrqLine {
         self.callbacks.push(callback_handle);
     }
 
-    /// Checks if there are no registered callbacks.
     pub fn is_empty(&self) -> bool {
         self.callbacks.is_empty()
     }
 
-    /// Gets the remapping index of the IRQ line.
-    ///
-    /// This method will return `None` if interrupt remapping is disabled or
-    /// not supported by the architecture.
     pub fn remapping_index(&self) -> Option<u16> {
         self.inner.remapping.remapping_index()
     }
@@ -141,9 +114,6 @@ fn get_or_init_allocator() -> &'static SpinLock<IdAlloc> {
     ALLOCATOR.call_once(|| SpinLock::new(IdAlloc::with_capacity(NUMBER_OF_IRQS)))
 }
 
-/// A handle for an allocated IRQ line.
-///
-/// When the handle is dropped, the IRQ line will be released automatically.
 #[must_use]
 #[derive(Debug)]
 struct InnerHandle {
@@ -164,9 +134,6 @@ impl Drop for InnerHandle {
     }
 }
 
-/// A handle for a registered callback on an IRQ line.
-///
-/// When the handle is dropped, the callback will be unregistered automatically.
 #[must_use]
 #[derive(Debug)]
 struct CallbackHandle {

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use aster_time::read_system_time;
 use ostd::mm::VmIo;
 
@@ -20,7 +18,6 @@ pub(super) fn sys_gettimeofday(
     }
 
     if timezone_addr != 0 {
-        // TODO: Return the actual system timezone when available.
         let tz = timezone_t::default();
         ctx.user_space().write_val(timezone_addr, &tz)?;
     }

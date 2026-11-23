@@ -1,12 +1,9 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use atomic_integer_wrapper::define_atomic_version_of_integer_like_type;
 use bitflags::bitflags;
 
 bitflags! {
-    /// Represents a set of Linux capabilities.
     #[derive(Clone, Copy, Debug)]
     pub struct CapSet: u64 {
         const CHOWN              = 1 << 0;
@@ -50,28 +47,23 @@ bitflags! {
         const PERFMON            = 1 << 38;
         const BPF                = 1 << 39;
         const CHECKPOINT_RESTORE = 1 << 40;
-        // ... include other capabilities as needed
     }
 }
 
 impl CapSet {
-    /// Converts two `u32`s to the capability set. The high bits are truncated.
     pub(crate) fn from_lo_hi(lo: u32, hi: u32) -> Self {
         let bits = lo as u64 | ((hi as u64) << 32);
         Self::from_bits_truncate(bits)
     }
 
-    /// Converts the capability set to two `u32`s.
     pub(crate) fn to_lo_hi(self) -> (u32, u32) {
         (self.bits() as u32, (self.bits() >> 32) as u32)
     }
 
-    /// Creates a new `CapSet` with full capabilities, typically for a root user.
     pub(crate) const fn new_root() -> Self {
         CapSet::all()
     }
 
-    /// Creates a capability set that contains exactly one Linux capability.
     pub(crate) fn from_capability_number(capability: u64) -> Option<Self> {
         if capability > Self::most_significant_bit() as u64 {
             return None;
@@ -80,15 +72,11 @@ impl CapSet {
         Some(Self::from_bits(1u64 << capability).unwrap())
     }
 
-    /// Returns the most significant bit in a 64-bit `CapSet` that may be set to represent a Linux
-    /// capability.
     pub(crate) const fn most_significant_bit() -> u8 {
-        // CHECKPOINT_RESTORE is the Linux capability with the largest numerical value.
         40
     }
 }
 
-/// An error occurred when converting invalid bits to a [`CapSet`].
 #[derive(Debug)]
 pub struct InvalidCapSetError;
 

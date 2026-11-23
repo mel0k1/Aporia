@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use device_id::{DeviceId, MajorId, MinorId};
 use ostd::sync::LocalIrqDisabled;
 
@@ -46,26 +44,6 @@ pub(super) fn init_in_first_process() -> Result<()> {
 
 const IO_CAPACITY: usize = 4096;
 
-/// A teletyper (TTY).
-///
-/// This abstracts the general functionality of a TTY in a way that
-///  - Any input device driver can use [`Tty::push_input`] to push input characters, and users can
-///    [`Tty::read`] from the TTY;
-///  - Users can also [`Tty::write`] output characters to the TTY and the output device driver will
-///    receive the characters from [`TtyDriver::push_output`] where the generic parameter `D` is
-///    the [`TtyDriver`].
-///
-/// ```text
-/// +------------+     +-------------+
-/// |input device|     |output device|
-/// |   driver   |     |   driver    |
-/// +-----+------+     +------^------+
-///       |                   |
-///       |     +-------+     |
-///       +----->  TTY  +-----+
-///             +-------+
-/// Tty::push_input   D::push_output
-/// ```
 pub(crate) struct Tty<D> {
     index: u32,
     driver: D,
@@ -97,37 +75,24 @@ impl<D> Tty<D> {
         &self.driver
     }
 
-    /// Returns whether new characters can be pushed into the input buffer.
-    ///
-    /// This method should return `false` if the input buffer is full.
     pub(super) fn can_push(&self) -> bool {
         !self.ldisc.lock().is_full()
     }
 
-    /// Notifies that the output buffer now has room for new characters.
-    ///
-    /// This method should be called when the state of [`TtyDriver::can_push`] changes from `false`
-    /// to `true`.
     pub(super) fn notify_output(&self) {
         self.pollee.notify(IoEvents::OUT);
     }
 
-    /// Notifies that the other end has been closed.
     pub(super) fn notify_hup(&self) {
         self.pollee.notify(IoEvents::ERR | IoEvents::HUP);
     }
 
-    /// Returns the TTY flags.
     pub(super) fn tty_flags(&self) -> &TtyFlags {
         &self.tty_flags
     }
 }
 
 impl<D: TtyDriver> Tty<D> {
-    /// Pushes characters into the output buffer.
-    ///
-    /// This method returns the number of bytes pushed or fails with an error if no bytes can be
-    /// pushed because the buffer is full.
     pub(crate) fn push_input(&self, chs: &[u8]) -> Result<usize> {
         let mut ldisc = self.ldisc.lock();
         let mut echo = self.driver.echo_callback();
@@ -190,7 +155,6 @@ impl<D: TtyDriver> Tty<D> {
 
         self.job_control.wait_until_in_foreground()?;
 
-        // TODO: Add support for timeout.
         let mut buf = vec![0u8; writer.avail().min(IO_CAPACITY)];
         let is_nonblocking = status_flags.contains(StatusFlags::O_NONBLOCK);
         let read_len = if is_nonblocking {
@@ -201,7 +165,6 @@ impl<D: TtyDriver> Tty<D> {
         self.pollee.invalidate();
         self.driver.notify_input();
 
-        // TODO: Confirm what we should do if `write_fallible` fails in the middle.
         writer.write_fallible(&mut buf[..read_len].into())?;
         Ok(read_len)
     }
@@ -214,7 +177,6 @@ impl<D: TtyDriver> Tty<D> {
         let mut buf = vec![0u8; reader.remain().min(IO_CAPACITY)];
         let write_len = reader.read_fallible(&mut buf.as_mut_slice().into())?;
 
-        // TODO: Add support for timeout.
         let is_nonblocking = status_flags.contains(StatusFlags::O_NONBLOCK);
         let len = if is_nonblocking {
             self.driver.push_output(&buf[..write_len])?
@@ -260,12 +222,6 @@ impl<D: TtyDriver> Tty<D> {
             cmd @ SetTermiosWait => {
                 let termios = cmd.read()?;
 
-                // TODO: If applicable, wait for the output buffer to drain. For now, we don't need
-                // to do anything here because:
-                //  - Linux does not consider a pty to have an output buffer, so it does not drain
-                //    it. See
-                //    <https://elixir.bootlin.com/linux/v5.10.247/source/drivers/tty/pty.c#L137-L148>.
-                //  - We don't currently have an output buffer for other TTYs.
                 let mut ldisc = self.ldisc.lock();
                 self.driver().on_termios_change(ldisc.termios(), &termios);
                 ldisc.set_termios(termios);
@@ -273,7 +229,6 @@ impl<D: TtyDriver> Tty<D> {
             cmd @ SetTermios2Wait => {
                 let termios2 = cmd.read()?;
 
-                // TODO: If applicable, wait for the output buffer to drain. (See comments above.)
                 let mut ldisc = self.ldisc.lock();
                 self.driver().on_termios_change(ldisc.termios(), &termios2);
                 ldisc.set_termios2(termios2);
@@ -281,7 +236,6 @@ impl<D: TtyDriver> Tty<D> {
             cmd @ SetTermiosFlush => {
                 let termios = cmd.read()?;
 
-                // TODO: If applicable, wait for the output buffer to drain. (See comments above.)
                 let mut ldisc = self.ldisc.lock();
                 ldisc.drain_input();
                 self.driver().on_termios_change(ldisc.termios(), &termios);
@@ -292,7 +246,6 @@ impl<D: TtyDriver> Tty<D> {
             cmd @ SetTermios2Flush => {
                 let termios2 = cmd.read()?;
 
-                // TODO: If applicable, wait for the output buffer to drain. (See comments above.)
                 let mut ldisc = self.ldisc.lock();
                 ldisc.drain_input();
                 self.driver().on_termios_change(ldisc.termios(), &termios2);
@@ -323,12 +276,10 @@ impl<D: TtyDriver> Tty<D> {
             _ => {
                 let terminal = self.weak_self.upgrade().unwrap() as Arc<dyn Terminal>;
 
-                // Process job-control ioctls.
                 if terminal.job_ioctl(raw_ioctl, false)? {
                     return Ok(0);
                 }
 
-                // Process driver-specific ioctls.
                 if self.driver.ioctl(self, raw_ioctl)? {
                     return Ok(0);
                 }

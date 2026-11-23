@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Power management.
-
 use fdt::{Fdt, node::FdtNode};
 use int_to_c_enum::TryFromInt;
 use spin::Once;
@@ -16,23 +12,13 @@ use crate::{
 static POWEROFF: Once<PowerAction> = Once::new();
 static RESTART: Once<PowerAction> = Once::new();
 
-/// Attempts to power off the system using an architecture-specific mechanism.
-///
-/// On LoongArch, this function attempts to power off the system if a supported `syscon-poweroff`
-/// device tree node exists. Otherwise, it does nothing and returns.
 pub fn try_poweroff(_code: ExitCode) {
-    // If possible, keep this method panic-free because it may be called by the panic handler.
     if let Some(action) = POWEROFF.get() {
         action.trigger();
     }
 }
 
-/// Attempts to restart the system using an architecture-specific mechanism.
-///
-/// On LoongArch, this function attempts to restart the system if a supported `syscon-reboot` device
-/// tree node exists. Otherwise, it does nothing and returns.
 pub fn try_restart(_code: ExitCode) {
-    // If possible, keep this method panic-free because it may be called by the panic handler.
     if let Some(action) = RESTART.get() {
         action.trigger();
     }
@@ -79,7 +65,6 @@ fn is_available(node: &FdtNode) -> bool {
     }
 }
 
-/// The width of a syscon register, in bytes.
 #[repr(usize)]
 #[derive(Clone, Copy, TryFromInt)]
 enum IoWidth {
@@ -102,8 +87,6 @@ impl PowerAction {
         parent: FdtNode,
         shared: Option<&Self>,
     ) -> Option<Self> {
-        // References: <https://www.kernel.org/doc/Documentation/devicetree/bindings/power/reset/syscon-poweroff.yaml>
-        // <https://www.kernel.org/doc/Documentation/devicetree/bindings/power/reset/syscon-reboot.yaml>
         let syscon = match node.property("regmap") {
             Some(phandle) => device_tree.find_phandle(phandle.as_usize()?.try_into().ok()?)?,
             None => parent,
@@ -126,7 +109,6 @@ impl PowerAction {
                     None => u32::MAX,
                 },
             ),
-            // The legacy mask-only binding uses the mask as a full-register value.
             (None, Some(mask)) => (mask.as_usize()?.try_into().ok()?, u32::MAX),
             _ => return None,
         };
@@ -181,7 +163,6 @@ impl PowerAction {
     fn trigger(&self) {
         let io_width = self.io_width as usize;
         let register_mask = u32::MAX >> (8 * (4 - io_width));
-        // A full-register write does not require reading a potentially write-only register.
         let old_value = if self.mask & register_mask == register_mask {
             0
         } else {

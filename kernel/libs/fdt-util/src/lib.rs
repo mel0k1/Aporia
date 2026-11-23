@@ -1,11 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Flattened Device Tree (FDT) utilities.
-//!
-//! This crate provides some useful extension traits
-//! for `FdtNode` from [the `fdt` crate](https://crates.io/crates/fdt)
-//! on supported CPU architectures.
-
 #![no_std]
 #![deny(unsafe_code)]
 #![cfg(any(
@@ -19,7 +11,6 @@
     feature(iter_next_chunk)
 )]
 
-// Set this crate's log prefix for `ostd::log`.
 macro_rules! __log_prefix {
     () => {
         "fdt: "

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::SyscallReturn;
 use crate::{
     fs::{
@@ -37,7 +35,6 @@ pub(super) fn sys_memfd_create(
             FdFlags::empty()
         };
 
-        // FIXME: Support `MFD_HUGETLB`.
         if memfd_flags.contains(MemfdFlags::MFD_HUGETLB) {
             warn!("`MFD_HUGETLB` not supported");
         }

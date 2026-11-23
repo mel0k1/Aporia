@@ -1,11 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! A vendor-matched bus whose driver creates a child block device.
-//!
-//! `ToyBus` devices carry vendor and model IDs.
-//! `ToyDiskDriver` matches the vendor and creates a `ToyDisk` in the `ToyBlock` class.
-//! `CountingObserver` counts the class's device notifications.
-
 use alloc::{string::ToString, sync::Arc};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -19,7 +11,6 @@ use crate::{
     common::{Attr, DevNode, DevNum, DeviceType, Result},
 };
 
-/// Returns the shared toy class and bus, registering them on first use.
 pub(super) fn register_toy_subsystems() -> ToySubsystems {
     static TOY_SUBSYSTEMS: spin::Once<ToySubsystems> = spin::Once::new();
 
@@ -33,7 +24,6 @@ pub(super) fn register_toy_subsystems() -> ToySubsystems {
         .clone()
 }
 
-/// A toy bus: devices carry a vendor and a model id, drivers accept a vendor.
 pub(super) struct ToyBus;
 
 pub(super) struct ToyDev {
@@ -69,7 +59,6 @@ impl Bus for ToyBus {
 
 pub(super) static DISK_TYPE: DeviceType<BusDevice<ToyBus>> = DeviceType::named("disk");
 
-/// A driver that creates a toy disk on probe.
 pub(super) struct ToyDiskDriver {
     pub(super) match_data: ToyMatch,
     pub(super) class: Arc<ClassHandle<ToyBlock>>,
@@ -121,7 +110,6 @@ impl Driver<ToyBus> for ToyDiskDriver {
     }
 }
 
-/// A toy block class.
 pub(super) struct ToyBlock;
 
 pub(super) struct ToyDisk {

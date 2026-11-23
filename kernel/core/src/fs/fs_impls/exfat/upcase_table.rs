@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 #![expect(dead_code)]
 
 use align_ext::AlignExt;
@@ -66,7 +64,6 @@ impl ExfatUpcaseTable {
     }
 
     pub(super) fn str_to_upcase(&self, value: &str) -> Result<String> {
-        // TODO: use upcase table
         Ok(value.to_uppercase())
     }
 

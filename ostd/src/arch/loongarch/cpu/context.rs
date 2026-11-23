@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! CPU execution context control.
-
 use core::fmt::Debug;
 
 use loongArch64::register::estat::{Exception, Interrupt, Trap};
@@ -17,7 +13,6 @@ use crate::{
     user::{ReturnReason, UserContextApi, UserContextApiInternal, UserModeHooks},
 };
 
-/// General registers.
 #[expect(missing_docs)]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
@@ -56,18 +51,12 @@ pub struct GeneralRegs {
     pub s8: usize,
 }
 
-/// CPU exception information.
-//
-// TODO: Refactor the struct into an enum (similar to x86's `CpuException`).
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct CpuExceptionInfo {
-    /// The type of the exception.
     pub code: Exception,
-    /// The page fault address.
     pub page_fault_addr: usize,
-    /// The error code associated with the exception.
-    pub error_code: usize, // TODO
+    pub error_code: usize,
 }
 
 impl Default for CpuExceptionInfo {
@@ -81,13 +70,11 @@ impl Default for CpuExceptionInfo {
 }
 
 impl CpuExceptionInfo {
-    /// Gets corresponding CPU exception.
     pub fn cpu_exception(&self) -> CpuException {
         self.code
     }
 }
 
-/// Userspace CPU context, including general-purpose registers and exception information.
 #[repr(C)]
 #[derive(Clone, Debug)]
 pub struct UserContext {
@@ -107,36 +94,26 @@ impl Default for UserContext {
 }
 
 impl UserContext {
-    // Methods shared across all architectures (i.e., general registers and exceptions).
-
-    /// Returns a reference to the general registers.
     pub fn general_regs(&self) -> &GeneralRegs {
         &self.user_context.general
     }
 
-    /// Returns a mutable reference to the general registers.
     pub fn general_regs_mut(&mut self) -> &mut GeneralRegs {
         &mut self.user_context.general
     }
 
-    /// Takes the CPU exception out.
     pub fn take_exception(&mut self) -> Option<CpuExceptionInfo> {
         self.cpu_exception_info.take()
     }
 
-    // Architecture-specific methods.
-
-    /// Gets the value of the thread-local storage pointer.
     pub fn tls_pointer(&self) -> usize {
         self.tp()
     }
 
-    /// Sets the value of the thread-local storage pointer.
     pub fn set_tls_pointer(&mut self, tls: usize) {
         self.set_tp(tls)
     }
 
-    /// Enables floating-point unit.
     pub fn enable_fpu(&mut self) {
         self.user_context.euen = 0x1;
     }
@@ -169,12 +146,11 @@ impl UserContextApiInternal for UserContext {
                     | Exception::PageNonReadableFault
                     | Exception::PageNonExecutableFault
                     | Exception::PagePrivilegeIllegal => {
-                        // Handle page fault
                         tlb_flush_addr(badv);
                         self.cpu_exception_info = Some(CpuExceptionInfo {
                             code: exception,
                             page_fault_addr: badv,
-                            error_code: 0, // TODO: Set error code if needed
+                            error_code: 0,
                         });
                         break ReturnReason::UserException;
                     }
@@ -185,11 +161,10 @@ impl UserContextApiInternal for UserContext {
                     | Exception::Breakpoint
                     | Exception::InstructionNotExist
                     | Exception::InstructionPrivilegeIllegal => {
-                        // Handle other exceptions
                         self.cpu_exception_info = Some(CpuExceptionInfo {
                             code: exception,
                             page_fault_addr: 0,
-                            error_code: 0, // TODO: Set error code if needed
+                            error_code: 0,
                         });
                         crate::debug!(
                             "Exception {exception:?} occurred, badv: {badv:#x?}, badi: {badi:#x?}, era: {era:#x?}"
@@ -200,7 +175,6 @@ impl UserContextApiInternal for UserContext {
                         crate::debug!(
                             "Floating point unit is not available, badv: {badv:#x?}, badi: {badi:#x?}, era: {era:#x?}"
                         );
-                        // TODO: Add FPU support and enable it at proper time
                         break ReturnReason::UserException;
                     }
                     Exception::TLBRFill => unreachable!(),
@@ -218,7 +192,6 @@ impl UserContextApiInternal for UserContext {
                     | Interrupt::HWI7 => {
                         crate::debug!("Handling hardware interrupt: {:?}", interrupt);
                         while let Some(irq_num) = crate::arch::irq::chip::claim() {
-                            // Call the IRQ callback functions for the claimed interrupt
                             call_irq_callback_functions(
                                 &self.as_trap_frame(),
                                 &HwIrqLine::new(irq_num),
@@ -328,33 +301,24 @@ cpu_context_impl_getter_setter!(
     [s8, set_s8]
 );
 
-/// CPU exception.
 pub type CpuException = Exception;
 
-/// The FPU context of user task.
-/// Reference: <https://elixir.bootlin.com/linux/v6.15.7/source/arch/loongarch/include/uapi/asm/sigcontext.h#L37>
-// FIXME: Implement FPU context on LoongArch64 platforms.
 #[derive(Clone, Debug, Default)]
 pub struct FpuContext;
 
 impl FpuContext {
-    /// Creates a new FPU context.
     pub fn new() -> Self {
         Self
     }
 
-    /// Saves CPU's current FPU context to this instance, if needed.
     pub fn save(&mut self) {}
 
-    /// Loads CPU's FPU context from this instance, if needed.
     pub fn load(&self) {}
 
-    /// Returns the FPU context as a byte slice.
     pub fn as_bytes(&self) -> &[u8] {
         &[]
     }
 
-    /// Returns the FPU context as a mutable byte slice.
     pub fn as_bytes_mut(&mut self) -> &mut [u8] {
         &mut []
     }

@@ -1,11 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! A lightweight fixed-point number implementation optimized for kernel use.
-//!
-//! This crate provides a minimal, safe fixed-point arithmetic implementation
-//! designed specifically for kernel development where zero `unsafe` code usage
-//! throughout the entire implementation.
-
 use core::{
     fmt,
     ops::{Add, Div, Mul, Sub},
@@ -13,38 +5,16 @@ use core::{
 
 macro_rules! define_fixed_unsigned {
     ($name:ident, $raw:ty, $wide:ty) => {
-        /// A generic fixed-point number with `FRAC_BITS` fractional bits.
-        ///
-        /// This type represents a non-negative real number using an unsigned
-        /// integer for storage, with the lower `FRAC_BITS` representing the
-        /// fractional part.
-        ///
-        /// **Standard arithmetic operations can overflow and wrap around.**
-        /// This follows Rust's default integer overflow behavior.
-        ///
-        /// For safer arithmetic that prevents overflow, use the
-        /// `saturating_*` methods.
         #[derive(Clone, Copy, Debug, Eq, PartialEq)]
         pub struct $name<const FRAC_BITS: u32>($raw);
 
         impl<const FRAC_BITS: u32> $name<FRAC_BITS> {
-            const FRAC_SCALE: $raw = {
-                // Do not remove or rewrite the const expression below.
-                // It implicitly prevents users from giving invalid values of
-                // `FRAC_BITS` greater than or equal to the raw integer width
-                // because doing so would cause integer overflow during const
-                // evaluation.
-                1 << FRAC_BITS
-            };
+            const FRAC_SCALE: $raw = { 1 << FRAC_BITS };
 
             pub const ZERO: Self = Self(0);
             pub const ONE: Self = Self(Self::FRAC_SCALE);
             const MAX_INT: $raw = <$raw>::MAX >> FRAC_BITS;
 
-            /// Creates a fixed-point number from an integer.
-            ///
-            /// If the value is too large to be represented, it will saturate
-            /// at the maximum representable value.
             pub const fn saturating_from_num(val: $raw) -> Self {
                 if val > Self::MAX_INT {
                     Self(<$raw>::MAX)
@@ -53,27 +23,22 @@ macro_rules! define_fixed_unsigned {
                 }
             }
 
-            /// Creates a fixed-point number from raw bits.
             pub const fn from_raw(raw: $raw) -> Self {
                 Self(raw)
             }
 
-            /// Returns the raw underlying fixed-point value.
             pub const fn raw(self) -> $raw {
                 self.0
             }
 
-            /// Adds two fixed-point numbers, saturating on overflow.
             pub const fn saturating_add(self, other: Self) -> Self {
                 Self(self.0.saturating_add(other.0))
             }
 
-            /// Subtracts two fixed-point numbers, saturating on underflow.
             pub const fn saturating_sub(self, other: Self) -> Self {
                 Self(self.0.saturating_sub(other.0))
             }
 
-            /// Multiplies two fixed-point numbers, saturating on overflow.
             pub const fn saturating_mul(self, other: Self) -> Self {
                 let result = (self.0 as $wide * other.0 as $wide) >> FRAC_BITS;
                 Self(if result > <$raw>::MAX as $wide {
@@ -83,9 +48,6 @@ macro_rules! define_fixed_unsigned {
                 })
             }
 
-            /// Divides two fixed-point numbers, saturating on overflow.
-            ///
-            /// Returns `None` if division by zero is attempted.
             pub const fn saturating_div(self, other: Self) -> Option<Self> {
                 if other.0 == 0 {
                     return None;
@@ -187,29 +149,25 @@ mod tests {
 
     #[ktest]
     fn creation_methods() {
-        // Test `saturating_from_num` with normal values
         let normal = FixedU32_8::saturating_from_num(42);
         assert_eq!(normal.raw(), 42 << 8);
 
-        // Test `saturating_from_num` with overflow.
-        let max_int = u32::MAX >> 8; // Maximum integer for FixedU32_8
+        let max_int = u32::MAX >> 8;
         let at_limit = FixedU32_8::saturating_from_num(max_int);
         let over_limit = FixedU32_8::saturating_from_num(max_int + 1);
 
         assert_eq!(at_limit.raw(), max_int << 8);
-        assert_eq!(over_limit.raw(), u32::MAX); // Should saturate
+        assert_eq!(over_limit.raw(), u32::MAX);
 
-        // Test `from_raw`
-        let half = FixedU32_8::from_raw(128); // 0.5 in 8.8 format
+        let half = FixedU32_8::from_raw(128);
         assert_eq!(half.raw(), 128);
     }
 
     #[ktest]
     fn basic_arithmetic_methods() {
-        let a = FixedU32_8::saturating_from_num(3); // 3.0
-        let b = FixedU32_8::saturating_from_num(2); // 2.0
+        let a = FixedU32_8::saturating_from_num(3);
+        let b = FixedU32_8::saturating_from_num(2);
 
-        // Test method-based arithmetic
         let sum = a + b;
         assert_eq!(sum.raw(), 5 << 8);
 
@@ -254,23 +212,19 @@ mod tests {
 
     #[ktest]
     fn display_formatting() {
-        // Test integer display
         let integer = FixedU32_8::saturating_from_num(42);
         let display_str = format!("{}", integer);
         assert_eq!(display_str, "42.000");
 
-        // Test fractional display
-        let fractional = FixedU32_8::from_raw(384); // 1.5
+        let fractional = FixedU32_8::from_raw(384);
         let display_str = format!("{}", fractional);
         assert_eq!(display_str, "1.500");
 
-        // Test zero
         let zero = FixedU32_8::ZERO;
         let display_str = format!("{}", zero);
         assert_eq!(display_str, "0.000");
 
-        // Test with different precision
-        let high_precision = FixedU32_16::from_raw(98304); // 1.5 in 16.16 format
+        let high_precision = FixedU32_16::from_raw(98304);
         let display_str = format!("{}", high_precision);
         assert_eq!(display_str, "1.500");
     }
@@ -290,18 +244,14 @@ mod tests {
         let one = FixedU32_8::saturating_from_num(1);
         let val = FixedU32_8::saturating_from_num(42);
 
-        // Zero multiplication
         assert_eq!(zero * val, zero);
         assert_eq!(val * zero, zero);
 
-        // One multiplication (identity)
         assert_eq!(one * val, val);
         assert_eq!(val * one, val);
 
-        // Self subtraction
         assert_eq!(val - val, zero);
 
-        // Self division
         let result = val.div(val);
         assert_eq!(result.raw(), one.raw());
     }

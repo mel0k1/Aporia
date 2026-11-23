@@ -1,11 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! `FUSE_READLINK` reads the target of a symbolic-link inode.
-//!
-//! The request body is empty because the target inode is named by the request
-//! header. The reply body contains the symbolic-link target bytes, and the
-//! operation returns them as a string without a trailing null byte.
-
 use alloc::{string::String, vec};
 
 use ostd::mm::{Infallible, VmReader, VmWriter};
@@ -13,7 +5,6 @@ use ostd::mm::{Infallible, VmReader, VmWriter};
 use super::util::read_bytes;
 use crate::{FuseError, FuseOpcode, FuseOperation, FuseResult, ReplyExpectation};
 
-/// The maximum symbolic-link target bytes accepted in one `FUSE_READLINK` reply.
 pub const MAX_READLINK_LEN: usize = 4096;
 
 pub struct ReadlinkOperation;

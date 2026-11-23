@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! A module about QEMU settings and arguments.
-
 use std::{path::PathBuf, process};
 
 use crate::{
@@ -13,48 +9,21 @@ use crate::{
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct QemuScheme {
-    /// The additional arguments for running QEMU, in the form of raw
-    /// command line arguments.
     pub args: Option<String>,
-    /// The additional qemu argument after the `-drive` option for the
-    /// boot device, in the form of raw command line arguments, comma
-    /// included. For example, `",if=virtio,media=disk,index=2"`.
-    /// The `format` and the `file` options are not allowed to set.
-    ///
-    /// This option only works with [`super::BootMethod::GrubQcow2`] and
-    /// [`super::BootMethod::GrubRescueIso`].
-    ///
-    /// This option exist because different firmwares may need
-    /// different interface types for the boot drive.
-    ///
-    /// See <https://www.qemu.org/docs/master/system/invocation.html>
-    /// for details about `-drive` option.
     pub bootdev_append_options: Option<String>,
-    /// The path of qemu
     pub path: Option<PathBuf>,
-    /// Whether to run QEMU as daemon and connect to it in monitor mode.
     pub with_monitor: Option<bool>,
-    /// The QEMU output log used for panic translation and coverage collection.
-    /// Relative paths are resolved from the OSDK working directory.
     pub log_file: Option<PathBuf>,
-    /// Host daemons and their arguments to run for the duration of QEMU.
     pub with_daemons: Option<Vec<DaemonScheme>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, Serialize)]
 pub struct Qemu {
     pub args: String,
-    /// This finalized config has a unorthodox `Option` because
-    /// we cannot provide a default value for it. The default
-    /// value is determined by the final running routine
-    /// [`crate::bundle::Bundle::run`].
     pub bootdev_append_options: Option<String>,
     pub path: PathBuf,
-    /// Whether to run QEMU as daemon and connect to it in monitor mode.
     pub with_monitor: bool,
-    /// The QEMU output log used for panic translation and coverage collection.
     pub log_file: Option<PathBuf>,
-    /// Host daemons and their arguments to run for the duration of QEMU.
     #[serde(default)]
     pub with_daemons: Vec<DaemonScheme>,
 }
@@ -72,8 +41,6 @@ impl Default for Qemu {
     }
 }
 
-// Implements `PartialEq` for `Qemu`, comparing `args` while ignoring numeric characters
-// (random ports), and comparing the remaining settings normally.
 impl PartialEq for Qemu {
     fn eq(&self, other: &Self) -> bool {
         fn strip_numbers(input: &str) -> String {
@@ -93,7 +60,6 @@ impl Qemu {
     pub fn apply_qemu_args(&mut self, args: &Vec<String>) {
         let mut joined = split_to_kv_array(&self.args);
 
-        // Check the soundness of qemu arguments
         for arg in joined.iter() {
             check_qemu_arg(arg);
         }
@@ -142,17 +108,11 @@ pub(crate) struct DaemonScheme {
     pub(crate) args: Vec<String>,
 }
 
-// Below are checked keys in qemu arguments. The key list is non-exhaustive.
-
-/// Keys with multiple values
 const MULTI_VALUE_KEYS: &[&str] = &[
     "-device", "-chardev", "-object", "-netdev", "-drive", "-cdrom",
 ];
-/// Keys with only single value
 const SINGLE_VALUE_KEYS: &[&str] = &["-cpu", "-machine", "-m", "-serial", "-monitor", "-display"];
-/// Keys with no value
 const NO_VALUE_KEYS: &[&str] = &["--no-reboot", "-nographic", "-enable-kvm"];
-/// Keys are not allowed to set in configuration files and command line
 const NOT_ALLOWED_TO_SET_KEYS: &[&str] = &["-kernel", "-append", "-initrd"];
 
 fn check_qemu_arg(arg: &str) {

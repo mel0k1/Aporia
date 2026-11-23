@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use align_ext::AlignExt;
 use io_util::batch::IoBatch;
 use ostd::mm::{VmIo, VmReader, VmWriter};
@@ -14,10 +12,7 @@ use crate::{
     prelude::*,
 };
 
-/// Implements several commonly used APIs for the block device to conveniently
-/// read and write block(s).
 impl dyn BlockDevice {
-    /// Synchronously reads contiguous blocks starting from the `bid`.
     pub fn read_blocks(
         &self,
         bid: Bid,
@@ -28,7 +23,6 @@ impl dyn BlockDevice {
         Ok(status)
     }
 
-    /// Asynchronously reads contiguous blocks into multiple memory segments.
     pub fn read_blocks_async(
         &self,
         bid: Bid,
@@ -40,7 +34,6 @@ impl dyn BlockDevice {
         bio.submit(self, io_batch)
     }
 
-    /// Synchronously writes contiguous blocks starting from the `bid`.
     pub fn write_blocks(
         &self,
         bid: Bid,
@@ -51,7 +44,6 @@ impl dyn BlockDevice {
         Ok(status)
     }
 
-    /// Asynchronously writes contiguous blocks starting from the `bid`.
     pub fn write_blocks_async(
         &self,
         bid: Bid,
@@ -63,7 +55,6 @@ impl dyn BlockDevice {
         bio.submit(self, io_batch)
     }
 
-    /// Issues a sync request
     pub fn sync(&self) -> Result<BioStatus, BioEnqueueError> {
         let bio = Bio::new(BioType::Flush, Sid::from(Bid::from_offset(0)), vec![], None);
         let status = bio.submit_and_wait(self)?;
@@ -72,7 +63,6 @@ impl dyn BlockDevice {
 }
 
 impl VmIo for dyn BlockDevice {
-    /// Reads consecutive bytes of several sectors in size.
     fn read(&self, offset: usize, writer: &mut VmWriter) -> ostd::Result<()> {
         let read_len = writer.avail();
         if read_len == 0 {
@@ -125,7 +115,6 @@ impl VmIo for dyn BlockDevice {
         }
     }
 
-    /// Writes consecutive bytes of several sectors in size.
     fn write(&self, offset: usize, reader: &mut VmReader) -> ostd::Result<()> {
         let write_len = reader.remain();
         if write_len == 0 {
@@ -140,14 +129,6 @@ impl VmIo for dyn BlockDevice {
 
         let aligned_offset = offset.align_down(SECTOR_SIZE);
         let aligned_end = request_end.align_up(SECTOR_SIZE);
-
-        // If the write range is not sector-aligned, preserve the bytes in the
-        // surrounding sectors that are outside the user-requested range.
-        // The request is split into at most three segments: a read-modify-write
-        // first sector, sector-aligned middle sectors written directly from the
-        // reader, and a read-modify-write last sector. Each segment consumes
-        // only the bytes that belong to it so later segments see the remaining
-        // input bytes.
 
         let need_read_first_sector = !is_sector_aligned(offset);
         let mut middle_sector_offset = aligned_offset;
@@ -207,7 +188,6 @@ impl VmIo for dyn BlockDevice {
 }
 
 impl dyn BlockDevice {
-    /// Asynchronously writes consecutive bytes of several sectors in size.
     pub fn write_bytes_async(
         &self,
         offset: usize,
@@ -248,8 +228,6 @@ impl dyn BlockDevice {
     }
 
     fn read_sector_for_write(&self, sector_offset: usize) -> ostd::Result<BioSegment> {
-        // The segment will be submitted by the later write bio, so keep it writable
-        // from the CPU side and read the preserved sector directly into it.
         let write_segment = alloc_write_segment(sector_offset, SECTOR_SIZE);
         let read_bio = Bio::new(
             BioType::Read,

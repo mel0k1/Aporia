@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::file::PtySlaveFile;
 use crate::{
     device::{
@@ -19,11 +17,6 @@ use crate::{
 
 const BUFFER_CAPACITY: usize = 8192;
 
-/// A pseudoterminal driver.
-///
-/// This is contained in the pty slave, but it maintains the output buffer and the pollee of the
-/// master. The pollee of the slave is part of the [`Tty`] structure (see the definition of
-/// [`PtySlave`]).
 pub(crate) struct PtyDriver {
     output: SpinLock<RingBuffer<u8>>,
     pollee: Pollee,
@@ -32,7 +25,6 @@ pub(crate) struct PtyDriver {
     packet_ctrl: PacketCtrl,
 }
 
-/// A pseudoterminal slave.
 pub(crate) type PtySlave = Tty<PtyDriver>;
 
 impl PtyDriver {
@@ -53,19 +45,13 @@ impl PtyDriver {
             return Ok(0);
         }
 
-        // Reference: <https://elixir.bootlin.com/linux/v6.17/source/drivers/tty/n_tty.c#L2245>.
         match self.packet_ctrl.take_status() {
-            None => {
-                // Packet mode is disabled.
-                self.read_output(buf)
-            }
+            None => self.read_output(buf),
             Some(packet_status) if !packet_status.is_empty() => {
-                // Some packet status is pending.
                 buf[0] = packet_status.bits();
                 Ok(1)
             }
             Some(_) => {
-                // There's no pending packet status.
                 let data_len = self.read_output(&mut buf[1..])?;
                 buf[0] = 0;
                 Ok(data_len + 1)
@@ -109,7 +95,6 @@ impl PtyDriver {
 }
 
 impl TtyDriver for PtyDriver {
-    // Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/linux/major.h#L147>.
     const DEVICE_MAJOR_ID: u32 = 136;
 
     fn devtmpfs_meta(&self, _index: u32) -> Option<DevtmpfsNodeMeta> {
@@ -125,8 +110,6 @@ impl TtyDriver for PtyDriver {
 
         let mut len = 0;
         for ch in chs {
-            // TODO: This is termios-specific behavior and should be part of the TTY implementation
-            // instead of the TTY driver implementation. See the ONLCR flag for more details.
             if *ch == b'\n' && output.capacity() - output.len() >= 2 {
                 output.push(b'\r').unwrap();
                 output.push(b'\n').unwrap();
@@ -170,7 +153,6 @@ impl TtyDriver for PtyDriver {
     }
 
     fn on_termios_change(&self, old_termios: &CTermios, new_termios: &CTermios) {
-        // Reference: <https://elixir.bootlin.com/linux/v6.17/source/drivers/tty/pty.c#L246>.
         let extproc = old_termios.local_flags().contains(CLocalFlags::EXTPROC)
             || new_termios.local_flags().contains(CLocalFlags::EXTPROC);
         let old_flow = old_termios.input_flags().contains(CInputFlags::IXON)

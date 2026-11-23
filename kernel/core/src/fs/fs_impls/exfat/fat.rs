@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::{
     bitmap::ExfatBitmap,
     constants::{EXFAT_FIRST_CLUSTER, EXFAT_RESERVED_CLUSTERS},
@@ -47,24 +45,19 @@ impl From<FatValue> for ClusterID {
 bitflags! {
     #[derive(Clone, Copy, Debug, Default)]
     pub(crate) struct FatChainFlags: u8 {
-        // An associated allocation of clusters is possible
         const ALLOC_POSSIBLE       = 0x01;
-        // The allocated clusters are contiguous and fat table is irrevalent.
         const FAT_CHAIN_NOT_IN_USE = 0x03;
     }
 }
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ExfatChain {
-    // current clusterID
     current: ClusterID,
     num_clusters: u32,
-    // use FAT or not
     flags: FatChainFlags,
     fs: Weak<ExfatFs>,
 }
 
-// A position by the chain and relative offset in the cluster.
 pub(crate) type ExfatChainPosition = (ExfatChain, usize);
 
 impl ExfatChain {
@@ -129,7 +122,6 @@ impl ExfatChain {
                 * self.fs().super_block().sector_size as usize
     }
 
-    // Walk to the cluster at the given offset, return the new relative offset
     pub(super) fn walk_to_cluster_at_offset(&self, offset: usize) -> Result<ExfatChainPosition> {
         let cluster_size = self.fs().cluster_size();
         let steps = offset / cluster_size;
@@ -142,7 +134,6 @@ impl ExfatChain {
         self.fs().is_valid_cluster(self.current)
     }
 
-    // When the num_clusters is unknown, we need to count it from the begin.
     fn count_clusters(&self) -> Result<u32> {
         if !self.fat_in_use() {
             Err(errno!(
@@ -167,7 +158,6 @@ impl ExfatChain {
         }
     }
 
-    // The destination cluster must be a valid cluster.
     pub(super) fn walk(&self, steps: u32) -> Result<ExfatChain> {
         if steps > self.num_clusters {
             return Err(errno!(EINVAL, "invalid walking steps for FAT chain"));
@@ -194,16 +184,12 @@ impl ExfatChain {
         )
     }
 
-    // If current capacity is 0 (no start_cluster), this means we can choose a allocation type
-    // We first try continuous allocation
-    // If no continuous allocation available, turn to fat allocation
     fn alloc_cluster_from_empty(
         &mut self,
         num_to_be_allocated: u32,
         bitmap: &mut MutexGuard<ExfatBitmap>,
         sync_bitmap: bool,
     ) -> Result<ClusterID> {
-        // Search for a continuous chunk big enough
         let search_result =
             bitmap.find_next_unused_cluster_range(EXFAT_FIRST_CLUSTER, num_to_be_allocated);
 
@@ -221,7 +207,6 @@ impl ExfatChain {
         }
     }
 
-    // Allocate clusters in fat mode, return the first allocated cluster id. Bitmap need to be already locked.
     fn alloc_cluster_fat(
         &mut self,
         num_to_be_allocated: u32,
@@ -286,9 +271,6 @@ pub(crate) trait ClusterAllocator {
 }
 
 impl ClusterAllocator for ExfatChain {
-    // Append clusters at the end of the chain, return the first allocated cluster
-    // Caller should update size_allocated accordingly.
-    // The file system must be locked before calling.
     fn extend_clusters(&mut self, num_to_be_allocated: u32, sync: bool) -> Result<ClusterID> {
         let fs = self.fs();
 
@@ -309,19 +291,14 @@ impl ClusterAllocator for ExfatChain {
         let start_cluster = self.cluster_id();
         let num_clusters = self.num_clusters;
 
-        // Try to alloc contiguously otherwise break the chain.
         if !self.fat_in_use() {
-            // First, check if there are enough following clusters.
-            // If not, we can give up continuous allocation and turn to fat allocation.
             let current_end = start_cluster + num_clusters;
             let clusters = current_end..current_end + num_to_be_allocated;
             if bitmap.is_cluster_range_unused(clusters.clone())? {
-                // Considering that the following clusters may be out of range, we should deal with this error here(just turn to fat allocation)
                 bitmap.set_range_used(clusters, sync)?;
                 self.num_clusters += num_to_be_allocated;
                 return Ok(start_cluster);
             } else {
-                // Break the chain.
                 for i in 0..num_clusters - 1 {
                     fs.write_next_fat(
                         start_cluster + i,
@@ -334,11 +311,9 @@ impl ClusterAllocator for ExfatChain {
             }
         }
 
-        // Allocate remaining clusters the tail.
         let allocated_start_cluster =
             self.alloc_cluster_fat(num_to_be_allocated, sync, &mut bitmap)?;
 
-        // Insert allocated clusters to the tail.
         let tail_cluster = self.walk(num_clusters - 1)?.cluster_id();
         fs.write_next_fat(tail_cluster, FatValue::Next(allocated_start_cluster), sync)?;
 

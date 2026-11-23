@@ -1,12 +1,8 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use crate::{fs::file::AccessMode, prelude::*};
 
 bitflags! {
     #[derive(Clone, Copy, Debug)]
     pub(crate) struct Permission: u16 {
-        // This implementation refers the implementation of linux
-        // https://elixir.bootlin.com/linux/v6.0.9/source/include/linux/fs.h#L95
         const MAY_EXEC      = 0x0001;
         const MAY_WRITE     = 0x0002;
         const MAY_READ      = 0x0004;

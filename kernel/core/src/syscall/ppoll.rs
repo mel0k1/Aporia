@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::time::Duration;
 
 use ostd::mm::VmIo;
@@ -38,13 +36,4 @@ pub(super) fn sys_ppoll(
     }
 
     do_sys_poll(fds, nfds, timeout, ctx)
-
-    // TODO: Write back the remaining time to `timespec_addr`.
-    //
-    // The ppoll system call should write back the remaining time,
-    // yet the function counterpart in libc hides this behavior to
-    // make the API more portable across different UNIX-like OSes.
-    // For the maximized Linux compatibility, we should follow Linux's behavior.
-    // But this cannot be readily achieved given how our internal synchronization primitives
-    // such as `Pause` and `WaitTimeout` work.
 }

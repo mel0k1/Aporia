@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Opened Inode-backed File Handle
-
 use core::fmt::Display;
 
 use super::{
@@ -27,18 +23,8 @@ use crate::{
 };
 
 pub(crate) struct InodeHandle {
-    /// `open_file` is similar to the `file_private` field in Linux's `file` structure. If
-    /// `open_file` is `Some(_)`, typical file operations including `read`, `write`, `poll`,
-    /// and `ioctl` will be provided by the per-open file object instead of `path`.
     open_file: Option<Box<dyn PerOpenFileOps>>,
     offset: Mutex<usize>,
-    /// Path and common states of the handle.
-    //
-    // This field is placed last so that its `Path` keeps the corresponding filesystem alive
-    // while `open_file` is dropped, because releasing `open_file` may access that filesystem.
-    //
-    // Struct fields are dropped in declaration order.
-    // Reference: <https://doc.rust-lang.org/reference/destructors.html>.
     common: FileCommon,
 }
 
@@ -50,9 +36,6 @@ impl InodeHandle {
     ) -> Result<Self> {
         let inode = path.inode();
         if !status_flags.contains(StatusFlags::O_PATH) {
-            // "Opening a file or directory with the O_PATH flag requires no permissions on the
-            // object itself".
-            // Reference: <https://man7.org/linux/man-pages/man2/openat.2.html>
             inode.check_permission(access_mode.into())?;
         }
 
@@ -67,8 +50,6 @@ impl InodeHandle {
         let inode = path.inode();
         let inode_type = inode.type_();
         let open_file = if status_flags.contains(StatusFlags::O_PATH) {
-            // The file is opened with `O_PATH`. We follow Linux to report `O_RDONLY` here (e.g.,
-            // in `/proc/[pid]/fdinfo/[n]`).
             access_mode = AccessMode::O_RDONLY;
             None
         } else if inode_type.is_device() && path.mount_node().flags().contains(PerMountFlags::NODEV)
@@ -122,8 +103,6 @@ impl InodeHandle {
         (inode.as_ref(), is_offset_aware)
     }
 
-    /// Returns the `FileOps` for positional I/O, rejecting files
-    /// that do not support `pread`/`pwrite`.
     fn file_ops_for_positional_io(&self) -> Result<&dyn FileOps> {
         if let Some(ref open_file) = self.open_file {
             open_file.check_positional_io()?;
@@ -167,7 +146,6 @@ impl InodeHandle {
             .fs_lock_context()
             .map(|c| c.range_lock_list())
         else {
-            // The lock list is not present. So nothing is locked.
             lock.set_type(RangeLockType::Unlock);
             return Ok(lock);
         };
@@ -326,10 +304,7 @@ impl FileLike for InodeHandle {
 
         let mut offset = self.offset.lock();
 
-        // FIXME: How can we deal with the `O_APPEND` flag if `open_file` is set?
         if status_flags.contains(StatusFlags::O_APPEND) && self.open_file.is_none() {
-            // FIXME: `O_APPEND` should ensure that new content is appended even if another process
-            // is writing to the file concurrently.
             *offset = self.path().size();
         }
 
@@ -361,11 +336,7 @@ impl FileLike for InodeHandle {
 
         let status_flags = self.status_flags();
 
-        // FIXME: How can we deal with the `O_APPEND` flag if `open_file` is set?
         if status_flags.contains(StatusFlags::O_APPEND) && self.open_file.is_none() {
-            // If the file has the `O_APPEND` flag, the offset is ignored.
-            // FIXME: `O_APPEND` should ensure that new content is appended even if another process
-            // is writing to the file concurrently.
             offset = self.path().size();
         }
 
@@ -385,18 +356,12 @@ impl FileLike for InodeHandle {
     }
 
     fn mappable(&self, request: FileMmapRequest) -> Result<MappableObject<'_>> {
-        // The `O_PATH` flag and access mode have already been checked in the syscall layer.
-
         if let Some(ref open_file) = self.open_file {
-            // If the file is a special file (e.g., device file), we should
-            // return the file-specific mappable object.
             return open_file.mappable(request);
         }
 
         let inode = self.path().inode();
         if let Some(page_cache) = inode.page_cache() {
-            // Otherwise, if the inode has a page cache, it is a file-backed
-            // mapping and we return the VMO as the mappable object.
             Ok(MappableObject::Vmo(page_cache))
         } else {
             Err(errno!(ENODEV, "the file is not mappable"))
@@ -412,11 +377,8 @@ impl FileLike for InodeHandle {
         }
 
         if self.status_flags().contains(StatusFlags::O_APPEND) {
-            // FIXME: It's allowed to `ftruncate` an append-only file on Linux.
             return Err(errno!(EPERM, "can not resize append-only file"));
         }
-        // `ftruncate` uses the descriptor's write mode and must not recheck current inode
-        // permissions. See <https://man7.org/linux/man-pages/man2/truncate.2.html>.
         self.path().resize_unchecked_access(new_size)
     }
 
@@ -426,7 +388,6 @@ impl FileLike for InodeHandle {
         }
 
         if self.path().inode().type_().is_regular_file() {
-            // FIXME: This operation should depend on whether the underlying filesystem supports `O_DIRECT`.
             SettableStatusFlags::minimal().with_o_direct()
         } else {
             SettableStatusFlags::minimal()
@@ -463,7 +424,6 @@ impl FileLike for InodeHandle {
         let inode = dentry.inode().as_ref();
         let inode_type = inode.type_();
 
-        // TODO: `fallocate` on pipe files also fails with `ESPIPE`.
         if inode_type == InodeType::NamedPipe {
             return Err(errno!(ESPIPE, "the inode is a FIFO file"));
         }
@@ -548,7 +508,6 @@ impl Debug for InodeHandle {
     }
 }
 
-/// Describes the position to seek from.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SeekFrom {
     Start(usize),
@@ -556,44 +515,19 @@ pub(crate) enum SeekFrom {
     Current(isize),
 }
 
-/// File operations for one opened file description.
-///
-/// A per-open file object can hold file-description-specific state and override
-/// operations that are not purely inode-backed, such as state and operations for
-/// devices, pipes, namespace files, and procfs files.
 pub trait PerOpenFileOps: Pollable + FileOps + Any + Send + Sync + 'static {
-    /// Checks whether the `seek()` operation should fail.
     fn check_seekable(&self) -> Result<()>;
 
-    /// Returns whether the `read()`/`write()` operation should use and advance the offset.
-    ///
-    /// If [`PerOpenFileOps::check_seekable`] succeeds but this method returns `false`,
-    /// the offset in the `seek()` operation will be ignored.
-    /// In that case, the `seek()` operation will do nothing but succeed.
     fn is_offset_aware(&self) -> bool;
 
-    /// Checks whether positional I/O (`pread`/`pwrite`) is supported.
-    ///
-    /// The default delegates to [`check_seekable`], which is correct for
-    /// most files. Override this for files that support positional I/O
-    /// but not seeking (e.g., nsfs).
-    ///
-    /// [`check_seekable`]: PerOpenFileOps::check_seekable
     fn check_positional_io(&self) -> Result<()> {
         self.check_seekable()
     }
 
-    /// Returns the end position for [`SeekFrom::End`].
-    ///
-    /// This is intentionally separate from `Inode::seek_end`. Both `Inode`
-    /// and [`PerOpenFileOps`] need `SEEK_END` support, but `Inode::seek_end`
-    /// has an inode-specific default implementation, so the two cannot be
-    /// cleanly unified under [`FileOps`].
     fn seek_end(&self) -> Result<Option<usize>> {
         Ok(None)
     }
 
-    // See `FileLike::mappable`.
     fn mappable(&self, _request: FileMmapRequest) -> Result<MappableObject<'_>> {
         Err(errno!(EINVAL, "the file is not mappable"))
     }
@@ -602,17 +536,10 @@ pub trait PerOpenFileOps: Pollable + FileOps + Any + Send + Sync + 'static {
         Err(errno!(ENOTTY, "ioctl is not supported"))
     }
 
-    /// Returns the status flags that can be set for this opened file.
     fn settable_status_flags(&self) -> SettableStatusFlags {
-        // `O_ASYNC` and `O_DIRECT` can only be set on file descriptions that explicitly
-        // support them.
         SettableStatusFlags::minimal()
     }
 
-    /// Synchronizes the file according to `mode`.
-    ///
-    /// Per-open file operations do not support synchronization by default.
-    /// Implementations that support synchronization must override this method.
     fn sync(&self, _mode: SyncMode) -> Result<()> {
         Err(errno!(EINVAL, "the file does not support synchronization"))
     }
@@ -636,8 +563,6 @@ fn do_seek_util(offset: &Mutex<usize>, pos: SeekFrom, end: Option<usize>) -> Res
         SeekFrom::Current(diff) => offset.wrapping_add_signed(diff),
     };
 
-    // Invariant: `*offset <= isize::MAX as usize`.
-    // TODO: Investigate whether `read`/`write` can break this invariant.
     if new_offset.cast_signed() < 0 {
         return Err(errno!(EINVAL, "the file offset cannot be negative"));
     }

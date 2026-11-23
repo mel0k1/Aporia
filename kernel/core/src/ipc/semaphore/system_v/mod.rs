@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! System V semaphore.
-
 use bitflags::bitflags;
 
 pub(crate) mod sem;

@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Defines the core trait for FUSE protocol operations.
-
 use core::num::NonZeroUsize;
 
 use int_to_c_enum::TryFromInt;
@@ -9,65 +5,37 @@ use ostd::mm::{Infallible, VmReader, VmWriter};
 
 use crate::FuseResult;
 
-/// A FUSE protocol operation with typed request and reply bodies.
-///
-/// Each implementer represents one request/reply pair defined by the FUSE protocol.
 pub trait FuseOperation {
-    /// Describes the successful reply produced by that operation.
     type Output;
 
-    /// Returns the opcode identifying this operation's wire format.
     fn opcode(&self) -> FuseOpcode;
 
-    /// Returns the request body length, excluding the `ReqHeader`.
     fn body_len(&self) -> usize {
         0
     }
 
-    /// Writes the request body bytes into the transport buffer.
-    ///
-    /// The writer is positioned immediately after the `ReqHeader`.
     fn write_body(&mut self, _writer: &mut VmWriter<'_, Infallible>) -> FuseResult<()> {
         Ok(())
     }
 
-    /// Returns the reply shape expected for this operation.
     fn reply_expectation(&self) -> ReplyExpectation;
 
-    /// Parses the reply payload into [`Self::Output`].
-    ///
-    /// The reader is positioned at the start of the typed reply payload, after
-    /// the `ReplyHeader`. Implementations must use `payload_len` to bound the
-    /// bytes accepted from the server.
     fn parse_reply(
         payload_len: usize,
         reader: &mut VmReader<'_, Infallible>,
     ) -> FuseResult<Self::Output>;
 }
 
-/// A reply shape expected for a FUSE operation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReplyExpectation {
-    /// No reply is expected for a one-way request.
     None,
-    /// A reply contains only a `ReplyHeader` and no payload bytes.
     HeaderOnly,
-    /// A reply contains a `ReplyHeader` and a fixed-size payload.
     FixedPayload(NonZeroUsize),
-    /// A reply contains a `ReplyHeader` and up to the given payload bytes.
     VariablePayload(NonZeroUsize),
-    /// A write-specific reply expectation that enables short-write reporting.
-    ///
-    /// The requested size is compared with the accepted byte count in
-    /// [`crate::ops::write::WriteReply`] before a completion is reported.
     WritePayload { requested_size: usize },
 }
 
 impl ReplyExpectation {
-    /// Returns a fixed-size payload reply expectation.
-    ///
-    /// A zero payload size is returned as [`Self::HeaderOnly`] so
-    /// [`Self::FixedPayload`] cannot encode the same wire shape.
     pub fn payload(payload_size: usize) -> Self {
         let Some(payload_size) = NonZeroUsize::new(payload_size) else {
             return Self::HeaderOnly;
@@ -75,10 +43,6 @@ impl ReplyExpectation {
         Self::FixedPayload(payload_size)
     }
 
-    /// Returns a variable-size payload reply expectation.
-    ///
-    /// A zero maximum payload size is returned as [`Self::HeaderOnly`] so
-    /// [`Self::VariablePayload`] cannot encode the same wire shape.
     pub fn variable_payload(max_payload_size: usize) -> Self {
         let Some(max_payload_size) = NonZeroUsize::new(max_payload_size) else {
             return Self::HeaderOnly;

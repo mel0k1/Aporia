@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::format;
 
 use ostd::arch::cpu::context::UserContext;
@@ -88,23 +86,15 @@ fn lookup_and_open_executable_file(
         }
     };
 
-    // For a non-empty `filename`, Linux derives the thread name from the
-    // user-supplied exec path before symlink resolution. `execveat` with
-    // `AT_EMPTY_PATH` has no such path, so fall back to the resolved file name.
     let thread_name = if filename.is_empty() {
         derive_thread_name(&path.name())
     } else {
         derive_thread_name(&filename)
     };
 
-    // Preserve the path that a shebang interpreter must use to reopen the script.
-    // For `execveat` relative to a file descriptor, use a `/dev/fd/...` path unless the
-    // descriptor is close-on-exec, in which case mark the path as unavailable.
     let shebang_script_path = if dfd == AT_FDCWD || filename.starts_with('/') {
         ShebangScriptPath::Accessible(CString::new(filename.into_owned()).unwrap())
     } else {
-        // Races with later access by the interpreter are always possible. The check is
-        // racy, but only for diagnostic purposes. This matches Linux.
         let is_cloexec = if let Ok(fd) = FileDesc::try_from(dfd) {
             let file_table = ctx.thread_local.borrow_file_table();
             let file_table_locked = file_table.read();
@@ -127,9 +117,6 @@ fn lookup_and_open_executable_file(
         }
     };
 
-    // Even when `path` comes from an `AT_EMPTY_PATH` file descriptor, opens a
-    // separate read-only file for execution. Reusing the descriptor would break valid
-    // `O_PATH` or write-only descriptors.
     let executable = UndetectedExecutable::open(path, shebang_script_path)?;
 
     Ok((executable, thread_name))

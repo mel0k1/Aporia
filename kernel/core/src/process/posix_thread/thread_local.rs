@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::cell::{Cell, Ref, RefCell, RefMut};
 
 #[cfg(target_arch = "x86_64")]
@@ -19,41 +17,24 @@ use crate::{
     vm::vmar::VmarHandle,
 };
 
-/// Local data for a POSIX thread.
 pub(crate) struct ThreadLocal {
-    // TID pointers.
-    // https://man7.org/linux/man-pages/man2/set_tid_address.2.html
     set_child_tid: Cell<Vaddr>,
     clear_child_tid: Cell<Vaddr>,
 
-    // Virtual memory address regions.
     vmar: RefCell<Option<VmarHandle>>,
     page_fault_disabled: Cell<bool>,
 
-    // Robust futexes.
-    // https://man7.org/linux/man-pages/man2/get_robust_list.2.html
     robust_list: RefCell<Option<RobustListHead>>,
 
-    // Files.
-    /// File table.
     file_table: RefCell<Option<RwArc<FileTable>>>,
-    /// File system.
     fs: RefCell<Option<Arc<ThreadFsInfo>>>,
 
-    // Supplementary userspace CPU context.
     supp_user_context: SuppUserContext,
 
-    // Signal.
-    /// Stack address, size, and flags for the signal handler.
     sig_stack: RefCell<SigStack>,
-    /// Saved signal mask. It will be restored either after the signal handler, or upon
-    /// return from the system call if there is no signal handler to run.
     sig_mask_saved: Cell<Option<SigMask>>,
-    /// Original syscall-return register value captured
-    /// at the most recent kernel entry, or `None` for non-syscall entries.
     orig_syscall_ret: Cell<Option<usize>>,
 
-    // Namespaces.
     user_ns: RefCell<Arc<UserNamespace>>,
     ns_proxy: RefCell<Option<Arc<NsProxy>>>,
 }
@@ -99,20 +80,6 @@ impl ThreadLocal {
         &self.vmar
     }
 
-    /// Executes the closure with the page fault handler disabled.
-    ///
-    /// When page faults occur, the handler may attempt to load the page from the disk, which can break
-    /// the atomic mode. By using this method, the page fault handler will fail immediately, so
-    /// fallible memory operation will return [`Errno::EFAULT`] once it triggers a page fault.
-    ///
-    /// Usually, we should _not_ try to access the userspace memory while being in the atomic mode
-    /// (e.g., when holding a spin lock). If we must do so, this method is a last resort that disables
-    /// the handler instead.
-    ///
-    /// Note that the closure runs with different semantics of the fallible memory operation.
-    /// Therefore, if it fails with a [`Errno::EFAULT`], this method will return [`None`] and it is
-    /// the caller's responsibility to exit the atomic mode, handle the page fault, and retry. Do
-    /// _not_ use this method without adding code that explicitly handles the page fault!
     pub(crate) fn with_page_fault_disabled<F, T>(&self, func: F) -> Option<Result<T>>
     where
         F: FnOnce() -> Result<T>,
@@ -142,43 +109,35 @@ impl ThreadLocal {
         &self.robust_list
     }
 
-    /// Returns a reference to the file table.
     pub(crate) fn borrow_file_table(&self) -> FileTableRef<'_> {
         Ref::map(self.file_table.borrow(), |file_table| {
             file_table.as_ref().unwrap()
         })
     }
 
-    /// Returns a mutable reference to the file table.
     pub(crate) fn borrow_file_table_mut(&self) -> FileTableRefMut<'_> {
         RefMut::map(self.file_table.borrow_mut(), |file_table| {
             file_table.as_mut().unwrap()
         })
     }
 
-    /// Removes the file table and returns it.
     pub(super) fn remove_file_table(&self) -> Option<RwArc<FileTable>> {
         self.file_table.borrow_mut().take()
     }
 
-    /// Returns a reference to the file system information.
     pub(crate) fn borrow_fs(&self) -> Ref<'_, Arc<ThreadFsInfo>> {
         Ref::map(self.fs.borrow(), |fs| fs.as_ref().unwrap())
     }
 
-    /// Returns a mutable reference to the file system information.
     pub(in crate::process) fn borrow_fs_mut(&self) -> RefMut<'_, Arc<ThreadFsInfo>> {
         RefMut::map(self.fs.borrow_mut(), |fs| fs.as_mut().unwrap())
     }
 
-    /// Removes the file system information and returns it.
     pub(super) fn remove_fs(&self) -> Option<Arc<ThreadFsInfo>> {
         self.fs.borrow_mut().take()
     }
 
     pub(crate) fn is_fs_shared(&self) -> bool {
-        // If the filesystem information is not shared, its reference count should be exactly 2:
-        // one reference is held by `ThreadLocal` and the other by `PosixThread`.
         Arc::strong_count(&self.borrow_fs()) > 2
     }
 
@@ -194,14 +153,10 @@ impl ThreadLocal {
         &self.sig_mask_saved
     }
 
-    /// Returns the original syscall-return register value
-    /// for the most recent kernel entry.
     pub(in crate::process) fn orig_syscall_ret(&self) -> Option<usize> {
         self.orig_syscall_ret.get()
     }
 
-    /// Sets the original syscall-return register value
-    /// for the most recent kernel entry.
     pub(crate) fn set_orig_syscall_ret(&self, value: Option<usize>) {
         self.orig_syscall_ret.set(value);
     }
@@ -210,53 +165,23 @@ impl ThreadLocal {
         self.user_ns.borrow()
     }
 
-    /// Returns a reference to the namespace proxy.
     pub(crate) fn borrow_ns_proxy(&self) -> Ref<'_, Arc<NsProxy>> {
         Ref::map(self.ns_proxy.borrow(), |ns_proxy| {
             ns_proxy.as_ref().unwrap()
         })
     }
 
-    /// Returns a mutable reference to the namespace proxy.
     pub(in crate::process) fn borrow_ns_proxy_mut(&self) -> RefMut<'_, Arc<NsProxy>> {
         RefMut::map(self.ns_proxy.borrow_mut(), |ns_proxy| {
             ns_proxy.as_mut().unwrap()
         })
     }
 
-    /// Removes the namespace proxy and returns it.
     pub(super) fn remove_ns_proxy(&self) -> Option<Arc<NsProxy>> {
         self.ns_proxy.borrow_mut().take()
     }
 }
 
-/// Supplementary userspace CPU context.
-///
-/// # `UserContext` vs `SuppUserContext`.
-///
-/// The entire userspace CPU state is split into two structs:
-/// `UserContext` and `SuppUserContext`.
-/// `UserContext` is a set of essential CPU registers,
-/// including the general-purpose ones,
-/// that are used by the kernel as well.
-/// Thus, to avoid conflicts between the userspace and kernel space use,
-/// `UserContext` has to be saved/restored _eagerly_ upon every exit/enter from/to the userspace.
-/// For best performance,
-/// the number of registers in `UserContext` is kept as small as possible.
-///
-/// In contrast,
-/// `SuppUserContext` is a set of supplementary CPU registers,
-/// such as FPU registers,
-/// that are modifiable by the userspace
-/// but might or might not be used in the kernel space.
-/// As such,
-/// the saving and restoring of `SuppUserContext` can be delayed to
-/// the point of context switching,
-/// when saving and restoring are unavoidable.
-///
-/// In conclusion,
-/// dividing userspace CPU states into `UserContext` and `SuppUserContext`
-/// allows for better performance.
 pub(crate) struct SuppUserContext {
     fpu: CpuSync<FpuContext>,
     #[cfg(target_arch = "x86_64")]
@@ -326,15 +251,11 @@ impl SuppUserContext {
     }
 }
 
-/// An immutable, shared reference to the file table in [`ThreadLocal`].
 pub(crate) type FileTableRef<'a> = Ref<'a, RwArc<FileTable>>;
 
-/// A mutable, exclusive reference to the file table in [`ThreadLocal`].
 pub(crate) type FileTableRefMut<'a> = RefMut<'a, RwArc<FileTable>>;
 
-/// A trait to provide the `as_thread_local` method for tasks.
 pub(crate) trait AsThreadLocal {
-    /// Returns the associated [`ThreadLocal`].
     fn as_thread_local(&self) -> Option<&ThreadLocal>;
 }
 

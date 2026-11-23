@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd::mm::VmIo;
 
 use super::{RawSocketOption, impl_raw_sock_option_get_only, impl_raw_socket_option};
@@ -14,9 +12,6 @@ use crate::{
     process::Gid,
 };
 
-/// Socket level options.
-///
-/// The definition is from <https://elixir.bootlin.com/linux/v6.0.9/source/include/uapi/asm-generic/socket.h>.
 #[expect(non_camel_case_types)]
 #[expect(clippy::upper_case_acronyms)]
 #[repr(i32)]
@@ -64,9 +59,6 @@ pub(crate) fn new_socket_option(name: i32) -> Result<Box<dyn RawSocketOption>> {
         CSocketOptionName::KEEPALIVE => Ok(Box::new(KeepAlive::new())),
         CSocketOptionName::PRIORITY => Ok(Box::new(Priority::new())),
         CSocketOptionName::LINGER => Ok(Box::new(Linger::new())),
-        // On 64-bit systems, the old and new timeout options share the same
-        // `timeval_t` layout and can use the same handlers. A 32-bit userspace
-        // ABI would need separate handlers for the old and new layouts.
         CSocketOptionName::RCVTIMEO_OLD | CSocketOptionName::RCVTIMEO_NEW => {
             Ok(Box::new(RecvTimeout::new()))
         }
@@ -102,8 +94,6 @@ impl_raw_sock_option_get_only!(AcceptConn);
 impl_raw_socket_option!(SendBufForce);
 impl_raw_socket_option!(RecvBufForce);
 
-// SO_PEERGROUPS is a read-only option. However, calling setsockopt on SO_PEERGROUPS will return EINVAL
-// instead of ENOPROTOOPT like other options. Therefore, we manually implement `RawSocketOption` for it.
 impl RawSocketOption for PeerGroups {
     fn read_from_user(&mut self, _addr: Vaddr, _max_len: u32) -> Result<()> {
         Err(errno!(EINVAL, "the option is getter-only"))

@@ -1,29 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Netlink attributes.
-//!
-//! Netlink attributes provide additional information for each [`segment`].
-//! Each netlink attribute consists of two components:
-//! 1. Header: The attribute header is of type [`CAttrHeader`],
-//!    which specifies the type and length of the attribute. The attribute
-//!    type belongs to different classes, which rely on the segment type.
-//! 2. Payload: The attribute's payload, which can vary in type.
-//!    Currently, payload types include primitive types, C string, and binary.
-//!    The payload can also include one or multiple other attributes,
-//!    known as nested attributes.
-//!
-//! Similar to [`super::segment::common::SegmentCommon`], attributes have alignment requirements;
-//! both the header and payload must be aligned to [`super::NLMSG_ALIGN`]
-//! when being transferred to and from user space.
-//!
-//! The layout of a netlink attribute is depicted as follows:
-//!
-//! ┌────────┬─────────┬─────────┬─────────┐
-//! │ Header │ Padding │ Payload │ Padding │
-//! └────────┴─────────┴─────────┴─────────┘
-//!
-//! [`segment`]: super::segment
-
 #![short_vis_path::add(netlink)]
 
 use align_ext::AlignExt;
@@ -36,15 +10,6 @@ use crate::{
 
 pub(super) mod noattr;
 
-/// Netlink attribute header.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.13/source/include/uapi/linux/netlink.h#L229>.
-//
-// The layout of the `type_` field is structured as follows:
-// ┌────────┬───────────────┬──────────┐
-// │ Nested │ Net Byteorder │ Payload  │
-// └────────┴───────────────┴──────────┘
-//   bit 15      bit 14       bits 13-0
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(crate) struct CAttrHeader {
@@ -53,7 +18,6 @@ pub(crate) struct CAttrHeader {
 }
 
 impl CAttrHeader {
-    /// Creates from the type and the payload length.
     fn from_payload_len(type_: u16, payload_len: usize) -> Self {
         let total_len = payload_len + size_of::<Self>();
         debug_assert!(total_len <= u16::MAX as usize);
@@ -64,27 +28,22 @@ impl CAttrHeader {
         }
     }
 
-    /// Returns the type of the attribute.
     pub(in netlink) fn type_(&self) -> u16 {
         self.type_ & ATTRIBUTE_TYPE_MASK
     }
 
-    /// Returns the payload length (excluding padding).
     pub(in netlink) fn payload_len(&self) -> usize {
         self.len as usize - size_of::<Self>()
     }
 
-    /// Returns the total length of the attribute (header + payload, excluding padding).
     fn total_len(&self) -> usize {
         self.len as usize
     }
 
-    /// Returns the total length of the attribute (header + payload, including padding).
     fn total_len_with_padding(&self) -> usize {
         (self.len as usize).align_up(NLMSG_ALIGN)
     }
 
-    /// Returns the length of the padding bytes.
     fn padding_len(&self) -> usize {
         self.total_len_with_padding() - self.total_len()
     }
@@ -94,43 +53,25 @@ const IS_NESTED_MASK: u16 = 1u16 << 15;
 const IS_NET_BYTEORDER_MASK: u16 = 1u16 << 14;
 const ATTRIBUTE_TYPE_MASK: u16 = !(IS_NESTED_MASK | IS_NET_BYTEORDER_MASK);
 
-/// Attribute validation policies for strict checking and legacy compatibility.
-///
-/// Strict checking uses `Strict`;
-/// otherwise, `DUMP` requests use `LegacyDump` and other requests use `LegacyQuery`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum AttrValidation {
-    /// Rejects malformed and unrecognized attributes.
     Strict,
-    /// Rejects the request if a recognized attribute fails validation.
     LegacyQuery,
-    /// Allows the request to proceed with attributes parsed before the first validation error.
     LegacyDump,
 }
 
-/// Netlink Attribute.
 pub(crate) trait Attribute: Debug + Send + Sync {
-    /// Returns the type of the attribute.
     fn type_(&self) -> u16;
 
-    /// Returns the byte representation of the payload.
     fn payload_as_bytes(&self) -> &[u8];
 
-    /// Returns the total length of the attribute (header + payload, including padding).
     fn total_len_with_padding(&self) -> usize {
-        // We don't care the attribute type when calculating the attribute length.
         const DUMMY_TYPE: u16 = 0;
 
         CAttrHeader::from_payload_len(DUMMY_TYPE, self.payload_as_bytes().len())
             .total_len_with_padding()
     }
 
-    /// Reads the attribute from the `reader`.
-    ///
-    /// This method may return a [`ContinueAttrRead::SkippedUnsupported`] or a
-    /// [`ContinueAttrRead::SkippedInvalid`] if the attribute is not supported or not valid. In that
-    /// case, however, it must still skip the payload length (excluding padding), as if the
-    /// attribute were parsed properly.
     fn read_from(
         header: &CAttrHeader,
         reader: &mut dyn MultiRead,
@@ -138,9 +79,6 @@ pub(crate) trait Attribute: Debug + Send + Sync {
     where
         Self: Sized;
 
-    /// Reads all attributes from the reader.
-    ///
-    /// The cumulative length of the read attributes must not exceed `total_len`.
     fn read_all_from(
         reader: &mut dyn MultiRead,
         mut total_len: usize,
@@ -151,21 +89,14 @@ pub(crate) trait Attribute: Debug + Send + Sync {
     {
         let mut res = Vec::new();
 
-        // Although Linux tends to perform strict validation for new netlink message consumers,
-        // it may allow fewer or no validations for legacy consumers.
-        // See <https://github.com/torvalds/linux/commit/8cb081746c031fb164089322e2336a0bf5b3070c>
-        // for more details.
-
         let mut error = None;
         let mut should_report_error = validation == AttrValidation::Strict;
         while total_len > 0 {
-            // Validate the remaining length for the attribute header length.
             if total_len < size_of::<CAttrHeader>() {
                 error = Some(errno!(EINVAL, "the reader length is too small",));
                 break;
             }
 
-            // Read and validate the attribute header.
             let header = reader.read_val_opt::<CAttrHeader>()?.unwrap();
             total_len -= size_of::<CAttrHeader>();
             if header.total_len() < size_of::<CAttrHeader>() {
@@ -173,14 +104,12 @@ pub(crate) trait Attribute: Debug + Send + Sync {
                 break;
             }
 
-            // Validate the remaining length for the attribute payload length.
             if header.payload_len() > total_len {
                 error = Some(errno!(EINVAL, "the reader size is too small",));
                 break;
             }
             total_len -= header.payload_len();
 
-            // Read the attribute.
             match Self::read_from(&header, reader)? {
                 ContinueAttrRead::Parsed(attr) => res.push(attr),
                 ContinueAttrRead::SkippedUnsupported => {
@@ -196,7 +125,6 @@ pub(crate) trait Attribute: Debug + Send + Sync {
                 }
             }
 
-            // Skip the padding bytes.
             let padding_len = total_len.min(header.padding_len());
             reader.skip_some(padding_len);
             total_len -= padding_len;
@@ -210,7 +138,6 @@ pub(crate) trait Attribute: Debug + Send + Sync {
         Ok(ContinueRead::Parsed(res))
     }
 
-    /// Writes the attribute to the `writer`.
     fn write_to(&self, writer: &mut dyn MultiWrite) -> Result<()> {
         let type_ = self.type_();
         let payload = self.payload_as_bytes();

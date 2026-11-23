@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::SyscallReturn;
 use crate::{
     fs::{
@@ -36,8 +34,6 @@ pub(super) fn sys_unlinkat(
         let parent_fs_path = FsPath::from_fd_at(dirfd, parent_path_name, EmptyPathStr::Reject)?;
         let dir_path = path_resolver.lookup(&parent_fs_path)?;
 
-        // A trailing slash makes the unlink fail in one of two ways:
-        // `dir/` with `EISDIR`, `file/` with `ENOTDIR`.
         if path_name.ends_with('/') {
             let target = path_resolver.lookup_at_path(&dir_path, target_name)?;
             if target.type_() == InodeType::Dir {

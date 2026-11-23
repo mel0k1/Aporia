@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Helpers for inspecting the test sysfs tree.
-
 use alloc::{
     string::{String, ToString},
     sync::Arc,
@@ -10,7 +6,6 @@ use alloc::{
 
 use aster_systree::{SysBranchNode, SysObj};
 
-/// Returns the target path stored in the symlink at `path`, without resolving it.
 pub(super) fn link_target(path: &str) -> Option<String> {
     lookup(path)?
         .cast_to_symlink()
@@ -38,7 +33,6 @@ pub(super) fn attr_names(path: &str) -> Vec<String> {
         .collect()
 }
 
-/// Resolves a path below the sysfs root, following no symlinks.
 pub(super) fn lookup(path: &str) -> Option<Arc<dyn SysObj>> {
     let mut node: Arc<dyn SysBranchNode> = aster_systree::primary_tree().root().clone();
     let mut parts = path.split('/').filter(|p| !p.is_empty()).peekable();

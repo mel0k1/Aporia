@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::{
     sync::{Arc, Weak},
     vec,
@@ -36,9 +34,6 @@ use crate::{
 
 impl DrmFile {
     pub(super) fn drm_set_client_cap(&self, cmd: ioctl_defs::SetClientCap) -> Result<i32> {
-        /// DRM client capabilities accepted by `DRM_IOCTL_SET_CLIENT_CAP`.
-        ///
-        /// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm.h#L791>.
         #[repr(u64)]
         #[derive(Debug, TryFromInt)]
         enum DrmSetCapability {
@@ -66,7 +61,6 @@ impl DrmFile {
                 parse_boolean_capability(args.value)?,
             ),
             DrmSetCapability::Atomic => {
-                // TODO: Support atomic modesetting.
                 return Err(errno!(
                     EOPNOTSUPP,
                     "the DRM device lacks atomic modesetting"
@@ -124,9 +118,6 @@ impl DrmFile {
             let encoder_ids = object_store.collect_sorted_encoder_ids();
             let connector_ids = object_store.collect_sorted_connector_ids();
 
-            // All store data needed below has been collected into local values.
-            // Release the mutex before copying to userspace, which may fault and
-            // does not require access to the object store.
             drop(object_store);
 
             let framebuffer_ids = self.framebuffer_ids();
@@ -191,7 +182,6 @@ impl DrmFile {
 
         let primary_plane = crtc.primary_plane().upgrade().ok_or(Errno::ENOENT)?;
         let plane_state = primary_plane.state().lock();
-        // TODO: Convert source coordinates from 16.16 fixed-point once supported.
         args.x = plane_state.source_rect().x();
         args.y = plane_state.source_rect().y();
         args.fb_id = plane_state
@@ -217,8 +207,6 @@ impl DrmFile {
         let args: DrmModeCrtc = cmd.read()?;
         let kms_ops = self.device().as_kms_ops().unwrap();
 
-        // SETCRTC either configures a display mode or disables the CRTC and clears its state.
-        // Enabling requires a framebuffer and connectors; disabling requires no connectors.
         let display_mode: Option<DrmDisplayMode> = (args.mode_valid != 0)
             .then(|| args.mode.try_into())
             .transpose()?;
@@ -234,8 +222,6 @@ impl DrmFile {
             ));
         }
 
-        // This check only prevents an excessively large allocation for the connector ID array below.
-        // The object-store lock need not be held beyond reading the count.
         let connector_count = kms_ops
             .mode_config()
             .object_store()
@@ -254,7 +240,6 @@ impl DrmFile {
             )
         })?;
 
-        // Serialize validation, driver application, and state publication with framebuffer removal.
         let object_store = kms_ops.mode_config().object_store().lock();
         let crtc = object_store
             .lookup_crtc_by_id(args.crtc_id)
@@ -263,7 +248,6 @@ impl DrmFile {
         let framebuffer = if display_mode.is_none() {
             None
         } else if args.fb_id == u32::MAX {
-            // SETCRTC uses -1 to request the primary plane's currently bound framebuffer.
             let Some(framebuffer) = primary_plane.state().lock().framebuffer().upgrade() else {
                 return Err(errno!(
                     EINVAL,
@@ -281,7 +265,6 @@ impl DrmFile {
             Vec::with_capacity(connector_ids.len());
 
         if display_mode.is_some() {
-            // Validate the scanout format and bounds before changing the driver configuration.
             let framebuffer = framebuffer
                 .as_ref()
                 .expect("an enabled CRTC has a framebuffer");
@@ -305,7 +288,6 @@ impl DrmFile {
                 ));
             }
 
-            // Build the replacement routing without changing the current associations.
             let crtc_index = crtc.index().get();
             for connector_id in &connector_ids {
                 let connector = object_store
@@ -321,8 +303,6 @@ impl DrmFile {
                     return Err(errno!(EINVAL, "a DRM connector is specified twice"));
                 }
 
-                // Encoders may move from another CRTC, but each must be unique and
-                // support cloning with every other encoder selected for this request.
                 let Some(matched_encoder) =
                     connector
                         .possible_encoders()
@@ -355,10 +335,8 @@ impl DrmFile {
             }
         }
 
-        // Apply the driver configuration before publishing the matching core state.
         kms_ops.set_crtc(crtc.index(), framebuffer.as_deref(), source_rect)?;
 
-        // Remove the previous routing before attaching the replacement connectors.
         let crtc_ref = Arc::downgrade(crtc);
         for connector in object_store.connectors() {
             let mut state = connector.state().lock();
@@ -420,13 +398,8 @@ impl DrmFile {
         cmd.with_data_ptr(|args_ptr| {
             let mut args: DrmModeGetConnector = args_ptr.read()?;
 
-            // Linux treats `GETCONNECTOR` with `count_modes == 0` as a forced probe request.
-            // Only the DRM master is allowed to refresh the connector state in this path;
-            // non-master callers fall back to a read-only query.
             if args.count_modes == 0 && self.is_master() {
                 let kms_ops = self.device().as_kms_ops().unwrap();
-                // Keep the connector alive without holding the object-store mutex
-                // across the driver callback, which may perform I/O or acquire other locks.
                 let connector = {
                     let object_store = kms_ops.mode_config().object_store().lock();
                     object_store
@@ -666,8 +639,6 @@ impl DrmFile {
         let fb_id: u32 = cmd.read()?;
 
         let mode_config = self.device().as_kms_ops().unwrap().mode_config();
-        // Hold the object-store lock across lookup, removal, and ID release so
-        // `fb_id` cannot be reused for another framebuffer in between.
         let mut object_store = mode_config.object_store().lock();
         let framebuffer = self.lookup_framebuffer(fb_id).ok_or(Errno::ENOENT)?;
 
@@ -691,8 +662,6 @@ impl DrmFile {
     }
 
     pub(super) fn drm_mode_dirty_fb(&self, cmd: ioctl_defs::ModeDirtyFb) -> Result<i32> {
-        // TODO: Honor dirtyfb flags, color, and clip rectangles. For now,
-        // treat every dirtyfb request as a whole-framebuffer refresh.
         let args: DrmModeFbDirtyCmd = cmd.read()?;
 
         let framebuffer = self.lookup_framebuffer(args.fb_id).ok_or(Errno::ENOENT)?;
@@ -715,7 +684,6 @@ impl DrmFile {
             return Err(errno!(EINVAL, "too many DRM clip rectangles"));
         }
 
-        // Validate userspace access even though the refresh covers the whole framebuffer.
         cmd.with_data_ptr(|args_ptr| {
             copy_array_from_user::<DrmClipRect>(args_ptr.vm(), args.clips_ptr, args.num_clips)
                 .map(drop)
@@ -787,7 +755,6 @@ impl DrmFile {
                     .lookup_plane_by_id(args.plane_id)
                     .ok_or(Errno::ENOENT)?;
                 args.possible_crtcs = plane.possible_crtcs().as_raw_slice()[0];
-                // `drm_mode_get_plane::gamma_size` is unused by Linux and must remain zero.
                 args.gamma_size = 0;
 
                 let plane_state = plane.state().lock();
@@ -946,9 +913,6 @@ fn copy_array_from_user<T: Pod>(
     Ok(values)
 }
 
-/// `struct drm_set_client_cap` in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm.h#L879>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(super) struct DrmSetClientCap {
@@ -956,9 +920,6 @@ pub(super) struct DrmSetClientCap {
     value: u64,
 }
 
-/// `struct drm_mode_card_res` in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm_mode.h#L262-L275>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(super) struct DrmModeGetResources {
@@ -978,9 +939,6 @@ pub(super) struct DrmModeGetResources {
     max_height: u32,
 }
 
-/// `struct drm_mode_crtc` in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm_mode.h#L277-L290>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(super) struct DrmModeCrtc {
@@ -998,9 +956,6 @@ pub(super) struct DrmModeCrtc {
     mode: DrmModeInfo,
 }
 
-/// `struct drm_mode_get_encoder` in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm_mode.h#L375-L383>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(super) struct DrmModeGetEncoder {
@@ -1011,9 +966,6 @@ pub(super) struct DrmModeGetEncoder {
     possible_clones: u32,
 }
 
-/// `struct drm_mode_get_connector` in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm_mode.h#L425-L516>.
 #[padding_struct]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
@@ -1037,9 +989,6 @@ pub(super) struct DrmModeGetConnector {
     subpixel: u32,
 }
 
-/// `struct drm_mode_get_property` in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm_mode.h#L559-L616>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(super) struct DrmModeGetProperty {
@@ -1054,9 +1003,6 @@ pub(super) struct DrmModeGetProperty {
     count_enum_blobs: u32,
 }
 
-/// `struct drm_mode_get_blob` in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm_mode.h#L649-L653>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(super) struct DrmModeGetBlob {
@@ -1065,9 +1011,6 @@ pub(super) struct DrmModeGetBlob {
     data: u64,
 }
 
-/// `struct drm_mode_fb_cmd` in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm_mode.h#L655-L664>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(super) struct DrmModeFbCmd {
@@ -1080,9 +1023,6 @@ pub(super) struct DrmModeFbCmd {
     handle: u32,
 }
 
-/// `struct drm_clip_rect` in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm.h>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 struct DrmClipRect {
@@ -1093,22 +1033,13 @@ struct DrmClipRect {
 }
 
 bitflags::bitflags! {
-    /// Framebuffer damage annotation flags in `drm_mode_fb_dirty_cmd::flags`.
-    ///
-    /// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm_mode.h#L738-L740>.
     #[derive(Clone, Copy, Debug)]
     struct DrmModeFbDirtyFlags: u32 {
-        /// Indicates that pixels were copied between paired source and destination rectangles.
-        /// Each pair must have matching dimensions, and `num_clips` must be even.
         const ANNOTATE_COPY = 0x01;
-        /// Indicates that each clip rectangle was completely filled with the specified `color`.
         const ANNOTATE_FILL = 0x02;
     }
 }
 
-/// `struct drm_mode_fb_dirty_cmd` in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm_mode.h#L744-L777>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(super) struct DrmModeFbDirtyCmd {
@@ -1119,9 +1050,6 @@ pub(super) struct DrmModeFbDirtyCmd {
     clips_ptr: u64,
 }
 
-/// `struct drm_mode_get_plane_res` in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm_mode.h#L360-L363>.
 #[padding_struct]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
@@ -1130,9 +1058,6 @@ pub(super) struct DrmModeGetPlaneRes {
     count_planes: u32,
 }
 
-/// `struct drm_mode_get_plane` in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm_mode.h#L315-L358>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(super) struct DrmModeGetPlane {
@@ -1145,9 +1070,6 @@ pub(super) struct DrmModeGetPlane {
     format_type_ptr: u64,
 }
 
-/// `struct drm_mode_obj_get_properties` in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm_mode.h#L634-L640>.
 #[padding_struct]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]

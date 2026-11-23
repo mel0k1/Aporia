@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Virtio-fs filesystem support backed by FUSE requests.
-
 mod dir;
 mod file;
 mod fs;
@@ -36,7 +32,6 @@ impl From<FuseError> for Error {
                     .checked_neg()
                     .and_then(|code| Errno::try_from(code).ok())
                     .unwrap_or(Errno::EIO);
-                // The filesystem request failed.
                 Error::new(errno)
             }
             FuseError::BufferTooSmall | FuseError::LengthOverflow => {
@@ -46,7 +41,6 @@ impl From<FuseError> for Error {
     }
 }
 
-/// Computes the absolute monotonic deadline when a FUSE cache entry expires.
 fn valid_until(secs: u64, nsecs: u32) -> Duration {
     let extra_secs = (nsecs / 1_000_000_000) as u64;
     let nanos = (nsecs % 1_000_000_000) as u64;

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::{collections::btree_map::BTreeMap, sync::Arc};
 
 use aster_softirq::BottomHalfDisabled;
@@ -96,15 +94,12 @@ impl<D: WithDevice + 'static, E: Ext> PollPhy for EtherIface<D, E> {
         packet: RxPacket<LinkLayer>,
         iface_cx: &mut Context,
     ) -> Option<PhyProcessResult> {
-        // Parse the Ethernet header. Ignore the packet if the header is ill-formed.
         let (packet, repr) = ether::parse(packet)?;
 
-        // Ignore the Ethernet frame if it is not sent to us.
         if !repr.dst_addr.is_broadcast() && repr.dst_addr != self.ether_addr {
             return None;
         }
 
-        // Ignore the Ethernet frame if the protocol is not supported.
         match repr.ethertype {
             EthernetProtocol::Ipv4 => Some(PhyProcessResult::Ipv4(packet)),
             EthernetProtocol::Ipv6 => Some(PhyProcessResult::Ipv6(packet)),
@@ -149,16 +144,12 @@ impl<D, E: Ext> EtherIface<D, E> {
                 source_protocol_addr,
                 ..
             } => {
-                // Ignore the ARP packet if the source addresses are not unicast or not local.
                 if !source_hardware_addr.is_unicast()
                     || !iface_cx.in_same_network(&IpAddress::Ipv4(*source_protocol_addr))
                 {
                     return None;
                 }
 
-                // Insert the mapping between the Ethernet address and the IP address.
-                //
-                // TODO: Remove the mapping if it expires.
                 self.arp_table
                     .lock()
                     .insert(*source_protocol_addr, *source_hardware_addr);
@@ -172,12 +163,10 @@ impl<D, E: Ext> EtherIface<D, E> {
                 target_protocol_addr,
                 ..
             } => {
-                // Ignore the ARP packet if the source addresses are not unicast.
                 if !source_hardware_addr.is_unicast() || !source_protocol_addr.x_is_unicast() {
                     return None;
                 }
 
-                // Ignore the ARP packet if we do not own the target address.
                 if iface_cx
                     .ipv4_addr()
                     .is_none_or(|addr| addr != *target_protocol_addr)
@@ -202,27 +191,20 @@ impl<D, E: Ext> EtherIface<D, E> {
         dst_addr: IpAddress,
         iface_cx: &mut Context,
     ) -> Result<EthernetRepr, Option<ArpRepr>> {
-        // Resolve the next-hop IP address.
         let next_hop_ip = match iface_cx.route(&dst_addr, iface_cx.now()) {
             Some(IpAddress::Ipv4(next_hop_ip)) => next_hop_ip,
             Some(IpAddress::Ipv6(_)) => {
-                // FIXME: Currently, we drop outbound IPv6 packets because neighbor discovery is not
-                // implemented and we have no way to resolve the next-hop link-layer address.
                 ostd::debug!("IPv6 neighbor discovery is not implemented for Ethernet interfaces");
                 return Err(None);
             }
             None => return Err(None),
         };
 
-        // Resolve the next-hop Ethernet address.
         let next_hop_ether = if next_hop_ip.is_broadcast() {
             EthernetAddress::BROADCAST
         } else if let Some(next_hop_ether) = self.arp_table.lock().get(&next_hop_ip) {
             *next_hop_ether
         } else {
-            // If the next-hop Ethernet address cannot be resolved, we drop the original packet and
-            // send an ARP packet instead. The upper layer should be responsible for detecting the
-            // packet loss and retrying later to see if the Ethernet address is ready.
             return Err(Some(ArpRepr::EthernetIpv4 {
                 operation: ArpOperation::Request,
                 source_hardware_addr: self.ether_addr,

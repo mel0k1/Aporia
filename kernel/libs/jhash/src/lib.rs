@@ -1,50 +1,17 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! This module implements hash algorithms developed by Bob Jenkins.
-//!
-//! For further information, visit: www.burtleburtle.net/bob/hash/doobs.html
-//!
-//! The hash functions in this module facilitate the production of 32-bit values for hash table lookups.
-//! Although the [Linux kernel's jhash](https://github.com/torvalds/linux/blob/master/include/linux/jhash.h)
-//! slightly differs from the original version, this module reimplements the Linux kernel's version.
-//!
-
 #![no_std]
 #![deny(unsafe_code)]
 
-/// A randomly chosen initial value
 const JHASH_INITVAL: u32 = 0xdeadbeef;
 
-/// Hashes an arbitrary u8 slices.
-///
-/// # Example
-///
-/// If you are hashing n slices, do it like this:
-/// ```rust
-/// use jhash::jhash_slice;
-///
-/// fn hash_slices(slices: &[&[u8]]) -> u32 {
-///     let mut hash: u32 = 0;
-///     for slice in slices {
-///         hash = jhash_slice(slice, hash);
-///     }
-///     hash
-/// }
-/// ```
 pub const fn jhash_slice(slice: &[u8], initval: u32) -> u32 {
     let mut length = slice.len() as u32;
     let mut index: usize = 0;
 
-    // Init the internal state
     let mut a: u32 = JHASH_INITVAL.wrapping_add(length).wrapping_add(initval);
     let mut b: u32 = a;
     let mut c: u32 = a;
 
-    // Handle the most bytes except last 12 bytes
     while length > 12 {
-        // FIXME: The Linux version uses `u32::from_ne_bytes`.
-        // Here, we use `from_le_bytes` to ensure consistency
-        // in results across multiple runs on all machines.
         a = a.wrapping_add(u32::from_le_bytes([
             slice[index],
             slice[index + 1],
@@ -69,7 +36,6 @@ pub const fn jhash_slice(slice: &[u8], initval: u32) -> u32 {
         length -= 12;
     }
 
-    // Handle the last 12 bytes
     if length == 12 {
         c = c.wrapping_add((slice[index + 11] as u32) << 24);
     }
@@ -122,7 +88,6 @@ pub const fn jhash_slice(slice: &[u8], initval: u32) -> u32 {
     c
 }
 
-/// Hashes exactly three u32 values
 pub const fn jhash_3vals(a: u32, b: u32, c: u32, initval: u32) -> u32 {
     jhash_3vals_inner(
         a,
@@ -132,7 +97,6 @@ pub const fn jhash_3vals(a: u32, b: u32, c: u32, initval: u32) -> u32 {
     )
 }
 
-/// Hashes exactly two u32 values
 pub const fn jhash_2vals(a: u32, b: u32, initval: u32) -> u32 {
     jhash_3vals_inner(
         a,
@@ -142,7 +106,6 @@ pub const fn jhash_2vals(a: u32, b: u32, initval: u32) -> u32 {
     )
 }
 
-/// Hashes exactly one u32 value
 pub const fn jhash_1vals(a: u32, initval: u32) -> u32 {
     jhash_3vals_inner(
         a,
@@ -152,19 +115,16 @@ pub const fn jhash_1vals(a: u32, initval: u32) -> u32 {
     )
 }
 
-/// Hashes an array of u32 values.
 pub const fn jhash_u32_array(array: &[u32], initval: u32) -> u32 {
     let mut length = array.len() as u32;
     let mut index = 0;
 
-    // Initialize values a, b, and c
     let mut a: u32 = JHASH_INITVAL
         .wrapping_add(length << 2)
         .wrapping_add(initval);
     let mut b: u32 = a;
     let mut c: u32 = a;
 
-    // Process most values except the last three
     while length > 3 {
         a = a.wrapping_add(array[index]);
         b = b.wrapping_add(array[index + 1]);
@@ -191,7 +151,6 @@ pub const fn jhash_u32_array(array: &[u32], initval: u32) -> u32 {
     c
 }
 
-/// An internal function that handles hashing for 3 u32 values
 const fn jhash_3vals_inner(mut a: u32, mut b: u32, mut c: u32, initval: u32) -> u32 {
     a = a.wrapping_add(initval);
     b = b.wrapping_add(initval);
@@ -200,7 +159,6 @@ const fn jhash_3vals_inner(mut a: u32, mut b: u32, mut c: u32, initval: u32) -> 
     jhash_final(a, b, c)
 }
 
-/// Finalizes the mix of three 32-bit values into a single u32 value
 const fn jhash_final(mut a: u32, mut b: u32, mut c: u32) -> u32 {
     c ^= b;
     c = c.wrapping_sub(b.rotate_left(14));
@@ -224,7 +182,6 @@ const fn jhash_final(mut a: u32, mut b: u32, mut c: u32) -> u32 {
     c.wrapping_sub(b.rotate_left(24))
 }
 
-/// Mixes three 32-bit values in a reversible manner
 const fn jhash_mix(mut a: u32, mut b: u32, mut c: u32) -> (u32, u32, u32) {
     a = a.wrapping_sub(c);
     a ^= c.rotate_left(4);

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::SyscallReturn;
 use crate::{
     fs::{
@@ -55,7 +53,6 @@ pub(super) fn sys_inotify_add_watch(
     if flags == 0 {
         return Err(errno!(EINVAL, "invalid flags"));
     }
-    // Parse flags to `InotifyEvents`.
     let (interesting, options) = parse_inotify_watch_request(flags)?;
 
     if options.contains(InotifyControls::MASK_ADD) && options.contains(InotifyControls::MASK_CREATE)
@@ -67,7 +64,6 @@ pub(super) fn sys_inotify_add_watch(
     let mut file_table = ctx.thread_local.borrow_file_table_mut();
     let file = get_file_fast!(&mut file_table, raw_fd.try_into()?);
 
-    // Verify that the file is an inotify file.
     let inotify_file = match file.downcast_ref::<InotifyFile>() {
         Some(inotify_file) => inotify_file,
         None => return Err(errno!(EINVAL, "the file is not an inotify file")),
@@ -92,7 +88,6 @@ pub(super) fn sys_inotify_add_watch(
         }
     };
 
-    // Verify that the caller has read permissions on the inode.
     let inode = path.inode();
     inode.check_permission(Permission::MAY_READ)?;
 
@@ -136,7 +131,7 @@ fn parse_inotify_watch_request(flags: u32) -> Result<(InotifyEvents, InotifyCont
 bitflags! {
     #[derive(Clone, Copy, Debug)]
     struct InotifyFileFlags: u32 {
-        const NONBLOCK = 1 << 11; // Non-blocking
-        const CLOEXEC  = 1 << 19; // Close on exec
+        const NONBLOCK = 1 << 11;
+        const CLOEXEC  = 1 << 19;
     }
 }

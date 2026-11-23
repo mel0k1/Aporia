@@ -1,15 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! This module implements the `setns` syscall.
-//!
-//! This syscall reassociates the calling thread with a namespace specified by a
-//! file descriptor. The `flags` argument determines which type of namespace can be
-//! joined.
-//!
-//! The file descriptor `fd` can refer to:
-//! 1. A namespace file from `/proc/[pid]/ns/`.
-//! 2. A `PidFile` opened by `pidfd_open` or by opening `/proc/[pid]` directory.
-
 use crate::{
     fs::{
         cgroupfs::CgroupNamespace,
@@ -45,7 +33,6 @@ pub(super) fn sys_setns(fd: RawFileDesc, flags: u32, ctx: &Context) -> Result<Sy
         build_proxy_from_ns_file(file.as_ref(), ns_type_flags, ctx)?
     };
 
-    // Install the newly created `NsProxy`.
     ctx.set_ns_proxy(Arc::new(new_ns_proxy));
 
     Ok(SyscallReturn::Return(0))
@@ -60,7 +47,6 @@ fn build_proxy_from_pid_file(
         return Err(errno!(EINVAL, "flags must be specified with a PID file"));
     }
 
-    // Check for any flags that are not namespace-related.
     if !(flags - CloneFlags::CLONE_NS_FLAGS).is_empty() {
         return Err(errno!(
             EINVAL,
@@ -106,8 +92,6 @@ fn build_proxy_from_pid_file(
         set_uts_ns(&mut builder, target_ns, ctx)?;
     }
 
-    // TODO: Support setting other namespaces from the target process.
-
     Ok(builder.build())
 }
 
@@ -143,7 +127,6 @@ fn build_proxy_from_ns_file(
         || try_apply_ns_from_inode::<UtsNamespace>(inode_handle, flags, |ns| {
             set_uts_ns(&mut builder, &ns, ctx)
         })?;
-    // TODO: Support setting other namespaces from the ns file.
 
     if !applied {
         return Err(errno!(EINVAL, "invalid flags are specified with a ns file"));
@@ -230,8 +213,6 @@ fn set_uts_ns(
 }
 
 fn check_set_ns_perms<T: NsCommonOps>(target_ns: &Arc<T>, ctx: &Context) -> Result<()> {
-    // Verify the thread has `SYS_ADMIN` capability in the target namespace's
-    // owner and in its current user namespace.
     lsm_hooks::on_capable(lsm_hooks::CapableContext::new(
         target_ns.owner_user_ns().unwrap().as_ref(),
         ctx.posix_thread,

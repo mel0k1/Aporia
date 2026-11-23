@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::SyscallReturn;
 use crate::{
     fs,
@@ -26,9 +24,6 @@ pub(super) fn sys_pwritev(
     _offset_high: u64,
     ctx: &Context,
 ) -> Result<SyscallReturn> {
-    // On 64-bit platforms, Linux assumes the `offset_low` contains the full
-    // 64-bit offset.
-    // Reference: <https://elixir.bootlin.com/linux/v6.16.9/source/fs/read_write.c#L1114-L1118>.
     let offset = offset_low.cast_signed();
     let res = do_sys_pwritev(
         raw_fd,
@@ -50,9 +45,6 @@ pub(super) fn sys_pwritev2(
     flags: u32,
     ctx: &Context,
 ) -> Result<SyscallReturn> {
-    // On 64-bit platforms, Linux assumes the `offset_low` contains the full
-    // 64-bit offset.
-    // Reference: <https://elixir.bootlin.com/linux/v6.16.9/source/fs/read_write.c#L1114-L1118>.
     let offset = offset_low.cast_signed();
     let flags = match RWFFlag::from_bits(flags) {
         Some(flags) => flags,
@@ -74,7 +66,6 @@ fn do_sys_pwritev(
     _flags: RWFFlag,
     ctx: &Context,
 ) -> Result<usize> {
-    // TODO: Implement flags support
     debug!(
         "raw_fd = {}, io_vec_ptr = 0x{:x}, io_vec_counter = 0x{:x}, offset = 0x{:x}",
         raw_fd, io_vec_ptr, io_vec_count, offset
@@ -90,8 +81,6 @@ fn do_sys_pwritev(
     let user_space = ctx.user_space();
     let mut reader_array = VmReaderArray::from_user_io_vecs(&user_space, io_vec_ptr, io_vec_count)?;
 
-    // Probe with a zero-length write so that unsupported files (e.g., pipes)
-    // still return the correct errno even when all buffers are empty.
     if reader_array.readers_mut().is_empty() {
         let empty = [0u8; 0];
         let mut reader = VmReader::from(empty.as_slice()).to_fallible();
@@ -105,12 +94,6 @@ fn do_sys_pwritev(
     for reader in reader_array.readers_mut() {
         debug_assert!(reader.has_remain());
 
-        // TODO: According to the man page
-        // at <https://man7.org/linux/man-pages/man2/readv.2.html>,
-        // writev must be atomic,
-        // but the current implementation does not ensure atomicity.
-        // A suitable fix would be to add a `writev` method for the `FileLike` trait,
-        // allowing each subsystem to implement atomicity.
         match file.write_at(cur_offset, reader) {
             Ok(write_len) => {
                 total_len += write_len;
@@ -120,7 +103,6 @@ fn do_sys_pwritev(
             Err(err) => return Err(err),
         }
         if reader.has_remain() {
-            // Partial write, maybe errors in the middle
             break;
         }
     }
@@ -152,19 +134,12 @@ fn do_sys_writev(
     for reader in reader_array.readers_mut() {
         debug_assert!(reader.has_remain());
 
-        // TODO: According to the man page
-        // at <https://man7.org/linux/man-pages/man2/readv.2.html>,
-        // writev must be atomic,
-        // but the current implementation does not ensure atomicity.
-        // A suitable fix would be to add a `writev` method for the `FileLike` trait,
-        // allowing each subsystem to implement atomicity.
         match file.write(reader) {
             Ok(write_len) => total_len += write_len,
             Err(_) if total_len > 0 => break,
             Err(err) => return Err(err),
         }
         if reader.has_remain() {
-            // Partial write, maybe errors in the middle
             break;
         }
     }

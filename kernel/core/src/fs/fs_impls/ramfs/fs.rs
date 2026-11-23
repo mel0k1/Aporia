@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::{
     sync::atomic::{AtomicU64, Ordering},
     time::Duration,
@@ -38,18 +36,13 @@ use crate::{
     vm::page_cache::{PageCache, Vmo},
 };
 
-/// A volatile file system whose data and metadata exists only in memory.
 pub(crate) struct RamFs {
     name: &'static str,
     _anon_device_id: AnonDeviceId,
     revalidation_policy: RevalidationPolicy,
-    /// The super block
     sb: SuperBlock,
-    /// Root inode
     root: Arc<RamInode>,
-    /// An inode allocator
     inode_allocator: AtomicU64,
-    /// FS event subscriber stats for this file system
     fs_event_subscriber_stats: FsEventSubscriberStats,
 }
 
@@ -114,7 +107,6 @@ impl FileSystem for RamFs {
     }
 
     fn sync(&self) -> Result<()> {
-        // do nothing
         Ok(())
     }
 
@@ -135,45 +127,21 @@ impl FileSystem for RamFs {
     }
 }
 
-/// An inode of `RamFs`.
 pub(in crate::fs::fs_impls) struct RamInode {
-    /// Inode inner specifics
     inner: Inner,
-    /// Inode metadata
     metadata: Mutex<InodeMeta>,
-    /// Inode number
     ino: u64,
-    /// Type of the inode
     typ: InodeType,
-    /// Directory-entry revalidation policy inherited from the filesystem.
     dir_revalidation_policy: RevalidationPolicy,
-    /// Reference to self
     this: Weak<RamInode>,
-    /// Reference to fs
     fs: Weak<RamFs>,
-    /// Device ID.
-    ///
-    /// Detached inodes such as `memfd` store it directly
-    /// because they do not have a valid fs reference.
     container_dev_id: DeviceId,
-    /// Hard linkability.
-    ///
-    /// All inodes except temporary files are set to linkable
-    /// Linkability of temporary files is specified via [`RamInode::create_tmpfile`]
     hard_linkability: HardLinkability,
-    /// Extensions
     extension: Extension,
-    /// Whether this inode should be revalidated during VFS path lookup.
-    ///
-    /// Such inodes may be created or removed without updating VFS dentry
-    /// caches. Filesystems that enable directory-entry revalidation use this
-    /// marker to avoid trusting cached positive dentries for these inodes.
     to_be_revalidated: bool,
-    /// Extended attributes
     xattr: RamXattr,
 }
 
-/// Inode inner specifics.
 enum Inner {
     Dir(RwMutex<DirEntry>),
     File(Mutex<PageCache>),
@@ -290,7 +258,6 @@ impl Inner {
     }
 }
 
-/// Inode metadata.
 #[derive(Clone, Copy, Debug)]
 struct InodeMeta {
     size: usize,
@@ -385,15 +352,13 @@ impl InodeMeta {
     }
 }
 
-/// Represents a directory entry within a `RamInode`.
 struct DirEntry {
     children: SlotVec<(CStr256, Arc<RamInode>)>,
-    idx_map: HashMap<CStr256, usize>, // Used to accelerate indexing in `children`
+    idx_map: HashMap<CStr256, usize>,
     this: Weak<RamInode>,
     parent: Weak<RamInode>,
 }
 
-// Every directory has two special entries: "." and "..".
 const NUM_SPECIAL_ENTRIES: usize = 2;
 
 impl DirEntry {
@@ -480,9 +445,7 @@ impl DirEntry {
     }
 
     fn visit_entry(&self, idx: usize, visitor: &mut dyn DirentVisitor) -> Result<usize> {
-        // The visitor's offset is where the next directory read should resume.
         let try_visit = |idx: &mut usize, visitor: &mut dyn DirentVisitor| -> Result<()> {
-            // Read the two special entries("." and "..").
             if *idx == 0 {
                 let this_inode = self.this.upgrade().unwrap();
                 visitor.visit(".", this_inode.ino, this_inode.typ, *idx + 1)?;
@@ -493,7 +456,6 @@ impl DirEntry {
                 visitor.visit("..", parent_inode.ino, parent_inode.typ, *idx + 1)?;
                 *idx += 1;
             }
-            // Read the normal child entries.
             let start_idx = *idx;
             for (offset_children, (name, child)) in self
                 .children
@@ -591,7 +553,6 @@ impl RamInode {
         })
     }
 
-    /// Creates a `RamInode` that is detached from any `RamFs`, and resides in a `MemfdInode`.
     pub(super) fn new_file_detached_in_memfd(
         weak_self: &Weak<MemfdInode>,
         dev_id: DeviceId,
@@ -748,7 +709,6 @@ impl RamInode {
         self.to_be_revalidated
     }
 
-    /// Creates a directory whose dentries must be revalidated.
     pub(in crate::fs::fs_impls) fn mkdir_with_revalidation(
         &self,
         name: &str,
@@ -757,7 +717,6 @@ impl RamInode {
         self.create_impl(name, InodeType::Dir, mode, None, ToBeRevalidated::Yes)
     }
 
-    /// Creates a device inode whose dentry must be revalidated.
     pub(in crate::fs::fs_impls) fn mknod_with_revalidation(
         &self,
         name: &str,
@@ -767,14 +726,6 @@ impl RamInode {
         self.mknod_impl(name, mode, type_, ToBeRevalidated::Yes)
     }
 
-    /// Unlinks entry `name` if `predicate` returns true for the target inode.
-    ///
-    /// The predicate is called while the parent directory is locked.
-    /// The result distinguishes the following outcomes:
-    ///
-    /// - `Ok(true)` if the entry is unlinked;
-    /// - `Ok(false)` if the predicate returns false;
-    /// - `Err(error)` if the unlink operation fails.
     pub(in crate::fs::fs_impls) fn unlink_if<F>(&self, name: &str, predicate: F) -> Result<bool>
     where
         F: FnOnce(&Self) -> bool,
@@ -793,7 +744,6 @@ impl RamInode {
     where
         F: FnOnce(&Self) -> bool,
     {
-        // When we got the lock, the directory may have been modified by another thread.
         let mut self_dir = self.inner.as_direntry().unwrap().write();
         let (idx, target) = self_dir.get_entry(name).ok_or(errno!(ENOENT))?;
         if target.typ == InodeType::Dir {
@@ -818,14 +768,6 @@ impl RamInode {
         Ok(true)
     }
 
-    /// Removes directory entry `name` if `predicate` returns true for the target inode.
-    ///
-    /// The predicate is called while the parent and target directories are locked.
-    /// The result distinguishes the following outcomes:
-    ///
-    /// - `Ok(true)` if the directory is removed;
-    /// - `Ok(false)` if the predicate returns false;
-    /// - `Err(error)` if the removal operation fails.
     pub(in crate::fs::fs_impls) fn rmdir_if<F>(&self, name: &str, predicate: F) -> Result<bool>
     where
         F: FnOnce(&Self) -> bool,
@@ -852,7 +794,6 @@ impl RamInode {
             return Err(errno!(ENOTDIR, "rmdir on not dir"));
         }
 
-        // When we got the lock, the directory may have been modified by another thread.
         let (mut self_dir, target_dir) = write_lock_two_direntries_by_ino(
             (self.ino, self.inner.as_direntry().unwrap()),
             (target.ino, target.inner.as_direntry().unwrap()),
@@ -1023,7 +964,6 @@ impl FileOps for RamInode {
     ) -> Result<usize> {
         let read_len = match &self.inner {
             Inner::File(page_cache) => {
-                // Lock before reading the size or the `resize` may shrink the cache.
                 let page_cache = page_cache.lock();
                 let (offset, read_len) = {
                     let file_size = self.size();
@@ -1052,7 +992,6 @@ impl FileOps for RamInode {
         let written_len = match self.typ {
             InodeType::File => {
                 let write_len = reader.remain();
-                // An empty write must leave file data and metadata unchanged.
                 if write_len == 0 {
                     return Ok(0);
                 }
@@ -1271,8 +1210,6 @@ impl Inode for RamInode {
         self_dir.append_entry(name, old.this.upgrade().unwrap());
         let now = now();
 
-        // An `O_TMPFILE` inode starts with zero links. Bump the link count
-        // before exposing the new entry to concurrent lookup or unlink.
         let mut old_meta = old.metadata.lock();
         old_meta.inc_nlinks();
         old_meta.set_ctime(now);
@@ -1317,7 +1254,6 @@ impl Inode for RamInode {
         mode: RenameMode,
     ) -> Result<()> {
         let old_name = old_child_dentry.name();
-        // Perform necessary checks to ensure that `dst_inode` can be replaced by `src_inode`.
         let check_replace_inode =
             |src_inode: &Arc<RamInode>, dst_inode: &Arc<RamInode>| -> Result<()> {
                 if src_inode.ino == dst_inode.ino {
@@ -1349,14 +1285,11 @@ impl Inode for RamInode {
 
         let new_dir_inode = new_dir_dentry.inode().downcast_ref::<RamInode>().unwrap();
 
-        // Rename in the same directory
         if self.ino == new_dir_inode.ino {
             let mut self_dir = self.inner.as_direntry().unwrap().write();
-            // The source is guaranteed to exist (checked by VFS layer).
             let (src_idx, src_inode) = self_dir.get_entry(&old_name).unwrap();
 
             if mode == RenameMode::Exchange {
-                // The destination is guaranteed to exist for `RenameMode::Exchange` (checked by VFS layer).
                 let (dst_idx, dst_inode) = self_dir.get_entry(new_name).unwrap();
                 self_dir.exchange_entry_inodes(src_idx, dst_idx);
                 drop(self_dir);
@@ -1389,9 +1322,7 @@ impl Inode for RamInode {
                 DirChange::touch().apply(self, now);
                 src_inode.metadata.lock().set_ctime(now);
             }
-        }
-        // Or rename across different directories
-        else {
+        } else {
             let (mut self_dir, mut target_dir) = write_lock_two_direntries_by_ino(
                 (self.ino, self.inner.as_direntry().unwrap()),
                 (
@@ -1400,11 +1331,9 @@ impl Inode for RamInode {
                 ),
             );
             let self_inode_arc = self.this.upgrade().unwrap();
-            // The source is guaranteed to exist (checked by VFS layer).
             let (src_idx, src_inode) = self_dir.get_entry(&old_name).unwrap();
 
             if mode == RenameMode::Exchange {
-                // The destination is guaranteed to exist for `RenameMode::Exchange` (checked by VFS layer).
                 let (dst_idx, dst_inode) = target_dir.get_entry(new_name).unwrap();
 
                 self_dir.remove_entry(src_idx);
@@ -1422,7 +1351,6 @@ impl Inode for RamInode {
 
                 dst_inode.set_parent_if_dir(self.this.clone());
             } else if let Some((dst_idx, dst_inode)) = target_dir.get_entry(new_name) {
-                // Avoid renaming a subdirectory to a directory.
                 if Arc::ptr_eq(&self_inode_arc, &dst_inode) {
                     return Err(errno!(ENOTEMPTY));
                 }
@@ -1508,7 +1436,6 @@ impl Inode for RamInode {
     }
 
     fn fallocate(&self, mode: FallocMode, offset: usize, len: usize) -> Result<()> {
-        // The support for flags is consistent with Linux
         match mode {
             FallocMode::Allocate => {
                 let new_size = offset + len;
@@ -1517,17 +1444,13 @@ impl Inode for RamInode {
                 }
                 Ok(())
             }
-            FallocMode::AllocateKeepSize => {
-                // Do nothing
-                Ok(())
-            }
+            FallocMode::AllocateKeepSize => Ok(()),
             FallocMode::PunchHoleKeepSize => {
                 let file_size = self.size();
                 if offset >= file_size {
                     return Ok(());
                 }
                 let range = offset..file_size.min(offset + len);
-                // TODO: Think of a more light-weight approach
                 self.inner.as_file().unwrap().lock().fill_zeros(range)
             }
             _ => Err(errno!(
@@ -1571,18 +1494,12 @@ impl Inode for RamInode {
     }
 }
 
-/// Describes how a single entry slot of a directory changed during a rename,
-/// for metadata accounting.
-///
-/// `old_type` is the type of the entry that left the slot (if any) and
-/// `new_type` is the type of the entry that took its place (if any).
 struct DirChange {
     new_type: Option<InodeType>,
     old_type: Option<InodeType>,
 }
 
 impl DirChange {
-    /// An entry of `inode`'s type was added to the directory.
     fn add(inode: &RamInode) -> Self {
         Self {
             new_type: Some(inode.typ),
@@ -1590,7 +1507,6 @@ impl DirChange {
         }
     }
 
-    /// An entry of `inode`'s type was removed from the directory.
     fn del(inode: &RamInode) -> Self {
         Self {
             new_type: None,
@@ -1598,7 +1514,6 @@ impl DirChange {
         }
     }
 
-    /// The `old` entry of the directory was replaced in place by the `new` entry.
     fn exchange(old: &RamInode, new: &RamInode) -> Self {
         Self {
             new_type: Some(new.typ),
@@ -1606,8 +1521,6 @@ impl DirChange {
         }
     }
 
-    /// No entry was added or removed; the directory is only touched (e.g., an
-    /// in-place rename).
     fn touch() -> Self {
         Self {
             new_type: None,
@@ -1615,8 +1528,6 @@ impl DirChange {
         }
     }
 
-    /// Applies this change to `dir`'s own metadata, also bumping its mtime/ctime
-    /// to `now`.
     fn apply(self, dir: &RamInode, now: Duration) {
         let mut meta = dir.metadata.lock();
         match (self.old_type, self.new_type) {

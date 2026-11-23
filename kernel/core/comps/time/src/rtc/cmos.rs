@@ -1,18 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! CMOS RTC.
-//!
-//! "CMOS" is a tiny bit of very low power static memory that lives on the same chip as the
-//! Real-Time Clock (RTC).
-//!
-//! According to the Linux implementation, in x86, if the CMOS/RTC is present at the legacy
-//! addresses (I/O Ports 0x70 and 0x71), then it is an MC146818 CMOS/RTC. Therefore, in this
-//! module, the register addresses and data interpretation are based on the MC146818 datasheet.
-//!
-//! Reference:
-//! <https://elixir.bootlin.com/linux/v6.17.5/source/arch/x86/kernel/rtc.c#L69>
-//! <https://www.scs.stanford.edu/23wi-cs212/pintos/specs/mc146818a.pdf>
-
 use core::num::NonZeroU8;
 
 use ostd::{
@@ -35,15 +20,6 @@ pub(super) struct RtcCmos {
 
 impl Driver for RtcCmos {
     fn try_new() -> Option<Self> {
-        // TODO: Due to historical reasons, the "NMI Enable" bit (named `NMI_EN` in Intel's
-        // datasheet) and the "Real Time Clock Index" bits are assigned to the same I/O port
-        // (`IOPORT_SEL`). Currently, we do not support NMIs. However, once we add support, we
-        // should reconsider the safety impact to allow OSTD users to safely manipulate the NMI
-        // enablement.
-        //
-        // Reference:
-        // <https://edc.intel.com/content/www/id/id/design/publications/core-ultra-p200s-series-processors-soc-i-o-registers/nmi-enable-and-real-time-clock-index-nmi-en-offset-70/>
-        // <https://wiki.osdev.org/CMOS#Non-Maskable_Interrupts>
         const IOPORT_SEL: u16 = 0x70;
         const IOPORT_VAL: u16 = 0x71;
 
@@ -53,9 +29,6 @@ impl Driver for RtcCmos {
             .boot_flags
             .is_some_and(|flags| flags.use_time_and_alarm_namespace_for_rtc())
         {
-            // "If set, indicates that the CMOS RTC is either not implemented, or does not exist at
-            // the legacy addresses". See:
-            // <https://uefi.org/specs/ACPI/6.5/05_ACPI_Software_Programming_Model.html#ia-pc-boot-architecture-flags>.
             return None;
         }
 
@@ -76,9 +49,6 @@ impl Driver for RtcCmos {
         };
         let status_b = access.read_status_b();
 
-        // Ideally, the absence of the CMOS RTC should be reported in the ACPI tables (We've
-        // checked the flag above). However, the ACPI tables are sometimes unreliable (e.g., QEMU
-        // never sets the flag), so we need to perform additional checks.
         if !access.check_presence() {
             warn!("CMOS RTC reports unexpected status, ignoring this device");
             return None;
@@ -134,14 +104,12 @@ enum Register {
 
     StatusA = 0x0A,
     StatusB = 0x0B,
-    // `StatusC` is not used.
     StatusD = 0x0D,
 }
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, Debug)]
     struct StatusA: u8 {
-        /// The update in progress (UIP) bit.
         const UIP = 1 << 7;
     }
 }
@@ -149,13 +117,7 @@ bitflags::bitflags! {
 bitflags::bitflags! {
     #[derive(Clone, Copy, Debug)]
     struct StatusB: u8 {
-        /// The data mode (DM) bit.
-        ///
-        /// This bit is set when the binary format is used; otherwise, the BCD format is used.
         const DM_BINARY = 1 << 2;
-        /// The clock mode (CM) bit.
-        ///
-        /// This bit is set when the 24-hour format is used; otherwise, the 12-hour format is used.
         const CM_24HOUR = 1 << 1;
     }
 }
@@ -163,9 +125,6 @@ bitflags::bitflags! {
 bitflags::bitflags! {
     #[derive(Clone, Copy, Debug)]
     struct StatusD: u8 {
-        /// The valid RAM and time (VRT) bit.
-        ///
-        /// This bit is set when the RAM and time are valid.
         const VRT = 1 << 7;
     }
 }
@@ -189,8 +148,6 @@ impl CmosAccess {
     }
 
     fn check_presence(&mut self) -> bool {
-        // If a working CMOS RTC is present, `VRT` should be set and all other reserved bits should
-        // not be set.
         self.read_register_impl(Register::StatusD as u8) == StatusD::VRT.bits()
     }
 
@@ -216,8 +173,6 @@ impl CmosData {
         let mut access = rtc.access.lock();
 
         let mut now = Self::from_rtc_raw(&mut access);
-        // Retry if the new value differs from the old one. An RTC update may occur in the
-        // meantime, which would result in an invalid value.
         while let new = Self::from_rtc_raw(&mut access)
             && now != new
         {
@@ -238,7 +193,6 @@ impl CmosData {
     }
 
     fn from_rtc_raw(access: &mut CmosAccess) -> Self {
-        // Wait if the RTC updates are in progress.
         while access.read_status_a().contains(StatusA::UIP) {
             core::hint::spin_loop();
         }
@@ -262,7 +216,6 @@ impl CmosData {
         }
     }
 
-    /// Converts BCD values to binary values.
     fn convert_bcd_to_binary(&mut self) {
         fn bcd_to_binary(val: u8) -> u8 {
             (val & 0xF) + (val >> 4) * 10
@@ -282,14 +235,12 @@ impl CmosData {
 
     const HOUR_IS_AFTERNOON: u8 = 0x80;
 
-    /// Converts the 12-hour clock to the 24-hour clock.
     fn convert_12_hour_to_24_hour(&mut self) {
         if self.hour & Self::HOUR_IS_AFTERNOON != 0 {
             self.hour = (self.hour & !Self::HOUR_IS_AFTERNOON) + 12;
         }
     }
 
-    /// Converts the year without the century (e.g., 10) to the year with the century (e.g., 2010).
     fn modify_year(&mut self) {
         const DEFAULT_21_CENTURY: u8 = 20;
 

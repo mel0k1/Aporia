@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::marker::PhantomData;
 
 use aster_util::printer::VmPrinter;
@@ -23,7 +21,6 @@ use crate::{
     thread::Thread,
 };
 
-/// Represents the inode at `/proc/[pid]/task/[tid]/fd` (and also `/proc/[pid]/fd`).
 pub(super) struct FdDirOps<T> {
     dir: TidDirOps,
     marker: PhantomData<T>,
@@ -37,7 +34,6 @@ impl<T: FdOps> FdDirOps<T> {
                 marker: PhantomData,
             },
             parent,
-            // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/fs/proc/base.c#L3317>
             mkmod!(u+rx),
         )
     }
@@ -89,12 +85,9 @@ impl<T: FdOps> ProcDirOps for FdDirOps<T> {
 
         let file_table = posix_thread.file_table().lock();
         let Some(file_table) = file_table.as_ref() else {
-            // The thread has exited.
             return Ok(());
         };
 
-        // Collect the list of FDs first before visiting entries. This can avoid holding the file
-        // table lock while calling `visit_fn`, which may break the atomic mode.
         let file_descs = {
             let file_table = file_table.read();
             file_table
@@ -174,7 +167,6 @@ pub(super) trait FdOps: Send + Sync + 'static {
     fn ref_from_inode(inode: &Self::NodeType) -> &Self;
 }
 
-/// Represents the inode at `/proc/[pid]/task/[tid]/fd/[n]` (and also `/proc/[pid]/fd/[n]`).
 pub(super) struct FileSymOps {
     tid_dir_ops: TidDirOps,
     file_desc: FileDesc,
@@ -190,7 +182,6 @@ impl FdOps for FileSymOps {
         access_mode: AccessMode,
         parent: Weak<dyn Inode>,
     ) -> Arc<dyn Inode> {
-        // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/fs/proc/fd.c#L127-L141>
         let mut mode = mkmod!(a=);
         if access_mode.is_readable() {
             mode = chmod!(mode, u+rx);
@@ -219,8 +210,6 @@ impl FdOps for FileSymOps {
     }
 
     fn is_valid(&self, correspond_file: &Arc<dyn FileLike>) -> bool {
-        // We'll treat the old entry as valid and reuse it if the access mode is the same,
-        // even if the file is different.
         self.access_mode == correspond_file.access_mode()
     }
 
@@ -253,7 +242,6 @@ impl ProcSymOps for FileSymOps {
     }
 }
 
-/// Represents the inode at `/proc/[pid]/task/[tid]/fdinfo/[n]` (and also `/proc/[pid]/fdinfo/[n]`).
 pub(super) struct FileInfoOps {
     tid_dir_ops: TidDirOps,
     file_desc: FileDesc,
@@ -274,7 +262,6 @@ impl FdOps for FileInfoOps {
                 file_desc,
             },
             parent,
-            // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/fs/proc/fd.c#L383>.
             mkmod!(a+r),
         )
     }

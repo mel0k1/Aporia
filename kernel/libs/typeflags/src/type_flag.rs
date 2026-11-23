@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{
@@ -8,7 +6,6 @@ use syn::{
     punctuated::Punctuated,
 };
 
-/// The content inside typeflag macro
 pub(crate) struct TypeFlagDef {
     attributes: Vec<Attribute>,
     ident: Ident,
@@ -17,7 +14,6 @@ pub(crate) struct TypeFlagDef {
     items: Punctuated<TypeFlagItem, Token![;]>,
 }
 
-/// struct item inside typeflag macro
 #[derive(Clone)]
 pub(crate) struct TypeFlagItem {
     attributes: Vec<Attribute>,
@@ -34,7 +30,6 @@ impl Parse for TypeFlagDef {
         let ident: Ident = input.parse()?;
         let _: Token![:] = input.parse()?;
         let type_: Type = input.parse()?;
-        // read content inside brace
         let content;
         let _ = braced!(content in input);
         let items = Punctuated::parse_terminated_with(&content, TypeFlagItem::parse)?;
@@ -70,7 +65,6 @@ impl Parse for TypeFlagItem {
 }
 
 impl TypeFlagDef {
-    /// tokens to define the trait
     pub(crate) fn trait_def_tokens(&self) -> TokenStream {
         let attributes = self.attributes.clone();
         let vis = self.vis.clone();
@@ -87,7 +81,6 @@ impl TypeFlagDef {
         )
     }
 
-    /// tokens to define all structs
     pub(crate) fn items_def_tokens(&self) -> Vec<TokenStream> {
         self.items
             .iter()
@@ -95,34 +88,28 @@ impl TypeFlagDef {
             .collect()
     }
 
-    /// return the items iter
     pub(crate) fn items_iter(&self) -> syn::punctuated::Iter<'_, TypeFlagItem> {
         self.items.iter()
     }
 
-    /// the number of items
     pub(crate) fn item_num(&self) -> usize {
         self.items.len()
     }
 
-    /// get item at specific position
     pub(crate) fn get_item(&self, index: usize) -> Option<TypeFlagItem> {
         self.items.iter().nth(index).cloned()
     }
 
-    /// the trait ident
     pub(crate) fn trait_ident(&self) -> Ident {
         self.ident.clone()
     }
 
-    /// the val type
     pub(crate) fn val_type(&self) -> Type {
         self.type_.clone()
     }
 }
 
 impl TypeFlagItem {
-    /// the token stream to define such item
     fn item_def_tokens(&self) -> TokenStream {
         let attributes = self.attributes.clone();
         let vis = self.vis.clone();
@@ -134,12 +121,10 @@ impl TypeFlagItem {
         )
     }
 
-    /// the item's ident
     pub(crate) fn ident(&self) -> Ident {
         self.ident.clone()
     }
 
-    /// the expression of the items's value
     pub(crate) fn val(&self) -> Expr {
         self.value.clone()
     }

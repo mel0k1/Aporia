@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd::mm::VmIo;
 
 use super::SyscallReturn;
@@ -77,7 +75,6 @@ pub(super) fn sys_semctl(
             return Ok(SyscallReturn::Return(cnt as isize));
         }
         IpcControlCmd::SEM_SETVAL => {
-            // In `SEM_SETVAL`, the argument is parsed as an `i32`.
             let val = arg as i32;
 
             ipc_ns.with_sem_set(semid, PermissionMode::ALTER, |sem_set| {

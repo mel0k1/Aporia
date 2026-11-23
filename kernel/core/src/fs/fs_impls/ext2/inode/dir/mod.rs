@@ -1,12 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Directory operations for ext2 inodes.
-//!
-//! Directory state is stored as ext2 directory entries inside ordinary inode
-//! data blocks. This module preserves the VFS-visible directory semantics for
-//! lookup, creation, hard links, rename, removal, and iteration while keeping
-//! directory entries and link counts consistent.
-
 #![short_vis_path::add(ext2)]
 
 mod dir_entry;
@@ -17,30 +8,21 @@ use self::dir_entry::{DOT_BYTE, DOT_DOT_BYTE, DirBlockView, DirEntryFileType, Di
 use super::{super::Ext2, FileFlags, FilePerm, Inode, InodeInner, MAX_LINK_COUNT};
 use crate::fs::ext2::{prelude::*, utils};
 
-/// Information about a candidate directory entry slot.
 #[derive(Clone, Copy, Debug)]
 struct DirSlotInfo {
-    /// Byte offset within the directory (block_idx * BLOCK_SIZE + offset_in_block).
     dir_offset: usize,
-    /// Current `rec_len` of the candidate slot.
     slot_rec_len: usize,
-    /// Minimal occupied length of the existing entry head (0 if slot is free).
     used_rec_len: usize,
 }
 
-/// Located directory entry returned by `find_entry_info`.
 #[derive(Clone, Copy, Debug)]
 struct DirEntryInfo {
-    /// Inode number of the located entry.
     ino: Ext2Ino,
-    /// Byte offset of the entry within the directory.
     dir_offset: usize,
-    /// `rec_len` of the entry.
     entry_rec_len: usize,
 }
 
 impl Inode {
-    /// Looks up a directory entry by name and returns the referenced inode.
     pub(in ext2) fn lookup(&self, name: &str) -> Result<Arc<Inode>> {
         let ino = {
             let inner = self.inner.read();
@@ -50,7 +32,6 @@ impl Inode {
         fs.read_inode(ino)
     }
 
-    /// Iterates directory entries starting at `offset` and feeds them to `visitor`.
     pub(in ext2) fn readdir_at(
         &self,
         offset: usize,
@@ -64,15 +45,10 @@ impl Inode {
         result
     }
 
-    /// Removes an empty sub-directory.
     pub(in ext2) fn rmdir(&self, name: &str, child: &Inode) -> Result<()> {
         let fs = self.fs()?;
         let lock_targets = [self, child];
 
-        // The `DirDentry.children` lock in the VFS layer keeps the parent
-        // directory entry stable during this operation, so we only need to
-        // lock all related inodes in order, without rechecking the lookup
-        // result.
         let mut guards = MultiInodeInnerGuards::lock(&lock_targets);
         let child_inner = guards.inner_mut(child.ino());
         if child_inner.inode_type() != InodeType::Dir {
@@ -102,9 +78,6 @@ impl Inode {
         Ok(())
     }
 
-    /// Creates a child inode and directory entry under this directory.
-    ///
-    /// To create a symbolic link, use [`Inode::create_symlink`] instead.
     pub(in ext2) fn create(
         &self,
         name: &str,
@@ -125,7 +98,6 @@ impl Inode {
         })
     }
 
-    /// Creates a child inode, initializes it, and publishes its directory entry.
     pub(super) fn create_initialized_child(
         &self,
         name: &str,
@@ -135,9 +107,6 @@ impl Inode {
     ) -> Result<Arc<Inode>> {
         let dir_entry_file_type = DirEntryFileType::from(type_);
 
-        // Find a slot before creating the child inode to avoid wasting
-        // an inode allocation if the directory cannot accept a new entry.
-        // The VFS dentry layer has already validated that `name` is absent.
         let fs = self.fs()?;
         let mut parent_inner = self.inner.write();
         let slot = match parent_inner.find_dir_slot(name.len())? {
@@ -145,25 +114,17 @@ impl Inode {
             None => parent_inner.grow_dir_block(&fs)?,
         };
 
-        // The new inode is not yet visible in the inode cache until
-        // `insert_inode` below. This is safe because the VFS dentry
-        // layer holds an `upread` guard on the children set, preventing
-        // concurrent `create` / `lookup_via_fs` on this directory.
-        // So the concurrent `lookup_via_fs` won't create a new `Arc<Inode>`
-        // from `InodeDesc` and then insert it into inode cache.
         let child = fs.create_inode(self.ino, type_, perm)?;
         let child_ino = child.ino();
         let result = init_child_fn(&fs, &child)
             .and_then(|_| parent_inner.add_entry(&slot, name, child_ino, dir_entry_file_type));
 
         if let Err(err) = result {
-            // Clear the link count so other resources are reclaimed by `Drop`.
             let mut child_inner = child.inner.write();
             child_inner.set_link_count(0);
             return Err(err);
         }
 
-        // Link the child dir's `..` to parent dir.
         if type_ == InodeType::Dir {
             parent_inner.inc_link_count(1);
         }
@@ -172,7 +133,6 @@ impl Inode {
         Ok(child)
     }
 
-    /// Adds a hard link in this directory to an existing non-directory inode.
     pub(in ext2) fn link(&self, old: &Inode, name: &str) -> Result<()> {
         let fs = self.fs()?;
         let dir_entry_file_type = DirEntryFileType::from(old.type_);
@@ -197,14 +157,9 @@ impl Inode {
         Ok(())
     }
 
-    /// Removes a non-directory entry from this directory.
     pub(in ext2) fn unlink(&self, name: &str, child: &Inode) -> Result<()> {
         let fs = self.fs()?;
 
-        // The `DirDentry.children` lock in the VFS layer keeps the parent
-        // directory entry stable during this operation, so we only need to
-        // lock all related inodes in order, without rechecking the lookup
-        // result.
         let lock_targets = [self, child];
         let mut guards = MultiInodeInnerGuards::lock(&lock_targets);
 
@@ -221,7 +176,6 @@ impl Inode {
         parent_inner.delete_entry(&entry_info)?;
         parent_inner.set_mtime_ctime(utils::now());
 
-        // Update timestamps before dropping the target link count.
         let child_inner = guards.inner_mut(child.ino());
         child_inner.set_ctime(utils::now());
         child_inner.dec_link_count(1);
@@ -232,7 +186,6 @@ impl Inode {
         Ok(())
     }
 
-    /// Renames or moves an entry from this directory to directory referred by `new_dir_inode`.
     pub(in ext2) fn rename(
         &self,
         old_name: &str,
@@ -241,11 +194,6 @@ impl Inode {
         new_name: &str,
         replaced_inode: Option<&Inode>,
     ) -> Result<()> {
-        // The `DirDentry.children` lock in the VFS layer keeps the parent
-        // directory entry stable during this operation, so we only need to
-        // lock all related inodes in order, without rechecking the lookup
-        // result.
-        // Step 2: lock all participating inodes in global ino order.
         let lock_targets = [
             self as &Inode,
             new_dir_inode,
@@ -254,10 +202,8 @@ impl Inode {
         ];
         let mut guards = MultiInodeInnerGuards::lock(&lock_targets);
 
-        // Step 3: validate invariants under lock.
         self.validate_rename_invariants(&guards, old_inode, replaced_inode)?;
 
-        // Step 4: apply directory mutations and metadata updates.
         self.apply_dir_mutations(
             &mut guards,
             new_dir_inode,
@@ -276,9 +222,6 @@ impl Inode {
         old_inode: &Inode,
         replaced_inode: Option<&Inode>,
     ) -> Result<()> {
-        // Step 3.1: sanity-check that the moved directory's `..` still
-        // points to the source parent. A mismatch indicates on-disk
-        // corruption; bail out before we silently write a wrong `..` update.
         if old_inode.type_ == InodeType::Dir {
             let old_inner = guards.inner(old_inode.ino());
             let parent_ino = old_inner.find_entry_info("..")?.ino;
@@ -287,7 +230,6 @@ impl Inode {
             }
         }
 
-        // Step 3.2: validate overwrite constraints.
         if let Some(replaced) = replaced_inode {
             let replaced_is_dir = replaced.type_ == InodeType::Dir;
             let old_is_dir = old_inode.type_ == InodeType::Dir;
@@ -324,7 +266,6 @@ impl Inode {
         let moved_file_type = DirEntryFileType::from(old_inode.type_);
         let fs = self.fs()?;
 
-        // Step 4.1: apply directory entry mutations.
         if is_same_dir {
             let dir_inner = guards.inner_mut(self.ino);
             if has_replaced {
@@ -332,8 +273,6 @@ impl Inode {
             } else {
                 dir_inner.add_new_entry(&fs, new_name, old_ino, moved_file_type)?;
             }
-            // Re-read the source entry because `add_target_entry` may have
-            // split it (shrinking its `rec_len`), making any prior info stale.
             let old_info = &dir_inner.find_entry_info(old_name)?;
             dir_inner.delete_entry(old_info)?;
             if old_is_dir && has_replaced {
@@ -360,7 +299,6 @@ impl Inode {
             source_inner.set_mtime_ctime(utils::now());
         }
 
-        // Step 4.2: update replaced inode link count.
         if let Some(replaced) = replaced_inode {
             let replaced_inner = guards.inner_mut(replaced.ino());
             replaced_inner.set_ctime(utils::now());
@@ -375,7 +313,6 @@ impl Inode {
             }
         }
 
-        // Step 4.3: update moved inode metadata.
         let old_inner = guards.inner_mut(old_inode.ino());
         if old_is_dir && !is_same_dir {
             let dotdot_entry_info = old_inner.find_entry_info("..")?;
@@ -395,9 +332,7 @@ impl Inode {
 }
 
 impl InodeInner {
-    /// Initializes an empty directory with `.` and `..` entries.
     fn make_empty(&mut self, fs: &Ext2, ino: Ext2Ino, parent_ino: Ext2Ino) -> Result<()> {
-        // Allocate one block for the directory.
         self.prepare_write(fs, 0, BLOCK_SIZE)?;
         let this = DropGuard::new(self, |this| this.rollback_write(0, BLOCK_SIZE));
 
@@ -406,7 +341,6 @@ impl InodeInner {
 
         let block = DirBlockView::from_index(page_cache, 0, BLOCK_SIZE);
 
-        // Write the `.` entry.
         let dot_header = DirEntryHeader {
             ino: ino.to_le(),
             rec_len: DirEntryHeader::min_rec_len(DOT_BYTE.len()).to_le(),
@@ -415,7 +349,6 @@ impl InodeInner {
         };
         block.write_entry(0, dot_header, DOT_BYTE)?;
 
-        // Write the `..` entry.
         let dot_len = DirEntryHeader::min_rec_len(DOT_BYTE.len()) as usize;
         let dot_dot_header = DirEntryHeader {
             ino: parent_ino.to_le(),
@@ -431,7 +364,6 @@ impl InodeInner {
         Ok(())
     }
 
-    /// Overwrites an existing directory entry's inode and file type in place.
     fn overwrite_entry(
         &mut self,
         name: &str,
@@ -442,7 +374,6 @@ impl InodeInner {
         self.set_entry_target(&entry_info, new_ino, new_file_type)
     }
 
-    /// Inserts a new directory entry, growing the directory by one block if needed.
     fn add_new_entry(
         &mut self,
         fs: &Ext2,
@@ -457,7 +388,6 @@ impl InodeInner {
         self.add_entry(&slot, name, ino, file_type)
     }
 
-    /// Checks whether this directory contains only `.` and `..` as live entries.
     fn empty_dir(&self, self_ino: Ext2Ino) -> bool {
         if self.inode_type() != InodeType::Dir {
             return false;
@@ -499,7 +429,6 @@ impl InodeInner {
         true
     }
 
-    /// Reads directory entries starting at byte offset and feeds visitor.
     fn readdir_at(&self, offset: usize, visitor: &mut dyn DirentVisitor) -> Result<usize> {
         if self.inode_type() != InodeType::Dir {
             return Err(errno!(ENOTDIR));
@@ -563,10 +492,6 @@ impl InodeInner {
         Ok(advanced)
     }
 
-    /// Finds a reusable slot for a directory entry name of `name_len` bytes.
-    ///
-    /// Returns `None` if existing directory blocks have no reusable space. The
-    /// returned slot may be a deleted entry or the spare tail of a live entry.
     fn find_dir_slot(&self, name_len: usize) -> Result<Option<DirSlotInfo>> {
         if self.inode_type() != InodeType::Dir {
             return Err(errno!(ENOTDIR));
@@ -594,7 +519,6 @@ impl InodeInner {
                     DirEntryHeader::min_rec_len(header.name_len as usize) as usize
                 };
 
-                // Free entry can be reused, occupied entry can be split.
                 if (ino == 0 && rec_len >= new_rec_len)
                     || (ino != 0 && rec_len >= used_rec_len + new_rec_len)
                 {
@@ -610,7 +534,6 @@ impl InodeInner {
         Ok(None)
     }
 
-    /// Grows the directory by one data block.
     fn grow_dir_block(&mut self, fs: &Ext2) -> Result<DirSlotInfo> {
         let old_size = self.file_size();
         let new_size = old_size + BLOCK_SIZE;
@@ -624,7 +547,6 @@ impl InodeInner {
         })
     }
 
-    /// Writes a new entry into the selected slot through `PageCache`.
     fn add_entry(
         &self,
         slot: &DirSlotInfo,
@@ -643,7 +565,6 @@ impl InodeInner {
         let mut entry_rec_len = slot.slot_rec_len;
         if slot.used_rec_len != 0 {
             debug_assert!(slot.used_rec_len < slot.slot_rec_len);
-            // When splitting, update the predecessor's rec_len first.
             page_cache.write_bytes(
                 slot.dir_offset + 4,
                 &(slot.used_rec_len as u16).to_le_bytes(),
@@ -663,7 +584,6 @@ impl InodeInner {
         Ok(())
     }
 
-    /// Locate a target entry by name for delete/set_entry_target operations.
     fn find_entry_info(&self, name: &str) -> Result<DirEntryInfo> {
         if self.inode_type() != InodeType::Dir {
             return Err(errno!(ENOTDIR));
@@ -693,7 +613,6 @@ impl InodeInner {
         Err(errno!(ENOENT))
     }
 
-    /// Deletes a located entry by zeroing inode and merging `rec_len`.
     fn delete_entry(&self, target: &DirEntryInfo) -> Result<()> {
         let block_base = (target.dir_offset / BLOCK_SIZE) * BLOCK_SIZE;
         let block_idx = block_base / BLOCK_SIZE;
@@ -704,7 +623,6 @@ impl InodeInner {
         Ok(())
     }
 
-    /// Updates a located directory entry's inode and file type.
     fn set_entry_target(
         &self,
         entry: &DirEntryInfo,
@@ -730,7 +648,6 @@ struct MultiInodeInnerGuards<'a> {
 }
 
 impl<'a> MultiInodeInnerGuards<'a> {
-    /// Acquires `inner.write()` locks on deduplicated inodes in ascending ino order.
     fn lock(inodes: &[&'a Inode]) -> Self {
         let mut sorted_inodes: [Option<&'a Inode>; MAX_MULTI_INODE_LOCKS] =
             [None; MAX_MULTI_INODE_LOCKS];

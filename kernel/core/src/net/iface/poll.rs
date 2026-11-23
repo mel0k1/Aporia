@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::sync::Arc;
 use core::time::Duration;
 
@@ -40,14 +38,6 @@ fn spawn_background_poll_thread(iface: Arc<Iface>) {
 
             let now_as_ms = Jiffies::elapsed().as_duration().as_millis() as u64;
 
-            // FIXME: Ideally, we should perform the `poll` just before `next_poll_at_ms`.
-            // However, this approach may result in a spinning busy loop
-            // if the `poll` operation yields no results.
-            // To mitigate this issue,
-            // we have opted to assign a high priority to the polling thread,
-            // ensuring that the `poll` runs as soon as possible.
-            // For a more in-depth discussion, please refer to the following link:
-            // <https://github.com/asterinas/asterinas/pull/630#discussion_r1496817030>.
             if now_as_ms >= next_poll_at_ms {
                 iface.poll();
                 continue;
@@ -55,8 +45,6 @@ fn spawn_background_poll_thread(iface: Arc<Iface>) {
 
             let duration = Duration::from_millis(next_poll_at_ms - now_as_ms);
             let _ = wait_queue.wait_until_or_timeout(
-                // If `sched_poll.next_poll_at_ms()` changes to an earlier time, we will end the
-                // waiting.
                 || (sched_poll.next_poll_at_ms()? < next_poll_at_ms).then_some(()),
                 &duration,
             );

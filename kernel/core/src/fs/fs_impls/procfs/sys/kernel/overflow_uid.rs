@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use aster_util::printer::VmPrinter;
 
 use crate::{
@@ -13,12 +11,10 @@ use crate::{
     security::lsm::hooks as lsm_hooks,
 };
 
-/// Represents the inode at `/proc/sys/kernel/overflowuid`.
 pub(super) struct OverflowUidFileOps;
 
 impl OverflowUidFileOps {
     pub(super) fn new_inode(parent: Weak<dyn Inode>) -> Arc<dyn Inode> {
-        // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/kernel/sysctl.c#L1676>
         ProcFile::new(Self, parent, mkmod!(a+r, u+w))
     }
 }
@@ -33,8 +29,6 @@ impl ProcFileOps for OverflowUidFileOps {
     }
 
     fn write_at(&self, _offset: usize, reader: &mut VmReader) -> Result<usize> {
-        // The maximum settable overflow UID value.
-        // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/include/linux/sysctl.h#L53>
         const MAX_OLDUID: u64 = 65535;
 
         lsm_hooks::on_capable(lsm_hooks::CapableContext::new(

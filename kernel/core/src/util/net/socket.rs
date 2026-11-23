@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::read_socket_addr_from_user;
 use crate::{
     net::socket::util::{ControlMessage, RecvFlags, SocketAddr},
@@ -10,59 +8,48 @@ use crate::{
     },
 };
 
-/// Standard well-defined IP protocols.
-/// From <https://elixir.bootlin.com/linux/v6.0.9/source/include/uapi/linux/in.h>.
 #[expect(non_camel_case_types)]
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, TryFromInt)]
 pub(crate) enum Protocol {
-    IPPROTO_IP = 0,         /* Dummy protocol for TCP		*/
-    IPPROTO_ICMP = 1,       /* Internet Control Message Protocol	*/
-    IPPROTO_IGMP = 2,       /* Internet Group Management Protocol	*/
-    IPPROTO_TCP = 6,        /* Transmission Control Protocol	*/
-    IPPROTO_EGP = 8,        /* Exterior Gateway Protocol		*/
-    IPPROTO_PUP = 12,       /* PUP protocol				*/
-    IPPROTO_UDP = 17,       /* User Datagram Protocol		*/
-    IPPROTO_IDP = 22,       /* XNS IDP protocol			*/
-    IPPROTO_TP = 29,        /* SO Transport Protocol Class 4	*/
-    IPPROTO_DCCP = 33,      /* Datagram Congestion Control Protocol */
-    IPPROTO_IPV6 = 41,      /* IPv6-in-IPv4 tunnelling		*/
-    IPPROTO_RSVP = 46,      /* RSVP Protocol			*/
-    IPPROTO_GRE = 47,       /* Cisco GRE tunnels (rfc 1701,1702)	*/
-    IPPROTO_ESP = 50,       /* Encapsulation Security Payload protocol */
-    IPPROTO_AH = 51,        /* Authentication Header protocol	*/
-    IPPROTO_MTP = 92,       /* Multicast Transport Protocol		*/
-    IPPROTO_BEETPH = 94,    /* IP option pseudo header for BEET	*/
-    IPPROTO_ENCAP = 98,     /* Encapsulation Header			*/
-    IPPROTO_PIM = 103,      /* Protocol Independent Multicast	*/
-    IPPROTO_COMP = 108,     /* Compression Header Protocol		*/
-    IPPROTO_SCTP = 132,     /* Stream Control Transport Protocol	*/
-    IPPROTO_UDPLITE = 136,  /* UDP-Lite (RFC 3828)			*/
-    IPPROTO_MPLS = 137,     /* MPLS in IP (RFC 4023)		*/
-    IPPROTO_ETHERNET = 143, /* Ethernet-within-IPv6 Encapsulation	*/
-    IPPROTO_RAW = 255,      /* Raw IP packets			*/
-    IPPROTO_MPTCP = 262,    /* Multipath TCP connection		*/
+    IPPROTO_IP = 0,
+    IPPROTO_ICMP = 1,
+    IPPROTO_IGMP = 2,
+    IPPROTO_TCP = 6,
+    IPPROTO_EGP = 8,
+    IPPROTO_PUP = 12,
+    IPPROTO_UDP = 17,
+    IPPROTO_IDP = 22,
+    IPPROTO_TP = 29,
+    IPPROTO_DCCP = 33,
+    IPPROTO_IPV6 = 41,
+    IPPROTO_RSVP = 46,
+    IPPROTO_GRE = 47,
+    IPPROTO_ESP = 50,
+    IPPROTO_AH = 51,
+    IPPROTO_MTP = 92,
+    IPPROTO_BEETPH = 94,
+    IPPROTO_ENCAP = 98,
+    IPPROTO_PIM = 103,
+    IPPROTO_COMP = 108,
+    IPPROTO_SCTP = 132,
+    IPPROTO_UDPLITE = 136,
+    IPPROTO_MPLS = 137,
+    IPPROTO_ETHERNET = 143,
+    IPPROTO_RAW = 255,
+    IPPROTO_MPTCP = 262,
 }
 
-/// Socket types.
-/// From <https://elixir.bootlin.com/linux/v6.0.9/source/include/linux/net.h>.
 #[expect(non_camel_case_types)]
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, TryFromInt)]
 pub(crate) enum SockType {
-    /// Stream socket
     SOCK_STREAM = 1,
-    /// Datagram socket
     SOCK_DGRAM = 2,
-    /// Raw socket
     SOCK_RAW = 3,
-    /// Reliably-delivered message
     SOCK_RDM = 4,
-    /// Sequential packet socket
     SOCK_SEQPACKET = 5,
-    /// Datagram Congestion Control Protocol socket
     SOCK_DCCP = 6,
-    /// Linux specific way of getting packets at the dev level
     SOCK_PACKET = 10,
 }
 
@@ -80,19 +67,12 @@ bitflags! {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(crate) struct CUserMsgHdr {
-    /// Pointer to socket address structure
     pub msg_name: Vaddr,
-    /// Size of socket address
     pub msg_namelen: i32,
-    /// Scatter/Gather iov array
     pub msg_iov: Vaddr,
-    /// The # of elements in msg_iov
     pub msg_iovlen: usize,
-    /// Ancillary data
     pub msg_control: Vaddr,
-    /// Ancillary data buffer length
     pub msg_controllen: usize,
-    /// Flags on received message
     pub msg_flags: u32,
 }
 
@@ -108,8 +88,6 @@ impl CUserMsgHdr {
 
     pub(crate) fn write_socket_addr_to_user(&self, addr: Option<&SocketAddr>) -> Result<i32> {
         if self.msg_name == 0 {
-            // The length field will not be touched if the name pointer is NULL.
-            // See <https://elixir.bootlin.com/linux/v6.15.6/source/net/socket.c#L2792>.
             return Ok(self.msg_namelen);
         }
 
@@ -140,8 +118,6 @@ impl CUserMsgHdr {
         user_space: &CurrentUserSpace,
     ) -> Result<(u32, RecvFlags)> {
         if self.msg_control == 0 {
-            // The length field will be set even if the control message pointer is NULL.
-            // See <https://elixir.bootlin.com/linux/v6.15.6/source/net/socket.c#L2807>.
             let output_flags = if control_messages.is_empty() {
                 RecvFlags::empty()
             } else {

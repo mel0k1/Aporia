@@ -1,13 +1,8 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Shared encoding and decoding helpers for FUSE operation implementations.
-
 use ostd::mm::{Infallible, VmReader, VmWriter};
 use ostd_pod::Pod;
 
 use crate::{FuseError, FuseResult};
 
-/// The trailing NULL byte required by FUSE request names.
 pub(super) const NAME_TERMINATOR: &[u8] = &[0];
 
 pub(super) fn name_body_len(prefix_len: usize, name: &str) -> usize {

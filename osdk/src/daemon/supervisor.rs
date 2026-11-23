@@ -1,36 +1,21 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Supervises running host daemons for the duration of QEMU.
-
 use std::{
     path::Path,
     process::{self, Child, ExitStatus},
     time::{Duration, Instant},
 };
 
+use super::{DaemonScheme, POLL_INTERVAL, RunningDaemon, SHUTDOWN_TIMEOUT, SignalGuard};
 use crate::{error::Errno, error_msg, warn_msg};
 
-use super::{DaemonScheme, POLL_INTERVAL, RunningDaemon, SHUTDOWN_TIMEOUT, SignalGuard};
-
-/// Time given to a daemon to create resources needed by QEMU before setup
-/// continues. QEMU socket backends fail if their socket does not exist yet.
 const STARTUP_DELAY: Duration = Duration::from_secs(1);
 
-/// Supervises host daemons for the duration of a QEMU run.
-///
-/// The supervisor starts all executables, reaps normal exits, reports failures, and
-/// stops all running daemons when QEMU exits or the run is interrupted.
 pub(crate) struct DaemonSupervisor<'a> {
-    /// Host daemons currently managed by the supervisor.
     running_daemons: Vec<RunningDaemon<'a>>,
-    /// Shared state used to observe termination signals.
     signal: &'a SignalGuard,
-    /// Working directory assigned to each managed host daemon.
     work_dir: &'a Path,
 }
 
 impl<'a> DaemonSupervisor<'a> {
-    /// Starts all daemon executables.
     pub(crate) fn start(
         daemons: &'a [DaemonScheme],
         work_dir: &'a Path,
@@ -53,8 +38,6 @@ impl<'a> DaemonSupervisor<'a> {
                 return Err(errno);
             }
 
-            // FIXME: Replace this fixed delay with a readiness check for the
-            // resources that QEMU needs.
             std::thread::sleep(STARTUP_DELAY);
 
             if signal.received_signal().is_some() {
@@ -71,7 +54,6 @@ impl<'a> DaemonSupervisor<'a> {
         Ok(supervisor)
     }
 
-    /// Starts one daemon executable and records its running state.
     fn start_daemon(&mut self, daemon: &'a DaemonScheme) -> Result<(), Errno> {
         info!("Starting managed QEMU daemon `{}`", daemon.path.display());
 
@@ -81,7 +63,6 @@ impl<'a> DaemonSupervisor<'a> {
         Ok(())
     }
 
-    /// Waits for QEMU while observing managed daemons and termination signals.
     pub(crate) fn wait_for_qemu(&mut self, qemu: &mut Child) -> Result<ExitStatus, Errno> {
         loop {
             if self.signal.received_signal().is_some() {
@@ -101,8 +82,6 @@ impl<'a> DaemonSupervisor<'a> {
             };
 
             if let Some(status) = status {
-                // Daemons are expected to terminate with their QEMU peer, so
-                // their exit status is no longer meaningful here.
                 self.stop_all();
                 return Ok(status);
             }
@@ -116,7 +95,6 @@ impl<'a> DaemonSupervisor<'a> {
         }
     }
 
-    /// Reaps normally exited daemons and reports abnormal exits.
     pub(crate) fn reap_exited_daemons(&mut self) -> Result<(), Errno> {
         let mut index = 0;
 
@@ -154,7 +132,6 @@ impl<'a> DaemonSupervisor<'a> {
         Ok(())
     }
 
-    /// Stops all managed daemons and releases their runtime state.
     pub(crate) fn stop_all(&mut self) {
         for running in &self.running_daemons {
             running.terminate();
@@ -207,13 +184,11 @@ impl<'a> DaemonSupervisor<'a> {
         self.running_daemons.clear();
     }
 
-    /// Stops QEMU and all managed daemons.
     pub(crate) fn stop_qemu_and_daemons(&mut self, qemu: &mut Child) {
         stop_qemu(qemu);
         self.stop_all();
     }
 
-    /// Stops QEMU when present, stops all managed daemons, and exits.
     pub(crate) fn abort(&mut self, qemu: Option<&mut Child>, errno: Errno) -> ! {
         if let Some(qemu) = qemu {
             stop_qemu(qemu);
@@ -224,9 +199,6 @@ impl<'a> DaemonSupervisor<'a> {
 }
 
 impl Drop for DaemonSupervisor<'_> {
-    // `process::exit` does not run destructors, so error paths that exit the
-    // process must stop daemons explicitly. This covers ordinary returns and
-    // panics.
     fn drop(&mut self) {
         self.stop_all();
     }
@@ -241,8 +213,9 @@ fn stop_qemu(qemu: &mut Child) {
 mod tests {
     use std::{fs, path::Path};
 
-    use super::*;
     use tempfile::tempdir;
+
+    use super::*;
 
     fn shell_daemon(script: &str) -> DaemonScheme {
         DaemonScheme {

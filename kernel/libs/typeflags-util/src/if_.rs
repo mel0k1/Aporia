@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Type Level If
-
 use crate::bool::{False, True};
 
 pub trait If<B1, B2> {

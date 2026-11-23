@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 macro_rules! impl_socket_options {
     ($(
         $(#[$outer:meta])*

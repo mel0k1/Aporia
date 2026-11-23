@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::time::Duration;
 
 use inherit_methods_macro::inherit_methods;
@@ -20,15 +18,12 @@ use crate::{
     process::{Gid, Uid},
 };
 
-/// Creates a pair of connected pipe file handles with the default capacity.
 pub(crate) fn new_file_pair(
     status_flags: StatusFlags,
 ) -> Result<(Arc<InodeHandle>, Arc<InodeHandle>)> {
     let pipe_inode = Arc::new(AnonPipeInode::new());
     let path = PipeFs::new_path(pipe_inode);
 
-    // Remove `O_DIRECT` for the reader, which conforms to the Linux behavior:
-    // the writer's status flags decide whether the pipe is in "packet" mode.
     let reader_status_flags = status_flags & StatusFlags::O_NONBLOCK;
     let writer_status_flags = status_flags & (StatusFlags::O_NONBLOCK | StatusFlags::O_DIRECT);
 
@@ -40,9 +35,7 @@ pub(crate) fn new_file_pair(
     Ok((Arc::new(reader), Arc::new(writer)))
 }
 
-/// An anonymous pipe inode.
 pub(crate) struct AnonPipeInode {
-    /// The underlying pipe backend.
     pipe: Pipe,
     pseudo_inode: PseudoInode,
 }

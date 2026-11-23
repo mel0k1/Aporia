@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 #![short_vis_path::add(procfs)]
 
 use super::PidDirOps;
@@ -48,12 +46,10 @@ pub(super) mod stat;
 mod status;
 mod uid_map;
 
-/// Represents the inode at `/proc/[pid]/task`.
 pub(super) struct TaskDirOps(Arc<PidEntry>);
 
 impl TaskDirOps {
     pub(super) fn new_inode(dir: &PidDirOps, parent: Weak<dyn Inode>) -> Arc<dyn Inode> {
-        // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/fs/proc/base.c#L3316>
         ProcDir::new(Self(dir.pid_entry().clone()), parent, mkmod!(a+rx))
     }
 
@@ -62,7 +58,6 @@ impl TaskDirOps {
     }
 }
 
-/// Represents the inode at `/proc/[pid]/task/[tid]`.
 #[derive(Clone)]
 pub(in procfs) struct TidDirOps {
     pid_entry: Arc<PidEntry>,
@@ -77,12 +72,7 @@ impl TidDirOps {
         pid_entry: Arc<PidEntry>,
         parent: Weak<dyn Inode>,
     ) -> Arc<dyn Inode> {
-        ProcDir::new(
-            Self { pid_entry },
-            parent,
-            // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/fs/proc/base.c#L3796>
-            mkmod!(a+rx),
-        )
+        ProcDir::new(Self { pid_entry }, parent, mkmod!(a+rx))
     }
 
     pub(in procfs) fn pid_entry(&self) -> &Arc<PidEntry> {
@@ -198,21 +188,9 @@ impl ProcDirOps for TaskDirOps {
             return Err(errno!(ENOENT, "the name is not a valid TID"));
         };
 
-        // Note: After a PID-number recycling mechanism is introduced, there may be a race here:
-        // - If a PID number is recycled as soon as its `PidEntry` is removed from the `PidTable`,
-        //   then before the `PidTable` lock is acquired below, the current inode’s `PidEntry` may
-        //   already have been removed and replaced with a new entry using the same PID number.
-        //   In that case, it is possible that the main thread of the `Process` obtained here has not
-        //   yet been deleted, causing `contains_tid` to return true even though we have actually
-        //   retrieved the wrong `PidEntry`.
-        // - If the PID number is not recycled until the `PidEntry` is dropped, then this race does not arise.
-        //
-        // TODO: Revisit and handle this potential race as appropriate once PID-number recycling is implemented.
         let Some(process) = self.process() else {
             return Err(errno!(ESRCH, "the process does not exist"));
         };
-
-        // Lock order: PID table -> tasks of process
 
         let pid_table = pid_table::pid_table_mut();
 
@@ -244,7 +222,6 @@ impl ProcDirOps for TaskDirOps {
             return Err(errno!(ENOENT, "the process does not exist"));
         };
 
-        // Collect TIDs before visiting entries, as `visit_fn` may copy data to user memory.
         let tids = process
             .tasks()
             .lock()
@@ -267,14 +244,10 @@ impl ProcDirOps for TaskDirOps {
 
     fn revalidate_exists(&self, name: &str, child: &dyn Inode) -> bool {
         if name.parse::<Tid>().is_err() {
-            // For non-numeric names, the set of valid children does not change over time,
-            // so we can rely on the cache without revalidating.
             return true;
         }
 
         if let Some(child) = child.downcast_ref::<ProcDir<TidDirOps>>() {
-            // If the child's `PidEntry` still has the associated thread, it will not be removed
-            // from the `PidTable` and remains alive.
             child.inner().pid_entry().type_().is_some()
         } else {
             false

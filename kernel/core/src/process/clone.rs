@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::borrow::Cow;
 use core::{num::NonZeroU64, sync::atomic::Ordering};
 
@@ -39,33 +37,32 @@ use crate::{
 bitflags! {
     #[derive(Clone, Copy, Debug, Default, PartialEq)]
     pub(crate) struct CloneFlags: u32 {
-        const CLONE_NEWTIME        = 0x00000080; /* New time namespace */
-        const CLONE_VM             = 0x00000100; /* Set if VM shared between processes.  */
-        const CLONE_FS             = 0x00000200; /* Set if fs info shared between processes.  */
-        const CLONE_FILES          = 0x00000400; /* Set if open files shared between processes.  */
-        const CLONE_SIGHAND        = 0x00000800; /* Set if signal handlers shared.  */
-        const CLONE_PIDFD          = 0x00001000; /* Set if a pidfd should be placed in parent.  */
-        const CLONE_PTRACE         = 0x00002000; /* Set if tracing continues on the child.  */
-        const CLONE_VFORK          = 0x00004000; /* Set if the parent wants the child to wake it up on mm_release.  */
-        const CLONE_PARENT         = 0x00008000; /* Set if we want to have the same parent as the cloner.  */
-        const CLONE_THREAD         = 0x00010000; /* Set to add to same thread group.  */
-        const CLONE_NEWNS          = 0x00020000; /* Set to create new namespace.  */
-        const CLONE_SYSVSEM        = 0x00040000; /* Set to shared SVID SEM_UNDO semantics.  */
-        const CLONE_SETTLS         = 0x00080000; /* Set TLS info.  */
-        const CLONE_PARENT_SETTID  = 0x00100000; /* Store TID in userlevel buffer before MM copy.  */
-        const CLONE_CHILD_CLEARTID = 0x00200000; /* Register exit futex and memory location to clear.  */
-        const CLONE_DETACHED       = 0x00400000; /* Create clone detached.  */
-        const CLONE_UNTRACED       = 0x00800000; /* Set if the tracing process can't force CLONE_PTRACE on this clone.  */
-        const CLONE_CHILD_SETTID   = 0x01000000; /* Store TID in userlevel buffer in the child.  */
-        const CLONE_NEWCGROUP      = 0x02000000; /* New cgroup namespace.  */
-        const CLONE_NEWUTS         = 0x04000000; /* New utsname group.  */
-        const CLONE_NEWIPC         = 0x08000000; /* New ipcs.  */
-        const CLONE_NEWUSER        = 0x10000000; /* New user namespace.  */
-        const CLONE_NEWPID         = 0x20000000; /* New pid namespace.  */
-        const CLONE_NEWNET         = 0x40000000; /* New network namespace.  */
-        const CLONE_IO             = 0x80000000; /* Clone I/O context.  */
+        const CLONE_NEWTIME        = 0x00000080;
+        const CLONE_VM             = 0x00000100;
+        const CLONE_FS             = 0x00000200;
+        const CLONE_FILES          = 0x00000400;
+        const CLONE_SIGHAND        = 0x00000800;
+        const CLONE_PIDFD          = 0x00001000;
+        const CLONE_PTRACE         = 0x00002000;
+        const CLONE_VFORK          = 0x00004000;
+        const CLONE_PARENT         = 0x00008000;
+        const CLONE_THREAD         = 0x00010000;
+        const CLONE_NEWNS          = 0x00020000;
+        const CLONE_SYSVSEM        = 0x00040000;
+        const CLONE_SETTLS         = 0x00080000;
+        const CLONE_PARENT_SETTID  = 0x00100000;
+        const CLONE_CHILD_CLEARTID = 0x00200000;
+        const CLONE_DETACHED       = 0x00400000;
+        const CLONE_UNTRACED       = 0x00800000;
+        const CLONE_CHILD_SETTID   = 0x01000000;
+        const CLONE_NEWCGROUP      = 0x02000000;
+        const CLONE_NEWUTS         = 0x04000000;
+        const CLONE_NEWIPC         = 0x08000000;
+        const CLONE_NEWUSER        = 0x10000000;
+        const CLONE_NEWPID         = 0x20000000;
+        const CLONE_NEWNET         = 0x40000000;
+        const CLONE_IO             = 0x80000000;
 
-        /// A bitmask of all `CloneFlags` related to namespace creation.
         const CLONE_NS_FLAGS       = Self::CLONE_NEWTIME.bits() |
             Self::CLONE_NEWNS.bits() |
             Self::CLONE_NEWCGROUP.bits() |
@@ -77,30 +74,6 @@ bitflags! {
     }
 }
 
-/// An internal structure to homogenize the arguments for `clone` and
-/// `clone3`.
-///
-/// From the clone(2) man page:
-///
-/// ```
-/// The following table shows the equivalence between the arguments
-/// of clone() and the fields in the clone_args argument supplied to
-/// clone3():
-///     clone()         clone3()        Notes
-///                     cl_args field
-///     flags & ~0xff   flags           For most flags; details
-///                                     below
-///     parent_tid      pidfd           See CLONE_PIDFD
-///     child_tid       child_tid       See CLONE_CHILD_SETTID
-///     parent_tid      parent_tid      See CLONE_PARENT_SETTID
-///     flags & 0xff    exit_signal
-///     stack           stack
-///     ---             stack_size
-///     tls             tls             See CLONE_SETTLS
-///     ---             set_tid         See below for details
-///     ---             set_tid_size
-///     ---             cgroup          See CLONE_INTO_CGROUP
-/// ```
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct CloneArgs {
     pub flags: CloneFlags,
@@ -117,7 +90,6 @@ pub(crate) struct CloneArgs {
 }
 
 impl CloneArgs {
-    /// Prepares a new [`CloneArgs`] based on the arguments for clone(2).
     pub(crate) fn for_clone(
         raw_flags: u64,
         parent_tid: Vaddr,
@@ -132,9 +104,6 @@ impl CloneArgs {
             sig_num => SigNum::try_from(sig_num).ok(),
         };
 
-        // Disambiguate the `parent_tid` parameter. The field is used
-        // both for `CLONE_PIDFD` and `CLONE_PARENT_SETTID`, so at
-        // most only one can be specified.
         let (pidfd, parent_tid) = match (
             flags.contains(CloneFlags::CLONE_PIDFD),
             flags.contains(CloneFlags::CLONE_PARENT_SETTID),
@@ -181,10 +150,6 @@ impl CloneArgs {
         let clone_flags = self.flags;
         clone_flags.check_unsupported_flags()?;
 
-        // This checks the arguments for all clone-related system calls.
-        // Reference: <https://elixir.bootlin.com/linux/v6.16.9/source/kernel/fork.c#L1926-L1978>.
-
-        // Reject invalid argument combinations related to the CLONE_FS flag.
         if clone_flags.contains(CloneFlags::CLONE_FS)
             && clone_flags.intersects(CloneFlags::CLONE_NEWNS | CloneFlags::CLONE_NEWUSER)
         {
@@ -194,7 +159,6 @@ impl CloneArgs {
             ));
         }
 
-        // Reject invalid argument combinations related to the CLONE_PARENT flag.
         if clone_flags.contains(CloneFlags::CLONE_PARENT) {
             if clone_flags.intersects(CloneFlags::CLONE_NEWUSER | CloneFlags::CLONE_NEWPID) {
                 return Err(errno!(
@@ -211,7 +175,6 @@ impl CloneArgs {
             }
         }
 
-        // Reject invalid argument combinations related to the CLONE_THREAD flag.
         if clone_flags.contains(CloneFlags::CLONE_THREAD) {
             if !clone_flags.contains(CloneFlags::CLONE_VM | CloneFlags::CLONE_SIGHAND) {
                 return Err(errno!(
@@ -228,7 +191,6 @@ impl CloneArgs {
             }
         }
 
-        // Reject invalid argument combinations related to the CLONE_SIGHAND flag.
         if clone_flags.contains(CloneFlags::CLONE_SIGHAND)
             && !clone_flags.contains(CloneFlags::CLONE_VM)
         {
@@ -238,7 +200,6 @@ impl CloneArgs {
             ));
         }
 
-        // TODO: Support clone-family ptrace events and remove this check.
         if !clone_flags.contains(CloneFlags::CLONE_UNTRACED)
             && ctx.posix_thread.needs_ptrace_clone_stop(self)
         {
@@ -254,7 +215,6 @@ impl CloneArgs {
 
 impl From<u64> for CloneFlags {
     fn from(flags: u64) -> Self {
-        // We use the lower 32 bits
         let clone_flags = (flags & 0xffff_ffff) as u32;
         CloneFlags::from_bits_truncate(clone_flags)
     }
@@ -286,10 +246,6 @@ impl CloneFlags {
     }
 }
 
-/// Clone a child thread or child process.
-///
-/// FIXME: currently, the child process or thread will be scheduled to run at once,
-/// but this may not be the expected behavior.
 pub(crate) fn clone_child(
     ctx: &Context,
     parent_context: &UserContext,
@@ -305,14 +261,8 @@ pub(crate) fn clone_child(
         let child_tid = child_thread.as_posix_thread().unwrap().tid();
         Ok(child_tid)
     } else {
-        // Hold the read lock before charge to ensure the cgroup of current process
-        // won't change during the charge and the subsequent move operation.
         let cgroup_read_guard = CgroupMembership::read_lock();
 
-        // Pre-charge the pids sub-controller before creating the child process.
-        // This enforces `pids.max` at fork time per cgroupv2 semantics.
-        // The charge must happen before process creation so that on failure
-        // we can return EAGAIN without leaving an orphaned process.
         let parent_cgroup = ctx.process.cgroup().get().map(|cgroup| cgroup.clone());
         let pids_charge = if let Some(ref cgroup) = parent_cgroup {
             let pids_charge = cgroup
@@ -326,8 +276,6 @@ pub(crate) fn clone_child(
 
         let child_process = clone_child_process(ctx, parent_context, clone_args)?;
 
-        // Use the same cgroup snapshot that was charged above to avoid
-        // a mismatch if the parent migrates concurrently.
         if let Some(ref cgroup) = parent_cgroup {
             cgroup_read_guard.move_forked_process_to_node(
                 child_process.clone(),
@@ -348,7 +296,6 @@ pub(crate) fn clone_child(
         PROCESS_CREATION_COUNTER
             .get()
             .unwrap()
-            // Race conditions are fine as we don't really care which CPU creates a process.
             .add_on_cpu(CpuId::current_racy(), 1);
 
         if child_process.status().is_vfork_child() {
@@ -376,10 +323,8 @@ fn clone_child_task(
         ..
     } = ctx;
 
-    // Clone system V semaphore
     clone_sysvsem(clone_flags)?;
 
-    // Clone VMAR
     let child_vmar = thread_local
         .vmar()
         .borrow()
@@ -387,16 +332,12 @@ fn clone_child_task(
         .unwrap()
         .clone_handle();
 
-    // Clone file table
     let child_file_table = clone_files(&thread_local.borrow_file_table(), clone_flags);
 
-    // Clone FS
     let child_fs = clone_fs(&thread_local.borrow_fs(), clone_flags);
 
-    // Clone FPU context
     let child_fpu_context = thread_local.supp_user_context().fpu().get();
 
-    // Clone namespaces
     let child_user_ns = thread_local.borrow_user_ns().clone();
     let child_ns_proxy = clone_ns_proxy(
         &thread_local.borrow_ns_proxy(),
@@ -406,7 +347,6 @@ fn clone_child_task(
         clone_flags,
     )?;
 
-    // Clone default timer slack
     let default_timer_slack_ns = posix_thread.timer_slack_ns();
 
     if clone_flags.contains(CloneFlags::CLONE_NEWNS) {
@@ -428,10 +368,8 @@ fn clone_child_task(
     #[cfg(not(target_arch = "x86_64"))]
     clone_tls_pointer(child_user_ctx.as_mut(), clone_flags, clone_args.tls);
 
-    // Inherit sigmask from current thread
     let sig_mask = posix_thread.sig_mask().into();
 
-    // Inherit the thread name.
     let thread_name = *posix_thread.thread_name().lock();
 
     let child_tid = allocate_posix_tid();
@@ -461,7 +399,6 @@ fn clone_child_task(
             thread_builder = thread_builder.fs_base(child_fs_base).gs_base(child_gs_base);
         }
 
-        // Deal with SETTID/CLEARTID flags
         clone_parent_settid(child_tid, clone_args.parent_tid, clone_flags)?;
         thread_builder = clone_child_cleartid(thread_builder, clone_args.child_tid, clone_flags);
         thread_builder = clone_child_settid(thread_builder, clone_args.child_tid, clone_flags);
@@ -500,10 +437,8 @@ fn clone_child_process(
 
     let clone_flags = clone_args.flags;
 
-    // Clone the virtual memory space
     let child_vmar = clone_vmar(thread_local.vmar().borrow().as_ref().unwrap(), clone_flags);
 
-    // Clone the user context
     #[cfg_attr(target_arch = "x86_64", expect(unused_mut))]
     let mut child_user_ctx = Box::new(clone_user_ctx(
         parent_context,
@@ -516,22 +451,16 @@ fn clone_child_process(
     #[cfg(not(target_arch = "x86_64"))]
     clone_tls_pointer(child_user_ctx.as_mut(), clone_flags, clone_args.tls);
 
-    // Clone the file table
     let child_file_table = clone_files(&thread_local.borrow_file_table(), clone_flags);
 
-    // Clone the filesystem information
     let child_fs = clone_fs(&thread_local.borrow_fs(), clone_flags);
 
-    // Clone signal dispositions
     let child_sig_dispositions = clone_sighand(process.sig_dispositions(), clone_flags);
 
-    // Clone System V semaphore
     clone_sysvsem(clone_flags)?;
 
-    // Clone FPU context
     let child_fpu_context = thread_local.supp_user_context().fpu().get();
 
-    // Clone the namespaces
     let child_user_ns = clone_user_ns(clone_flags, thread_local)?;
     let child_ns_proxy = clone_ns_proxy(
         &thread_local.borrow_ns_proxy(),
@@ -541,7 +470,6 @@ fn clone_child_process(
         clone_flags,
     )?;
 
-    // Clone default timer slack
     let default_timer_slack_ns = posix_thread.timer_slack_ns();
 
     if clone_flags.contains(CloneFlags::CLONE_NEWNS) {
@@ -551,16 +479,12 @@ fn clone_child_process(
             .switch_to_mnt_ns(child_ns_proxy.mnt_ns())?;
     }
 
-    // Inherit the parent's signal mask
     let child_sig_mask = posix_thread.sig_mask().into();
 
-    // Inherit the parent's resource limits
     let child_resource_limits = process.resource_limits().clone();
 
-    // Inherit the parent's nice value
     let child_nice = process.nice().load(Ordering::Relaxed);
 
-    // Inherit the parent's OOM score adjustment
     let child_oom_score_adj = process.oom_score_adj().load(Ordering::Relaxed);
 
     let child_tid = allocate_posix_tid();
@@ -569,7 +493,6 @@ fn clone_child_process(
         let child_vmar_arc = child_vmar.clone_arc();
 
         let mut child_thread_builder = {
-            // Inherit the parent's thread name
             let child_thread_name = *ctx.posix_thread.thread_name().lock();
 
             let credentials = {
@@ -599,7 +522,6 @@ fn clone_child_process(
                 .gs_base(child_gs_base);
         }
 
-        // Deal with SETTID/CLEARTID flags
         clone_parent_settid(child_tid, clone_args.parent_tid, clone_flags)?;
         child_thread_builder =
             clone_child_cleartid(child_thread_builder, clone_args.child_tid, clone_flags);
@@ -624,7 +546,6 @@ fn clone_child_process(
         child.set_exit_signal(sig);
     };
 
-    // Sets parent process and group for child process.
     set_parent_and_group(clone_flags, process, &child);
 
     Ok(child)
@@ -668,8 +589,6 @@ fn clone_parent_settid(
 }
 
 fn clone_vmar(parent_vmar: &VmarHandle, clone_flags: CloneFlags) -> VmarHandle {
-    // If CLONE_VM is set, the child and parent share the same VMAR.
-    // Otherwise, the child has a copy of the parent's VMAR.
     if clone_flags.contains(CloneFlags::CLONE_VM) {
         parent_vmar.clone_handle()
     } else {
@@ -683,15 +602,12 @@ fn clone_user_ctx(
     stack_size: Option<NonZeroU64>,
 ) -> UserContext {
     let mut child_context = parent_context.clone();
-    // The return value in the child thread is zero.
     child_context.set_syscall_ret(0);
 
     if let Some(new_sp) = new_sp {
         if let Some(stack_size) = stack_size {
-            // `new_sp` is the stack bottom if the stack size is specified.
             child_context.set_stack_pointer((new_sp.get() + stack_size.get()) as usize);
         } else {
-            // `new_sp` is the stack top if the stack size is not specified.
             child_context.set_stack_pointer(new_sp.get() as usize);
         }
     }
@@ -724,8 +640,6 @@ fn clone_tls_pointer(child_context: &mut UserContext, clone_flags: CloneFlags, t
 }
 
 fn clone_fs(parent_fs: &Arc<ThreadFsInfo>, clone_flags: CloneFlags) -> Arc<ThreadFsInfo> {
-    // If CLONE_FS is set, the child and parent share the same filesystem information.
-    // Otherwise, the child has a copy of the parent's filesystem information.
     if clone_flags.contains(CloneFlags::CLONE_FS) {
         parent_fs.clone()
     } else {
@@ -734,8 +648,6 @@ fn clone_fs(parent_fs: &Arc<ThreadFsInfo>, clone_flags: CloneFlags) -> Arc<Threa
 }
 
 fn clone_files(parent_file_table: &RwArc<FileTable>, clone_flags: CloneFlags) -> RwArc<FileTable> {
-    // If CLONE_FILES is set, the child and parent share the same file table.
-    // Otherwise, the child has a copy of the parent's file table.
     if clone_flags.contains(CloneFlags::CLONE_FILES) {
         parent_file_table.clone()
     } else {
@@ -747,8 +659,6 @@ fn clone_sighand(
     parent_sig_dispositions: &Mutex<Arc<Mutex<SigDispositions>>>,
     clone_flags: CloneFlags,
 ) -> Arc<Mutex<SigDispositions>> {
-    // If CLONE_SIGHAND is set, the child and parent shares the same signal handlers.
-    // Otherwise, the child has a copy of the parent's signal handlers.
     if clone_flags.contains(CloneFlags::CLONE_SIGHAND) {
         parent_sig_dispositions.lock().clone()
     } else {
@@ -783,15 +693,12 @@ fn clone_pidfd(
         file_table.lock_and_insert(Arc::new(pid_file), FdFlags::CLOEXEC)?
     };
 
-    // Since `write_val` may sleep, we cannot hold the file table lock during its execution.
     match ctx
         .user_space()
         .write_val(pidfd_addr, &RawFileDesc::from(fd))
     {
         Ok(()) => Ok(()),
         Err(err) => {
-            // FIXME: Introduce reserved FDs to ensure that the file is never visible to user space
-            // before `write_val` succeeds and cleanup closes the exact reserved FD below.
             let closed_file = {
                 let file_table = ctx.thread_local.borrow_file_table();
                 let mut file_table_locked = file_table.write();
@@ -858,28 +765,17 @@ fn set_parent_and_group(clone_flags: CloneFlags, parent: &Arc<Process>, child: &
     loop {
         let real_parent = clone_parent(clone_flags, parent);
 
-        // Lock the parent's children before checking its status.
         let mut children_mut = real_parent.children().lock();
 
         let Some(children_mut) = children_mut.as_mut() else {
-            // The real parent is concurrently exiting group.
-            // The children have been cleared,
-            // so the retrial will see an up-to-date real parent.
             continue;
         };
 
-        // Lock order: children of process -> parent of process
         child.parent().lock().set_process(&real_parent);
 
-        // Update `has_child_subreaper` for the child process to
-        // make sure the `has_child_subreaper` state of the child process
-        // will be consistent with its parent.
         if real_parent.has_child_subreaper.load(Ordering::Acquire) {
             child.has_child_subreaper.store(true, Ordering::Release);
         }
-
-        // Lock order: children of process -> PID table
-        // -> group of process -> group inner
 
         let mut pid_table = pid_table::pid_table_mut();
 
@@ -888,16 +784,13 @@ fn set_parent_and_group(clone_flags: CloneFlags, parent: &Arc<Process>, child: &
             let process_group = process_group_mut.as_ref().unwrap();
             let mut process_group_inner = process_group.lock();
 
-            // Put the child process in the parent's process group
             process_group_inner.insert_process(child);
             process_group.clone()
         };
         *child.process_group.lock() = Some(process_group);
 
-        // Put the child process in the parent's `children` field
         children_mut.insert(child.pid(), child.clone());
 
-        // Put the child process in the global table
         pid_table.insert_process(child.pid(), child);
 
         return;
@@ -906,8 +799,6 @@ fn set_parent_and_group(clone_flags: CloneFlags, parent: &Arc<Process>, child: &
 
 fn clone_parent(clone_flags: CloneFlags, current: &Arc<Process>) -> Cow<'_, Arc<Process>> {
     if clone_flags.contains(CloneFlags::CLONE_PARENT) {
-        // The parent process of the current process cannot be `None`, since we have checked that
-        // the current process is not the init process.
         Cow::Owned(current.parent().lock().process().upgrade().unwrap())
     } else {
         Cow::Borrowed(current)

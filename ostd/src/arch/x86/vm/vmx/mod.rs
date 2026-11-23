@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Intel VMX platform lifecycle management.
-
 pub(super) mod context_switch;
 mod instructions;
 pub(super) mod invept;
@@ -85,19 +81,12 @@ impl VmxGuardState {
 
 static VMX_GUARD_STATE: Mutex<VmxGuardState> = Mutex::new(VmxGuardState::new());
 
-/// A guard that keeps VMX operation enabled.
 #[must_use]
 pub(super) struct VmxGuard {
     _private: (),
 }
 
 impl VmxGuard {
-    /// Acquires a lease on the VMX platform lifecycle.
-    ///
-    /// # Panics
-    ///
-    /// Panics if this method or [`Drop::drop`] is called in
-    /// [atomic mode](crate::task::atomic_mode).
     pub(super) fn acquire_vmx() -> Result<VmxGuard> {
         atomic_mode::might_sleep();
 
@@ -132,7 +121,6 @@ impl VmxGuardState {
 
         VmxCpuState::prepare_vmxon_regions()?;
         if let Err(err) = self.run_on_all_cpus(VmxCpuState::enable_vmx) {
-            // SAFETY: No `VmxGuard`s have been issued.
             let is_rollback_completed = self
                 .run_on_all_cpus(|| unsafe { VmxCpuState::disable_vmx() })
                 .is_ok();
@@ -154,7 +142,6 @@ impl VmxGuardState {
             return;
         }
 
-        // SAFETY: No `VmxGuard`s remain.
         if self
             .run_on_all_cpus(|| unsafe { VmxCpuState::disable_vmx() })
             .is_err()
@@ -177,7 +164,6 @@ impl VmxGuardState {
 }
 
 impl VmxCpuState {
-    /// Enables VMX on the current CPU.
     fn enable_vmx() {
         let irq_guard = crate::irq::disable_local();
         let cpu_state = VMX_CPU_STATE.get_with(&irq_guard);
@@ -204,34 +190,16 @@ impl VmxCpuState {
                 return;
             }
         };
-        // SAFETY: `read_and_validate_capability` checked VMX support.
         if let Err(err) = unsafe { invept::check_ept_support(&irq_guard) } {
             cpu_state.last_error = Some(err);
             return;
         }
 
-        // SAFETY: `vmx_cr4` preserves the current `CR4` value, adds only
-        // `CR4.VMXE`, and was validated by `read_and_validate_capability` above.
         unsafe { Cr4::write_raw(vmx_cr4) };
 
-        // SAFETY:
-        // 1. `prepare_vmxon_regions` allocated a page-aligned frame, which is a
-        //    valid VMXON region.
-        // 2. `cpu_state.is_enabled` is false, so the VMXON region is not enabled.
         unsafe { initialize_vmxon_region(region_paddr, revision_id) };
 
-        // SAFETY:
-        // 1. `cpu_state.is_enabled` is false, so this CPU is outside VMX operation.
-        // 2. `read_and_validate_capability` checked VMX support above.
-        // 3. `read_and_validate_capability` validated the CR0/CR4 fixed bits, and
-        //    the write above set `CR4.VMXE` while preserving all other CR4 bits.
-        // 4. `read_and_validate_capability` checked that VMX outside SMX is allowed.
-        // 5. The frame allocated by `prepare_vmxon_regions` is page-aligned and
-        //    was initialized above. `cpu_state.region` retains exclusive ownership;
-        //    the lifecycle does not access its contents while VMX is enabled,
-        //    and `cleanup_prepared_regions` retains it if `VMXOFF` fails.
         if let Err(error) = unsafe { instructions::vmxon(region_paddr, &irq_guard) } {
-            // SAFETY: A failed `VMXON` leaves this CPU outside VMX operation.
             unsafe { clear_vmx_enable(&irq_guard) };
             cpu_state.last_error = Some(error);
             return;
@@ -241,11 +209,6 @@ impl VmxCpuState {
         cpu_state.last_error = None;
     }
 
-    /// Disables VMX on the current CPU.
-    ///
-    /// # Safety
-    ///
-    /// No VMX users may remain, and new users must be excluded throughout the call.
     unsafe fn disable_vmx() {
         let irq_guard = crate::irq::disable_local();
         let cpu_state = VMX_CPU_STATE.get_with(&irq_guard);
@@ -256,28 +219,18 @@ impl VmxCpuState {
             return;
         }
 
-        // A local shutdown can run before queued IPI callbacks on this CPU.
-        // Drain EPT invalidations while VMX is still enabled; later callbacks
-        // will find no pending work.
         invept::flush_pending();
 
-        // SAFETY:
-        // 1. `cpu_state.is_enabled` means this CPU is in VMX operation.
-        // 2. The caller excludes concurrent VMX users.
         if let Err(err) = unsafe { vmcs::LocalVmcsState::deactivate_all(&irq_guard) } {
             cpu_state.last_error = Some(err);
             return;
         }
 
-        // SAFETY:
-        // 1. `cpu_state.is_enabled` means this CPU is in VMX operation.
-        // 2. `deactivate_all` cleared every active VMCS above.
         if let Err(err) = unsafe { instructions::vmxoff(&irq_guard) } {
             cpu_state.last_error = Some(err);
             return;
         }
 
-        // SAFETY: A successful `VMXOFF` leaves this CPU outside VMX operation.
         unsafe { clear_vmx_enable(&irq_guard) };
 
         cpu_state.is_enabled = false;
@@ -331,7 +284,6 @@ fn read_and_validate_capability(vmx_cr4: u64, _irq_guard: &DisabledLocalIrqGuard
         return Err(Error::NotEnoughResources);
     }
 
-    // SAFETY: A CPU that enumerates VMX provides the architectural VMX MSRs read below.
     let (feature_control, vmx_basic, cr0_fixed0, cr0_fixed1, cr4_fixed0, cr4_fixed1) = unsafe {
         (
             rdmsr(IA32_FEATURE_CONTROL),
@@ -353,21 +305,15 @@ fn read_and_validate_capability(vmx_cr4: u64, _irq_guard: &DisabledLocalIrqGuard
         return Err(Error::NotEnoughResources);
     }
 
-    // OSTD's linear mapping uses write-back memory. See Intel SDM,
-    // Vol. 3D, Appendix A.1, for the VMCS memory-type requirement.
     const VMCS_MEMORY_TYPE_WB: u64 = 6;
     if (vmx_basic >> 50) & 0xf != VMCS_MEMORY_TYPE_WB {
         return Err(Error::NotEnoughResources);
     }
 
     for control in &VMCS_CONTROLS {
-        // SAFETY: VMX is supported, and `vmx_basic` selects supported true-control MSRs.
-        // Primary controls precede secondary controls in `VMCS_CONTROLS`, so secondary-control
-        // support is checked before reading its MSR.
         let capability = unsafe { rdmsr(control.capability_msr(vmx_basic)) };
         let can_set = control.required_bits | control.runtime_bits;
         let can_clear = control.forbidden_bits | control.runtime_bits;
-        // Intel SDM, Vol. 3D, Appendix A: low bits require 1, high bits allow 1.
         if (capability >> 32) as u32 & can_set != can_set || capability as u32 & can_clear != 0 {
             return Err(Error::NotEnoughResources);
         }
@@ -380,27 +326,14 @@ fn control_register_is_valid(value: u64, fixed0: u64, fixed1: u64) -> bool {
     value & fixed0 == fixed0 && value & !fixed1 == 0
 }
 
-/// Initializes the VMXON region with the given revision ID.
-///
-/// # Safety
-///
-/// 1. `region_paddr` points to a valid, page-aligned VMXON region.
-/// 2. The VMXON region is not enabled and is exclusively owned by the caller.
 unsafe fn initialize_vmxon_region(region_paddr: usize, revision_id: u32) {
     let region_ptr = paddr_to_vaddr(region_paddr) as *mut u32;
 
-    // SAFETY: The caller ensures safety.
     unsafe { region_ptr.write(revision_id) };
 }
 
-/// Clears `CR4.VMXE` without changing any other `CR4` bits.
-///
-/// # Safety
-///
-/// The current CPU must be outside VMX operation.
 unsafe fn clear_vmx_enable(_irq_guard: &DisabledLocalIrqGuard) {
     let cr4 = Cr4::read_raw();
-    // SAFETY: The caller ensures safety.
     unsafe { Cr4::write_raw(cr4 & !Cr4Flags::VIRTUAL_MACHINE_EXTENSIONS.bits()) };
 }
 
@@ -410,29 +343,24 @@ mod test {
 
     #[ktest]
     fn multiple_vmx_guards_lifecycle() {
-        // Passes if VMX is not supported.
         if !has_extensions(IsaExtensions::VMX) {
             crate::early_print!(" [skipped: VMX unavailable]");
             return;
         }
 
         let guard1 = VmxGuard::acquire_vmx().expect("Failed to acquire VMX guard");
-        // SAFETY: `guard1` makes sure every CPU is in VMX operation.
         assert_eq!(
             unsafe { instructions::vmptrst(&crate::irq::disable_local()) },
             u64::MAX
         );
 
         let guard2 = VmxGuard::acquire_vmx().expect("Failed to acquire VMX guard");
-        // SAFETY: `guard2` makes sure every CPU is in VMX operation.
         assert_eq!(
             unsafe { instructions::vmptrst(&crate::irq::disable_local()) },
             u64::MAX
         );
 
         drop(guard1);
-        // SAFETY: Dropping `guard1` leaves `guard2` alive, so the final-release
-        // shutdown has not run. Every CPU remains in VMX operation.
         assert_eq!(
             unsafe { instructions::vmptrst(&crate::irq::disable_local()) },
             u64::MAX

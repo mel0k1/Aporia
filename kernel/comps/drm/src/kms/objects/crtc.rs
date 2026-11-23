@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::sync::Weak;
 
 use ostd::sync::Mutex;
@@ -9,12 +7,6 @@ use crate::kms::{
     objects::{KmsObjectId, KmsObjectIndex, plane::DrmPlane, property::DrmPropertyAttachments},
 };
 
-/// A display pipeline that scans out planes using a display mode.
-///
-/// A CRTC owns the runtime mode and activation state of the pipeline.
-/// Its primary plane is mandatory,
-/// while its cursor plane is optional;
-/// both links are non-owning because the KMS object store owns the topology objects.
 #[derive(Debug)]
 pub(crate) struct DrmCrtc {
     id: KmsObjectId,
@@ -69,7 +61,6 @@ impl DrmCrtc {
     }
 }
 
-/// Immutable configuration of a DRM CRTC.
 #[derive(Debug)]
 pub(super) struct DrmCrtcConfig {
     pub gamma_size: u32,

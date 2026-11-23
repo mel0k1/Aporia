@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Utility definitions and helper structs for implementing `SysTree` nodes.
-
 use alloc::{
     collections::BTreeMap,
     string::String,
@@ -23,24 +19,10 @@ use super::{
 };
 use crate::{SysBranchNode, SysNode, SysSymlink};
 
-/// Returns whether `name` is valid for a non-root `SysTree` node [`SysObj`]
-/// or an attribute [`SysAttr`](crate::SysAttr).
-///
-/// A valid name is nonempty, is neither `.` nor `..`, and contains no `/` or `NUL`.
 pub fn is_valid_name(name: &str) -> bool {
     !name.is_empty() && !matches!(name, "." | "..") && !name.contains(['/', '\0'])
 }
 
-/// Computes the relative path from the directory `from_dir` to the target `to`.
-///
-/// Both arguments are absolute paths within one `SysTree` as returned by
-/// [`SysObj::path`] (the root is `/`). The result is suitable as the target of a
-/// symlink placed inside `from_dir`, e.g. the relative path from `/class/mem` to
-/// `/devices/virtual/mem/null` is `../../devices/virtual/mem/null`.
-///
-/// The result always ends with the last component of `to`, as the symlinks in
-/// Linux's sysfs do: the relative path from `/devices/a/b/c` to `/devices/a`
-/// is `../../../a`, not `../..`.
 pub fn relative_path(from_dir: &str, to: &str) -> String {
     let from: Vec<&str> = from_dir.split('/').filter(|s| !s.is_empty()).collect();
     let to: Vec<&str> = to.split('/').filter(|s| !s.is_empty()).collect();
@@ -65,7 +47,6 @@ pub fn relative_path(from_dir: &str, to: &str) -> String {
     result
 }
 
-/// Fields for all `SysObj` types, including `SysNode` and `SysBranchNode`.
 #[derive(Debug)]
 pub struct ObjFields<T: SysObj + ?Sized> {
     id: SysNodeId,
@@ -75,11 +56,6 @@ pub struct ObjFields<T: SysObj + ?Sized> {
 }
 
 impl<T: SysObj + ?Sized> ObjFields<T> {
-    /// Creates object fields for a non-root node.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the name is empty, `.` or `..`, or contains `/` or `NUL`.
     pub fn new(name: SysStr, weak_self: Weak<T>) -> Self {
         assert!(is_valid_name(&name), "invalid SysTree node name");
         Self {
@@ -114,7 +90,6 @@ impl<T: SysObj + ?Sized> ObjFields<T> {
         &self.weak_self
     }
 
-    /// Creates object fields with an empty name for a root node.
     fn new_root(weak_self: Weak<T>) -> Self {
         Self {
             id: SysNodeId::new(),
@@ -125,7 +100,6 @@ impl<T: SysObj + ?Sized> ObjFields<T> {
     }
 }
 
-/// Fields for normal nodes in the `SysTree`.
 #[derive(Debug)]
 pub struct NormalNodeFields<T: SysNode> {
     base: ObjFields<T>,
@@ -158,10 +132,6 @@ impl<T: SysNode> NormalNodeFields<T> {
     }
 }
 
-/// Fields for attribute-less branch nodes in the `SysTree`.
-///
-/// An attribute-less branch node is the `SysTree` branch node without any
-/// specific attributes.
 #[derive(Debug)]
 pub struct AttrLessBranchNodeFields<C: SysObj + ?Sized, T: SysBranchNode> {
     base: ObjFields<T>,
@@ -243,7 +213,6 @@ impl<C: SysObj + ?Sized, T: SysBranchNode> AttrLessBranchNodeFields<C, T> {
         SysAttrSet::empty()
     }
 
-    /// Creates attribute-less branch fields with an empty name for a root node.
     fn new_root(weak_self: Weak<T>) -> Self {
         Self {
             base: ObjFields::new_root(weak_self),
@@ -252,7 +221,6 @@ impl<C: SysObj + ?Sized, T: SysBranchNode> AttrLessBranchNodeFields<C, T> {
     }
 }
 
-/// Fields for normal branch nodes in the `SysTree`.
 #[derive(Debug)]
 pub struct BranchNodeFields<C: SysObj + ?Sized, T: SysBranchNode> {
     base: AttrLessBranchNodeFields<C, T>,
@@ -298,7 +266,6 @@ impl<C: SysObj + ?Sized, T: SysBranchNode> BranchNodeFields<C, T> {
         &self.attr_set
     }
 
-    /// Creates branch fields with an empty name for a root node.
     pub(crate) fn new_root(attr_set: SysAttrSet, weak_self: Weak<T>) -> Self {
         Self {
             base: AttrLessBranchNodeFields::new_root(weak_self),
@@ -307,7 +274,6 @@ impl<C: SysObj + ?Sized, T: SysBranchNode> BranchNodeFields<C, T> {
     }
 }
 
-/// Fields for symlink nodes in the `SysTree`.
 #[derive(Debug)]
 pub struct SymlinkNodeFields<T: SysSymlink> {
     base: ObjFields<T>,
@@ -394,7 +360,6 @@ macro_rules! _inner_impl_sys_node {
     };
 }
 
-/// A helper trait to inherit common methods for `SysTree` leaf types.
 #[doc(hidden)]
 pub trait _InheritSysLeafNode<T: SysNode> {
     fn field(&self) -> &ObjFields<T>;
@@ -424,70 +389,12 @@ pub trait _InheritSysLeafNode<T: SysNode> {
     }
 
     fn write_attr_at(&self, name: &str, _offset: usize, reader: &mut VmReader) -> Result<usize> {
-        // In general, the `offset` for attribute write operations is ignored directly.
         self.write_attr(name, reader)
     }
 
     fn perms(&self) -> crate::SysPerms;
 }
 
-/// A convenience macro for implementing [`SysObj`] and [`SysNode`] trait for a `SysTree` leaf type
-/// through inheriting the implementation of the target field.
-///
-/// Users must ensures the target field is a [`NormalNodeFields`] type.
-///
-/// This macro takes three parameters. The first two parameters correspond to:
-/// 1. The name of the struct that implements the `SysObj` trait,
-/// 2. The name of the field to be inherited,
-///
-/// The third parameter is used to implement the required trait methods or override default
-/// implementations. For `SysObj` and `SysNode` traits, some of their methods require users
-/// to implement them within this macro, some methods provide default implementations that users
-/// can override, and some methods provide default implementations that users cannot override.
-/// The breakdown is as follows:
-///
-/// - Methods that require users to implement:
-///   - [`SysNode::perms`]
-/// - Methods with default implementations that users can override:
-///   - [`SysObj::is_root`]
-///   - [`SysObj::init_parent`]
-///   - [`SysNode::is_attr_absent`]
-///   - [`SysNode::read_attr`]
-///   - [`SysNode::write_attr`]
-///   - [`SysNode::read_attr_at`]
-///   - [`SysNode::write_attr_at`]
-/// - Other methods are provided with default implementations that users cannot override.
-///
-/// Here, "default implementations" refer to either directly inheriting the implementation of a
-/// method with the same name from the target `field` or, in the absence of a method with the same
-/// name, the default implementation provided by the trait.
-///
-/// Note that for the `SysNode` trait, `read_attr` can be automatically implemented in terms of
-/// `read_attr_at`, and `write_attr_at` can be automatically implemented in terms of `write_attr`
-/// since most sysfs attributes do not support partial writes and will ignore the `offset`.
-/// Therefore, it is **recommended** to override the `read_attr_at` and `write_attr` methods. In
-/// addition, users can use [`aster_util::printer::VmPrinter`] to easily handle the `offset` when
-/// overriding the `read_attr_at` method.
-///
-/// ## Examples
-///
-/// ```rust
-/// /// // A struct representing a `SysTree` leaf node.
-/// struct LeafNode {
-///     fields: NormalNodeFields<dyn SysObj, Self>,
-///     // ... other fields
-/// }
-///
-/// inherit_sys_leaf_node!(
-///   LeafNode,      // The struct name.
-///   fields,        // The field to be inherited.
-///   {
-///      fn perms(&self) -> SysPerms {
-///        SysPerms::DEFAULT_RW_PERMS
-///      }
-///   } // Override the `perms` method.
-/// );
-/// ```
 #[macro_export]
 macro_rules! inherit_sys_leaf_node {
     ($struct_name:ident, $field:ident, {$($fn_override:item)*}) => {
@@ -544,7 +451,6 @@ macro_rules! inherit_sys_leaf_node {
     };
 }
 
-/// A helper trait to inherit common methods for `SysTree` branch types.
 #[doc(hidden)]
 pub trait _InheritSysBranchNode<T: SysBranchNode> {
     fn field(&self) -> &ObjFields<T>;
@@ -574,7 +480,6 @@ pub trait _InheritSysBranchNode<T: SysBranchNode> {
     }
 
     fn write_attr_at(&self, name: &str, _offset: usize, reader: &mut VmReader) -> Result<usize> {
-        // In general, the `offset` for attribute write operations is ignored directly.
         self.write_attr(name, reader)
     }
 
@@ -585,44 +490,6 @@ pub trait _InheritSysBranchNode<T: SysBranchNode> {
     }
 }
 
-/// A convenience macro for implementing [`SysObj`], [`SysNode`] and [`SysBranchNode`] trait
-/// for a `SysTree` branch type through inheriting the implementation of the target field.
-///
-/// Users must ensures the target field is a [`BranchNodeFields`] type or a
-/// [`AttrLessBranchNodeFields`] type.
-///
-/// The parameters and requirements of this macro are the same to those of
-/// [`inherit_sys_leaf_node`]. Here lists the additional override rules for the [`SysBranchNode`]
-/// trait methods:
-///
-/// - No method is required to be implemented by users.
-/// - Methods with default implementations that users can override:
-///  - [`SysBranchNode::create_child`]
-/// - Other methods are provided with default implementations that users cannot override.
-///
-/// ## Examples
-///
-/// ```rust
-/// /// // A struct representing a `SysTree` branch node.
-/// struct BranchNode {
-///     fields: BranchNodeFields<dyn SysObj, Self>,
-///     // ... other fields
-/// }
-///
-/// inherit_sys_branch_node!{
-///   BranchNode,     // The struct name.
-///   fields,         // The field to be inherited.
-///   {
-///      fn perms(&self) -> SysPerms {
-///        SysPerms::DEFAULT_RW_PERMS
-///      }
-///
-///      fn create_child(&self, name: &str) -> Result<Arc<dyn SysObj>> {
-///        //..implementation
-///      }
-///   } // Override the `perms` and `create_child` methods.
-/// }
-/// ```
 #[macro_export]
 macro_rules! inherit_sys_branch_node {
     ($struct_name:ident, $field:ident, {$($fn_override:item)*}) => {
@@ -741,7 +608,6 @@ macro_rules! inherit_sys_branch_node {
     };
 }
 
-/// A helper trait to inherit common methods for `SysTree` symlink types.
 #[doc(hidden)]
 pub trait _InheritSysSymlinkNode<T: SysSymlink> {
     fn field(&self) -> &ObjFields<T>;
@@ -755,30 +621,6 @@ pub trait _InheritSysSymlinkNode<T: SysSymlink> {
     }
 }
 
-/// A convenience macro for implementing [`SysObj`] and [`SysSymlink`] trait for a `SysTree` symlink
-/// type through inheriting the implementation of the target field.
-///
-/// Users must ensures the target field is a [`SymlinkNodeFields`] type.
-///
-/// The parameters and requirements of this macro are similar to [`inherit_sys_leaf_node`],
-/// except that the third parameter is optional. This macro follows the same override rules
-/// as the [`SysObj`] component in `inherit_sys_leaf_node`, allowing users to use it
-/// without implementing or overriding any methods.
-///
-/// ## Examples
-///
-/// ```rust
-/// /// // A struct representing a `SysTree` symlink node.
-/// struct SymlinkNode {
-///     fields: SymlinkNodeFields<dyn SysObj, Self>,
-///     // ... other fields
-/// }
-///
-/// inherit_sys_symlink_node!(
-///   BranchNode,     // The struct name.
-///   fields         // The field to be inherited.
-/// ); // No overrides.
-/// ```
 #[macro_export]
 macro_rules! inherit_sys_symlink_node {
     ($struct_name:ident, $field:ident, {$($fn_override:item)*}) => {
@@ -835,13 +677,10 @@ macro_rules! inherit_sys_symlink_node {
     };
 
     ($struct_name:ident, $field:ident) => {
-        $crate::inherit_sys_symlink_node!($struct_name, $field, {/* no overrides */});
+        $crate::inherit_sys_symlink_node!($struct_name, $field, { });
     };
 }
 
-/// An empty node in the `SysTree`.
-///
-/// This node has no attributes. It is usually used to represent a placeholder for a mount point.
 #[derive(Debug)]
 pub struct EmptyNode {
     fields: NormalNodeFields<Self>,

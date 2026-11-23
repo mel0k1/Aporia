@@ -1,13 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! This module defines segments that only appear in acknowledgment messages.
-//!
-//! An acknowledgment segment appears as the final segment in a response message from the kernel.
-//! Netlink utilizes two classes of acknowledgment segments:
-//! 1. Done Segment: Indicates the conclusion of a message comprised of multiple segments.
-//! 2. Error Segment: Indicates that an error occurred while the kernel processed the user space request.
-//!
-
 #![short_vis_path::add(netlink)]
 
 use super::{

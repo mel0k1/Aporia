@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 #![short_vis_path::add(pid)]
 
 use core::{sync::atomic::Ordering, time::Duration};
@@ -26,66 +24,6 @@ use crate::{
     vm::vmar::RssType,
 };
 
-/// Represents the inode at either `/proc/[pid]/stat` or `/proc/[pid]/task/[tid]/stat`.
-///
-/// The fields are the same as the ones in `/proc/[pid]/status`, but the format is different.
-/// See <https://elixir.bootlin.com/linux/v6.16.5/source/fs/proc/array.c#L467>.
-///
-/// FIXME: Some fields are not implemented or contain placeholders yet.
-///
-/// Fields:
-/// - pid              : Process ID.
-/// - comm             : Process name.
-/// - state            : Process state (R: running, S: sleeping, Z: zombie).
-/// - ppid             : Parent process ID.
-/// - pgrp             : Process group ID.
-/// - session          : Session ID.
-/// - tty_nr           : Terminal associated with the process.
-/// - tpgid            : Foreground process group ID.
-/// - flags            : Kernel flags determining process behavior.
-/// - minflt           : Minor page faults (no I/O needed).
-/// - cminflt          : Cumulative minor faults of child processes.
-/// - majflt           : Major page faults (I/O required).
-/// - cmajflt          : Cumulative major faults of child processes.
-/// - utime            : Time spent in user mode (clock ticks).
-/// - stime            : Time spent in kernel mode (clock ticks).
-/// - cutime           : Child processes' user mode time.
-/// - cstime           : Child processes' kernel mode time.
-/// - priority         : Kernel scheduling priority.
-/// - nice             : Nice value (-20 to 19; lower is higher priority).
-/// - num_threads      : Number of threads.
-/// - itrealvalue      : Time before the next `SIGALRM`.
-/// - starttime        : Process start time since boot (clock ticks).
-/// - vsize            : Virtual memory size (bytes).
-/// - rss              : Resident Set Size (pages in real memory).
-/// - rsslim           : Soft memory limit (bytes).
-/// - startcode        : Start address of executable code.
-/// - endcode          : End address of executable code.
-/// - startstack       : Initial top address of process stack.
-/// - kstkesp          : Current stack pointer (ESP).
-/// - kstkeip          : Current instruction pointer (EIP).
-/// - signal           : Bitmap of pending signals.
-/// - blocked          : Bitmap of blocked signals.
-/// - sigignore        : Bitmap of ignored signals.
-/// - sigcatch         : Bitmap of caught signals.
-/// - wchan            : Address where the process is waiting.
-/// - nswap            : Number of pages swapped (deprecated).
-/// - cnswap           : Cumulative swapped pages of children.
-/// - exit_signal      : Signal sent to parent on termination.
-/// - processor        : Last CPU the process executed on.
-/// - rt_priority      : Real-time scheduling priority (1-99, 0 otherwise).
-/// - policy           : Scheduling policy (e.g., SCHED_NORMAL, SCHED_FIFO).
-/// - delayacct_blkio_ticks : Block I/O delays (clock ticks).
-/// - guest_time       : Time spent as a guest in virtual CPU.
-/// - cguest_time      : Guest time of child processes.
-/// - start_data       : Start address of initialized/uninitialized data.
-/// - end_data         : End address of initialized/uninitialized data.
-/// - start_brk        : Address above which the heap expands.
-/// - arg_start        : Start address of command-line arguments.
-/// - arg_end          : End address of command-line arguments.
-/// - env_start        : Start address of environment variables.
-/// - env_end          : End address of environment variables.
-/// - exit_code        : Process exit code as returned by waitpid(2).
 pub(in pid) struct StatFileOps {
     dir: TidDirOps,
     mode: StatMode,
@@ -111,7 +49,6 @@ impl StatFileOps {
         mode: StatMode,
         parent: Weak<dyn Inode>,
     ) -> Arc<dyn Inode> {
-        // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/fs/proc/base.c#L3341>
         ProcFile::new(Self { dir, mode }, parent, mkmod!(a+r))
     }
 }
@@ -126,12 +63,6 @@ impl ProcFileOps for StatFileOps {
             return Err(errno!(ESRCH, "the thread or the process does not exist"));
         };
         let posix_thread = thread.as_posix_thread().unwrap();
-
-        // According to the Linux implementation, a process's `/proc/<pid>/stat` should be
-        // almost identical to its main thread's `/proc/<pid>/task/<pid>/stat`, except for
-        // fields `exit_code`, `wchan`, `min_flt`, `maj_flt`, `gtime`, `utime`, and `stime`.
-        //
-        // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/fs/proc/array.c#L467-L681>
 
         let pid = posix_thread.tid();
 
@@ -169,9 +100,7 @@ impl ProcFileOps for StatFileOps {
             (0, -1)
         };
 
-        // Placeholder: kernel flags are not exposed yet.
         let flags = 0;
-        // Placeholder: page-fault counters are not tracked per process/thread yet.
         let min_flt = 0;
         let cmin_flt = 0;
         let maj_flt = 0;
@@ -252,7 +181,6 @@ impl ProcFileOps for StatFileOps {
             .get_rlimit(ResourceType::RLIMIT_RSS)
             .get_cur();
 
-        // Placeholder: saved SP/IP and wait-channel addresses are not exposed by `Thread`.
         let kstkesp = 0;
         let kstkeip = 0;
         let wchan = 0;
@@ -261,7 +189,6 @@ impl ProcFileOps for StatFileOps {
         let blocked = u64::from(posix_thread.sig_mask());
         let (sigignore, sigcatch) = signal_disposition_masks(&process);
 
-        // Placeholder: swap accounting is not implemented yet.
         let nswap = 0;
         let cnswap = 0;
 
@@ -275,7 +202,6 @@ impl ProcFileOps for StatFileOps {
             .map(|cpu| u32::from(cpu) as usize)
             .unwrap_or(0);
 
-        // Placeholder: block I/O delay and guest-time accounting are not implemented yet.
         let delayacct_blkio_ticks = 0;
         let guest_time = 0;
         let cguest_time = 0;
@@ -347,7 +273,6 @@ impl ProcFileOps for StatFileOps {
     }
 }
 
-/// Converts a duration into kernel clock ticks.
 fn duration_to_jiffies(duration: Duration) -> u64 {
     const NSEC_PER_JIFFY: u64 = NSEC_PER_SEC as u64 / TIMER_FREQ;
     const { assert!((NSEC_PER_SEC as u64).is_multiple_of(TIMER_FREQ)) };
@@ -357,7 +282,6 @@ fn duration_to_jiffies(duration: Duration) -> u64 {
     sec_jiffies.saturating_add(subsec_jiffies)
 }
 
-/// Returns the `priority`, `rt_priority`, and `policy` values for `/proc/<pid>/stat`.
 fn sched_values(thread: &Thread) -> (i32, u8, i32) {
     const MAX_RT_PRIORITY: u8 = RealTimePriority::MAX.get();
     const RT_PRIORITY_LIMIT: u8 = MAX_RT_PRIORITY + 1;
@@ -368,14 +292,6 @@ fn sched_values(thread: &Thread) -> (i32, u8, i32) {
     let (priority, rt_priority) = match policy {
         SchedPolicy::Stop => (-i32::from(MAX_RT_PRIORITY) - 1, MAX_RT_PRIORITY),
         SchedPolicy::RealTime { rt_prio, .. } => {
-            // `SchedPolicy` stores real-time priorities in the scheduler's
-            // internal order, where smaller values have higher priority.
-            // This is the reverse of Linux's user-visible RT priority
-            // used by `/proc/<pid>/stat`.
-            // For example, an internal RT priority of 1 is reported as 99.
-            // FIXME: Use the same conversion helper (i.e., `rt_to_static`)
-            // as the `sched*` syscalls once it is available outside the
-            // `syscall` module.
             let rt_priority = RT_PRIORITY_LIMIT - rt_prio.get();
             (-i32::from(rt_priority) - 1, rt_priority)
         }
@@ -387,7 +303,6 @@ fn sched_values(thread: &Thread) -> (i32, u8, i32) {
     (priority, rt_priority, linux_policy as i32)
 }
 
-/// Returns the ignored and caught standard-signal masks for `/proc/<pid>/stat`.
 fn signal_disposition_masks(process: &Process) -> (u64, u64) {
     let dispositions = process.sig_dispositions().lock();
     let dispositions = dispositions.lock();
@@ -395,7 +310,6 @@ fn signal_disposition_masks(process: &Process) -> (u64, u64) {
     let mut caught = 0_u64;
 
     for (sig_num, sig_action) in dispositions.iter() {
-        // Linux only exposes standard signals in `sigignore` and `sigcatch`.
         if !sig_num.is_std() {
             break;
         }
@@ -403,8 +317,6 @@ fn signal_disposition_masks(process: &Process) -> (u64, u64) {
         let bit = u64::from(SigMask::from(sig_num));
         match sig_action {
             SigAction::Dfl => {}
-            // `sigignore` tracks explicitly ignored signals, while `sigcatch` tracks
-            // signals with user-registered handlers.
             SigAction::Ign => ignored |= bit,
             SigAction::User { .. } => caught |= bit,
         }

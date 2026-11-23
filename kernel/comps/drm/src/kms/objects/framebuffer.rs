@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::sync::Arc;
 use core::fmt::Debug;
 
@@ -11,12 +9,6 @@ use crate::{
     utils::DrmSize,
 };
 
-/// A DRM framebuffer backed by a GEM object.
-///
-/// The framebuffer describes how pixels are laid out within the object;
-/// the GEM object owns the underlying storage.
-///
-// TODO: Support framebuffers backed by multiple planes.
 #[derive(Debug)]
 pub struct DrmFramebuffer {
     id: KmsObjectId,
@@ -32,7 +24,6 @@ pub struct DrmFramebuffer {
 }
 
 impl DrmFramebuffer {
-    /// Creates a single-plane framebuffer over the supplied GEM object.
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         id: KmsObjectId,
@@ -48,8 +39,6 @@ impl DrmFramebuffer {
             return Err(errno!(EINVAL, "the DRM framebuffer size must not be empty"));
         }
 
-        // Calculate the minimum GEM object size needed to contain the framebuffer,
-        // including its initial offset, row strides, and the last row of pixels.
         let row_size = (size.width() as usize)
             .checked_mul(pixel_format.bytes_per_pixel())
             .ok_or_else(|| errno!(EINVAL, "the DRM framebuffer row size overflows usize",))?;
@@ -108,14 +97,9 @@ impl DrmFramebuffer {
 }
 
 bitflags::bitflags! {
-    /// Framebuffer flags exposed through the DRM mode UAPI.
-    ///
-    /// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm_mode.h#L666-L667>
     #[derive(Clone, Copy, Debug)]
     pub(crate) struct DrmFramebufferFlags: u32 {
-        /// The framebuffer contains interlaced image data.
         const INTERLACED = 1 << 0;
-        /// The framebuffer uses an explicitly specified format modifier.
         const MODIFIERS  = 1 << 1;
     }
 }

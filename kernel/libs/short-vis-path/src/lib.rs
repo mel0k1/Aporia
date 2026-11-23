@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 #![doc = include_str!("../README.md")]
 #![feature(clone_from_ref)]
 
@@ -15,7 +13,6 @@ mod tests;
 #[proc_macro_attribute]
 pub fn add(attr: TokenStream, item: TokenStream) -> TokenStream {
     if attr.is_empty() {
-        // Do nothing if the argument hasn't been provided yet.
         return item;
     }
 

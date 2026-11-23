@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::sync::atomic::Ordering;
 
 use super::SyscallReturn;
@@ -60,15 +58,11 @@ fn set_priority_one(new_nice: Nice, process: &Process, ctx: &Context) -> Result<
         return Err(errno!(EACCES, "the nice value reaches the resource limit"));
     }
 
-    // FIXME: `setpriority` updates only the per-process nice value. Fair
-    // scheduler state is kept in each thread's `SchedPolicy::Fair`, so it
-    // should be updated from the same source of truth.
     process.nice().store(new_nice, Ordering::Relaxed);
 
     Ok(())
 }
 
-/// Checks whether the caller may change the target process's nice value.
 fn check_setpriority_permission(target: &Process, ctx: &Context) -> Result<()> {
     let caller_uid = ctx.posix_thread.credentials().euid();
     let target_credentials = target
@@ -87,7 +81,6 @@ fn check_setpriority_permission(target: &Process, ctx: &Context) -> Result<()> {
     Ok(())
 }
 
-/// Checks whether the caller has the `SYS_NICE` capability in the initial user namespace.
 fn check_nice_capability(ctx: &Context) -> Result<()> {
     lsm_hooks::on_capable(lsm_hooks::CapableContext::new(
         UserNamespace::get_init_singleton().as_ref(),

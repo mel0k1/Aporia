@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::{sync::Arc, vec::Vec};
 
 use ostd::mm::{Infallible, VmReader};
@@ -36,10 +34,6 @@ pub(super) struct PollContext<'a, E: Ext> {
     actions: &'a mut Vec<SocketTableAction<E>>,
 }
 
-/// Socket table actions such as adding or removing TCP connections.
-///
-/// Note that they must be performed in order. This is because the same connection key can occur
-/// multiple times, but with different types of operations (e.g., add or remove).
 pub(super) enum SocketTableAction<E: Ext> {
     AddTcpConn(Arc<TcpConnectionBg<E>>),
     DelTcpConn(ConnectionKey),
@@ -101,7 +95,6 @@ impl<E: Ext> PollContext<'_, E> {
         packet: RxPacket<NetworkLayer>,
         ip_version: Option<ip::Version>,
     ) -> Option<TxPacketWithDst> {
-        // Parse the IP header. Ignore the packet if the header is ill-formed.
         let checksum_caps = self.iface.context().checksum_caps();
         let (packet, ip_repr) = ip::parse(packet, ip_version, checksum_caps.ipv4.rx())?;
 
@@ -137,16 +130,12 @@ impl<E: Ext> PollContext<'_, E> {
         packet: RxPacket<TransportLayer>,
         verify_checksum: bool,
     ) -> Option<TxPacketWithDst> {
-        // TCP connections can only be established between unicast addresses. Ignore the packet if
-        // this is not the case. See
-        // <https://datatracker.ietf.org/doc/html/rfc9293#section-3.9.2.3>.
         if !self.iface.context().is_unicast(ip_repr.src_addr())
             || !self.iface.context().is_unicast(ip_repr.dst_addr())
         {
             return None;
         }
 
-        // Parse the TCP header. Ignore the packet if the header is ill-formed.
         let (packet, tcp_repr) = tcp::parse(packet, ip_repr, verify_checksum)?;
 
         let (ip_repr, tcp_repr) =
@@ -180,9 +169,6 @@ impl<E: Ext> PollContext<'_, E> {
         tcp_repr: &TcpRepr,
         payload: PacketSlice<'_>,
     ) -> Option<(IpRepr, TcpRepr<'static>)> {
-        // Process packets belonging to existing connections first.
-        // Note that we must do this first because SYN packets may match existing TIME-WAIT
-        // sockets. See comments in `TcpConnectionBg::process` for details.
         let connection_key = ConnectionKey::new(
             ip_repr.dst_addr(),
             tcp_repr.dst_port,
@@ -192,13 +178,9 @@ impl<E: Ext> PollContext<'_, E> {
         let mut connection_in_table = self.sockets.lookup_connection(&connection_key);
 
         loop {
-            // First try the connection in the socket table, as this is the most common. If it
-            // fails, it might mean that the connection is dead, the next step is to try the new
-            // connections instead.
             let (should_break, connection) = if let Some(conn) = connection_in_table.take() {
                 (false, Some(conn))
             } else {
-                // Find in reverse order because old connections must have been dead.
                 (
                     true,
                     self.actions
@@ -233,7 +215,6 @@ impl<E: Ext> PollContext<'_, E> {
             }
         }
 
-        // Process packets that request to create new connections second.
         if tcp_repr.control == TcpControl::Syn && tcp_repr.ack_number.is_none() {
             let listener_key = ListenerKey::new(ip_repr.dst_addr(), tcp_repr.dst_port);
             if let Some(listener) = self.sockets.lookup_listener(&listener_key) {
@@ -254,15 +235,12 @@ impl<E: Ext> PollContext<'_, E> {
             }
         }
 
-        // "In no case does receipt of a segment containing RST give rise to a RST in response."
-        // See <https://datatracker.ietf.org/doc/html/rfc9293#section-4-1.64>.
         if tcp_repr.control == TcpControl::Rst {
             return None;
         }
 
         let (ip_repr, mut reply_repr) = smoltcp::socket::tcp::Socket::rst_reply(ip_repr, tcp_repr);
         if reply_repr.ack_number.is_some() {
-            // Fix the ACK number, as the payload is kept outside of `TcpRepr`.
             reply_repr.ack_number =
                 Some(tcp_repr.seq_number + tcp_repr.control.len() + payload.len());
         }
@@ -276,7 +254,6 @@ impl<E: Ext> PollContext<'_, E> {
         packet: RxPacket<TransportLayer>,
         verify_checksum: bool,
     ) -> Option<TxPacketWithDst> {
-        // Parse the UDP header. Ignore the packet if the header is ill-formed.
         let (packet, udp_repr) = udp::parse(packet, &ip_repr.inner, verify_checksum)?;
 
         if !self.process_udp(&ip_repr.inner, &udp_repr, packet.reader().into()) {
@@ -326,10 +303,6 @@ impl<E: Ext> PollContext<'_, E> {
         mut ip_buffer: VmReader<'_, Infallible>,
         reason: Icmpv4DstUnreachable,
     ) -> Option<TxPacketWithDst> {
-        // "An ICMP error message MUST NOT be sent as the result of receiving [..] a datagram
-        // destined to an IP broadcast or IP multicast address, or [..] a datagram whose source
-        // address does not define a single host."
-        // Reference: <https://datatracker.ietf.org/doc/html/rfc1122#page-39>.
         if !self.iface.context().is_unicast(ip_repr.src_addr())
             || !self.iface.context().is_unicast(ip_repr.dst_addr())
         {
@@ -337,23 +310,13 @@ impl<E: Ext> PollContext<'_, E> {
         }
 
         if self.iface.context().is_unicast_local(ip_repr.src_addr()) {
-            // In this case, the generating ICMP message will have a local IP address as the
-            // destination. However, since we don't have the ability to handle ICMP messages, we'll
-            // just skip the generation.
-            //
-            // TODO: Generate the ICMP message here once we're able to handle incoming ICMP
-            // messages.
             return None;
         }
 
         let IpRepr::Ipv4(ipv4_repr) = ip_repr else {
-            // TODO: Generate an IPv6 ICMP unreachable message.
             return None;
         };
 
-        // "[..] the ICMP datagram SHOULD contain as much of the original datagram as possible
-        // without the length of the ICMP datagram exceeding 576 bytes". See
-        // <https://datatracker.ietf.org/doc/html/rfc1812#section-4.3.2.3>.
         let quote_len = ip_buffer
             .remain()
             .min(IPV4_MIN_MTU - IPV4_HEADER_LEN - icmp::HEADER_LEN);
@@ -422,7 +385,6 @@ impl<E: Ext> PollContext<'_, E> {
 
         let mut dst_addr = ip_repr.dst_addr();
         if !self.iface.context().is_unicast(dst_addr) {
-            // Force the link layer to emit a broadcast link-layer address.
             dst_addr = IpAddress::Ipv4(Ipv4Address::BROADCAST);
         }
 
@@ -486,8 +448,6 @@ impl<E: Ext> PollContext<'_, E> {
                 break;
             };
 
-            // We set `did_something` even if no packets are actually generated. This is because a
-            // timer can expire, but no packets are actually generated.
             did_something = true;
 
             let mut deferred = None;
@@ -509,8 +469,6 @@ impl<E: Ext> PollContext<'_, E> {
                         );
                     }
 
-                    // We cannot call `process_tcp` now because it may cause deadlocks. We will copy
-                    // the payload and call `process_tcp` after releasing the socket lock.
                     let repr: TcpRepr<'static> = TcpRepr {
                         payload: &[],
                         ..*tcp_repr
@@ -572,8 +530,6 @@ impl<E: Ext> PollContext<'_, E> {
                 continue;
             }
 
-            // We set `did_something` even if no packets are actually generated. This is because a
-            // timer can expire, but no packets are actually generated.
             did_something = true;
 
             let mut deferred = None;
@@ -592,14 +548,10 @@ impl<E: Ext> PollContext<'_, E> {
                 }
 
                 if !socket.can_process(udp_repr.dst_port) {
-                    // TODO: Generate the ICMP message here once we're able to handle incoming ICMP
-                    // messages.
                     let _ = this.process_udp(ip_repr, udp_repr, PacketSlice::from(udp_payload));
                     return;
                 }
 
-                // We cannot call `process_udp` now because it may cause deadlocks. We will copy
-                // the payload and call `process_udp` after releasing the socket lock.
                 deferred = Some((ip_repr.clone(), *udp_repr, udp_payload.to_vec()));
             });
 
@@ -613,9 +565,6 @@ impl<E: Ext> PollContext<'_, E> {
             }
         }
 
-        // `actions` should be empty,
-        // because we are dealing with UDP sockets,
-        // and the `actions` contains only TCP actions.
         debug_assert!(actions.is_empty());
 
         (did_something, tx_packet)

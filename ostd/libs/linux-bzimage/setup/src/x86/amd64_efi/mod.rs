@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 pub(super) mod alloc;
 mod decoder;
 mod efi;

@@ -1,23 +1,8 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd::mm::VmIo;
 
 use crate::prelude::*;
 
-/// A trait providing the ability to read a specified number of bytes.
 pub(crate) trait ReadWithLen {
-    /// Reads exactly `len` bytes at the specified offset into the given writer.
-    ///
-    /// Returns `Ok(())` without reading if `len` is zero.
-    /// Otherwise, this has the same no-short-read contract as [`VmIo::read`].
-    ///
-    /// On success, advances the writer by `len` without changing its end boundary.
-    /// On error, leaves the writer's cursor and boundary unchanged, but bytes in
-    /// the destination may already have been modified.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `len` exceeds the writer's available space.
     fn read_with_len(&self, offset: usize, writer: &mut VmWriter, len: usize) -> Result<()>;
 }
 
@@ -29,8 +14,6 @@ impl<T: VmIo + ?Sized> ReadWithLen for T {
         }
 
         {
-            // `VmIo::read` does not allow short writes,
-            // so the writer must be precisely limited here.
             let mut limited_writer = writer.clone_exclusive();
             limited_writer.limit(len);
             self.read(offset, &mut limited_writer)?;
@@ -42,8 +25,6 @@ impl<T: VmIo + ?Sized> ReadWithLen for T {
 
 #[cfg(ktest)]
 mod test {
-    // These tests check cursor advancement and remaining capacity on success and
-    // error, including consecutive reads, zero-length reads, and oversized requests.
 
     use ostd::{mm::FrameAllocOptions, prelude::*};
 
@@ -51,7 +32,6 @@ mod test {
 
     fn init_writer(buffer: &mut [u8]) -> (VmWriter<'_>, *mut u8) {
         let mut writer = VmWriter::from(buffer).to_fallible();
-        // Leave a byte before the cursor so tests can check that it stays untouched.
         writer.skip(1);
         let cursor = writer.cursor();
         (writer, cursor)
@@ -86,7 +66,6 @@ mod test {
         assert_eq!(buffer, [0xaa, b'a', b'b', b'c']);
     }
 
-    // This source simulates a read that modifies the destination before failing.
     struct PartialReadError;
 
     impl VmIo for PartialReadError {

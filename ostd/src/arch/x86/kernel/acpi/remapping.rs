@@ -1,23 +1,10 @@
-// SPDX-License-Identifier: MPL-2.0
-
 #![expect(dead_code)]
-
-//! Remapping structures of DMAR table.
-//!
-//! This file defines these structures and provides a `Debug` implementation to see the value
-//! inside these structures.
-//!
-//! Most of the introduction are copied from Intel vt-directed-io-specification.
 
 use alloc::{borrow::ToOwned, string::String, vec::Vec};
 use core::fmt::Debug;
 
 use ostd_pod::Pod;
 
-/// DMA-remapping hardware unit definition (DRHD).
-///
-/// A DRHD structure uniquely represents a remapping hardware unit present in the platform.
-/// There must be at least one instance of this structure for each PCI segment in the platform.
 #[derive(Clone, Debug)]
 pub(in crate::arch) struct Drhd {
     header: DrhdHeader,
@@ -41,11 +28,6 @@ struct DrhdHeader {
     register_base_addr: u64,
 }
 
-/// Reserved Memory Region Reporting (RMRR).
-///
-/// BIOS allocated reserved memory ranges that may be DMA targets.
-/// It may report each such reserved memory region through the RMRR structures, along
-/// with the devices that requires access to the specified reserved memory region.
 #[derive(Clone, Debug)]
 pub(in crate::arch) struct Rmrr {
     header: RmrrHeader,
@@ -63,10 +45,6 @@ struct RmrrHeader {
     reserved_memory_region_limit_addr: u64,
 }
 
-/// Root Port ATS Capability Reporting (ATSR).
-///
-/// This structure is applicable only for platforms supporting Device-TLBs as reported through the
-/// Extended Capability Register.
 #[derive(Clone, Debug)]
 pub(in crate::arch) struct Atsr {
     header: AtsrHeader,
@@ -83,12 +61,6 @@ struct AtsrHeader {
     segment_num: u16,
 }
 
-/// Remapping Hardware Status Affinity (RHSA).
-///
-/// It is applicable for platforms supporting non-uniform memory (NUMA),
-/// where Remapping hardware units spans across nodes.
-/// This optional structure provides the association between each Remapping hardware unit (identified
-/// by its respective Base Address) and the proximity domain to which that hardware unit belongs.
 #[padding_struct]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
@@ -100,10 +72,6 @@ pub(in crate::arch) struct Rhsa {
     proximity_domain: u32,
 }
 
-/// ACPI Name-space Device Declaration (ANDD).
-///
-/// An ANDD structure uniquely represents an ACPI name-space
-/// enumerated device capable of issuing DMA requests in the platform.
 #[derive(Clone, Debug)]
 pub(in crate::arch) struct Andd {
     header: AnddHeader,
@@ -119,10 +87,6 @@ struct AnddHeader {
     acpi_device_num: u8,
 }
 
-/// SoC Integrated Address Translation Cache (SATC).
-///
-/// The SATC reporting structure identifies devices that have address translation cache (ATC),
-/// as defined by the PCI Express Base Specification.
 #[derive(Clone, Debug)]
 pub(in crate::arch) struct Satc {
     header: SatcHeader,
@@ -139,11 +103,6 @@ struct SatcHeader {
     segment_num: u16,
 }
 
-/// SoC Integrated Device Property Reporting (SIDP).
-///
-/// The (SIDP) reporting structure identifies devices that have special
-/// properties and that may put restrictions on how system software must configure remapping
-/// structures that govern such devices in a platform where remapping hardware is enabled.
 #[derive(Clone, Debug)]
 pub(in crate::arch) struct Sidp {
     header: SidpHeader,
@@ -159,8 +118,6 @@ struct SidpHeader {
     segment_num: u16,
 }
 
-/// The Device Scope Structure is made up of Device Scope Entries. Each Device Scope Entry may be
-/// used to indicate a PCI endpoint device
 #[derive(Clone, Debug)]
 struct DeviceScope {
     header: DeviceScopeHeader,
@@ -182,9 +139,6 @@ macro_rules! impl_from_bytes {
     ($(($struct:tt, $header_struct:tt),)*) => {
         $(impl $struct {
             #[doc = concat!("Parses a [`", stringify!($struct), "`] from bytes.")]
-            ///
-            /// # Panics
-            ///
             #[doc = concat!(
                 "This method may panic if the bytes do not represent a valid [`",
                 stringify!($struct),
@@ -220,11 +174,6 @@ impl_from_bytes!(
 );
 
 impl DeviceScope {
-    /// Parses a [`DeviceScope`] from a prefix of the bytes.
-    ///
-    /// # Panics
-    ///
-    /// This method may panic if the byte prefix does not represent a valid [`DeviceScope`].
     fn from_bytes_prefix(bytes: &[u8]) -> Self {
         let header = DeviceScopeHeader::from_first_bytes(bytes);
         debug_assert!((header.length as usize) <= bytes.len());
@@ -244,11 +193,6 @@ impl DeviceScope {
 }
 
 impl Rhsa {
-    /// Parses an [`Rhsa`] from the bytes.
-    ///
-    /// # Panics
-    ///
-    /// This method may panic if the bytes do not represent a valid [`Rhsa`].
     pub(super) fn from_bytes(bytes: &[u8]) -> Self {
         let val = <Self as Pod>::from_first_bytes(bytes);
         debug_assert_eq!(val.length as usize, bytes.len());
@@ -258,11 +202,6 @@ impl Rhsa {
 }
 
 impl Andd {
-    /// Parses an [`Andd`] from the bytes.
-    ///
-    /// # Panics
-    ///
-    /// This method may panic if the bytes do not represent a valid [`Andd`].
     pub(super) fn from_bytes(bytes: &[u8]) -> Self {
         let header = AnddHeader::from_first_bytes(bytes);
         debug_assert_eq!(header.length as usize, bytes.len());

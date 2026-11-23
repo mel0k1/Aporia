@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::TidDirOps;
 use crate::{
     fs::{
@@ -11,14 +9,10 @@ use crate::{
     thread::Thread,
 };
 
-/// Represents the inode at `/proc/[pid]/task/[tid]/exe` (and also `/proc/[pid]/exe`).
 pub(super) struct ExeSymOps(TidDirOps);
 
 impl ExeSymOps {
     pub(super) fn new_inode(dir: &TidDirOps, parent: Weak<dyn Inode>) -> Arc<dyn Inode> {
-        // Reference:
-        // <https://elixir.bootlin.com/linux/v6.16.5/source/fs/proc/base.c#L3350>
-        // <https://elixir.bootlin.com/linux/v6.16.5/source/fs/proc/base.c#L174-L175>
         ProcSym::new(Self(dir.clone()), parent, mkmod!(a+rwx))
     }
 }

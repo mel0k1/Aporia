@@ -1,10 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! The device model's shared registry.
-//!
-//! [`init`] creates the sysfs roots, and [`get`] provides access to them through [`Registry`].
-//! The registry also keeps registered buses and classes alive.
-
 use alloc::{sync::Arc, vec::Vec};
 
 use aster_systree::SysObj;
@@ -17,17 +10,14 @@ use crate::common::{
     subsystem::SubsystemOps,
 };
 
-/// Returns the initialized device registry.
 pub(crate) fn get() -> &'static Registry {
     REGISTRY.get().expect("the device model is not initialized")
 }
 
-/// Initializes the device registry once.
 pub(crate) fn init() {
     REGISTRY.call_once(|| Registry::new().expect("cannot create the device model roots"));
 }
 
-/// The top-level directories the device model owns.
 pub(crate) struct Registry {
     devices: Arc<Dir>,
     virtual_dir: Arc<Dir>,
@@ -36,7 +26,6 @@ pub(crate) struct Registry {
     dev_char: Arc<Dir>,
     dev_block: Arc<Dir>,
     virtual_glue_dirs: GlueDirs,
-    /// The registered buses and classes, kept alive for the life of the kernel.
     subsystems: Mutex<Vec<Arc<dyn SubsystemOps>>>,
 }
 
@@ -60,17 +49,10 @@ impl Registry {
         }
     }
 
-    /// Keeps a registered bus or class alive for the life of the kernel.
     pub(crate) fn keep_subsystem(&self, subsystem: Arc<dyn SubsystemOps>) {
         self.subsystems.lock().push(subsystem);
     }
 
-    /// Attaches `child` into `/sys/devices/virtual/<class>`,
-    /// creating the directory if needed, and returns that directory.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `class` is not a valid `SysTree` node name.
     pub(crate) fn attach_into_virtual_glue_dir(
         &self,
         class: &str,

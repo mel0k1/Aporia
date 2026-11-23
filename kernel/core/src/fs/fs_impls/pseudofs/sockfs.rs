@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::format;
 
 use spin::Once;
@@ -19,7 +17,6 @@ use crate::{
 };
 
 pub(super) fn init() {
-    // Touch the mount node to trigger the initialization of all singletons.
     let _ = SockFs::mount_node();
 }
 
@@ -28,14 +25,12 @@ pub(crate) struct SockFs {
 }
 
 impl SockFs {
-    /// Returns the singleton instance of the socket file system.
     pub(crate) fn singleton() -> &'static Arc<NaivePseudoFs> {
         static SOCKFS: Once<Arc<NaivePseudoFs>> = Once::new();
 
         NaivePseudoFs::singleton(&SOCKFS, "sockfs", SOCKFS_MAGIC)
     }
 
-    /// Creates a pseudo `Path` for a socket.
     pub(crate) fn new_path() -> Path {
         let (uid, gid) = utils::current_fs_ids();
         let socket_inode = Arc::new(Self::singleton().alloc_inode(
@@ -50,7 +45,6 @@ impl SockFs {
         })
     }
 
-    /// Returns the pseudo mount node of the socket file system.
     pub(crate) fn mount_node() -> &'static Arc<Mount> {
         static SOCKFS_MOUNT: Once<Arc<Mount>> = Once::new();
 
@@ -80,5 +74,4 @@ impl FsType for SockFsType {
     }
 }
 
-// Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/include/uapi/linux/magic.h#L89>
 const SOCKFS_MAGIC: u64 = 0x534F434B;

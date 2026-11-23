@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 pub(crate) use alloc::{
     collections::{BTreeMap, VecDeque},
     string::String,

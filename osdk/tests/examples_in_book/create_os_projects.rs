@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use std::{fs, path::PathBuf};
 
 use crate::util::{cargo_osdk, depends_on_local_ostd};

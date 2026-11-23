@@ -1,17 +1,6 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! The test suite for networking applications on Asterinas NixOS.
-//!
-//! See `test/nixos/README.md#documentation-maintenance` for sync requirements
-//! between this test suite and the corresponding "Verified Usage" book section.
-
 use nixos_test_framework::*;
 
 nixos_test_main!();
-
-// ============================================================================
-// Network Utilities
-// ============================================================================
 
 #[nixos_test]
 fn curl_fetch_webpage(nixos_shell: &mut Session) -> Result<(), Error> {
@@ -110,7 +99,6 @@ fn rsync_include_exclude(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd("echo 'log' > /tmp/rsync_src3/file.log")?;
     nixos_shell.run_cmd("echo 'tmp' > /tmp/rsync_src3/file.tmp")?;
     nixos_shell.run_cmd("mkdir -p /tmp/rsync_dst3")?;
-    // Include only .txt files, exclude everything else
     nixos_shell
         .run_cmd("rsync -av --include '*.txt' --exclude '*' /tmp/rsync_src3/ /tmp/rsync_dst3/")?;
     nixos_shell.run_cmd_and_expect("ls /tmp/rsync_dst3/file.txt", "file.txt")?;
@@ -163,10 +151,6 @@ fn wget_download(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd_and_expect("cat /tmp/wget_test.txt", "Disallow")?;
     Ok(())
 }
-
-// ============================================================================
-// DNS Tools
-// ============================================================================
 
 #[nixos_test]
 fn ldns_drill_basic(nixos_shell: &mut Session) -> Result<(), Error> {

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::{
     fmt::Display,
     sync::atomic::{AtomicU32, AtomicU64, Ordering},
@@ -23,7 +21,6 @@ use crate::{
     },
 };
 
-/// A file-like object representing a timer that can be used with file descriptors.
 pub(crate) struct TimerfdFile {
     clockid: clockid_t,
     timer: Arc<Timer>,
@@ -34,7 +31,6 @@ pub(crate) struct TimerfdFile {
 }
 
 bitflags! {
-    /// The flags used for timerfd-related operations.
     #[derive(Clone, Copy, Debug)]
     pub(crate) struct TFDFlags: u32 {
         const TFD_CLOEXEC  = CreationFlags::O_CLOEXEC.bits();
@@ -42,7 +38,6 @@ bitflags! {
     }
 }
 
-// Required by `define_atomic_version_of_integer_like_type`.
 impl TryFrom<u32> for TFDFlags {
     type Error = Error;
 
@@ -51,7 +46,6 @@ impl TryFrom<u32> for TFDFlags {
     }
 }
 
-// Required by `define_atomic_version_of_integer_like_type`.
 impl From<TFDFlags> for u32 {
     fn from(value: TFDFlags) -> Self {
         value.bits()
@@ -59,7 +53,6 @@ impl From<TFDFlags> for u32 {
 }
 
 bitflags! {
-    /// The flags used for timerfd settime operations.
     #[derive(Clone, Copy, Debug)]
     pub(crate) struct TFDSetTimeFlags: u32 {
         const TFD_TIMER_ABSTIME       = 0x1;
@@ -67,7 +60,6 @@ bitflags! {
     }
 }
 
-// Required by `define_atomic_version_of_integer_like_type`.
 impl TryFrom<u32> for TFDSetTimeFlags {
     type Error = Error;
 
@@ -76,7 +68,6 @@ impl TryFrom<u32> for TFDSetTimeFlags {
     }
 }
 
-// Required by `define_atomic_version_of_integer_like_type`.
 impl From<TFDSetTimeFlags> for u32 {
     fn from(value: TFDSetTimeFlags) -> Self {
         value.bits()
@@ -84,13 +75,11 @@ impl From<TFDSetTimeFlags> for u32 {
 }
 
 define_atomic_version_of_integer_like_type!(TFDSetTimeFlags, try_from = true, {
-    /// An atomic version of `TFDSetTimeFlags`.
     #[derive(Debug, Default)]
     struct AtomicTFDSetTimeFlags(AtomicU32);
 });
 
 impl TimerfdFile {
-    /// Creates a new `TimerfdFile` instance.
     pub(crate) fn new(clock_id: ClockId, flags: TFDFlags, ctx: &Context) -> Result<Self> {
         let is_valid = matches!(
             clock_id,
@@ -127,15 +116,10 @@ impl TimerfdFile {
             ticks,
             pollee,
             settime_flags: AtomicTFDSetTimeFlags::default(),
-            // Reference: <https://elixir.bootlin.com/linux/v7.0/source/fs/timerfd.c#L436>.
             common: FileCommon::new(pseudo_path, AccessMode::O_RDWR, status_flags),
         })
     }
 
-    // Sets the timer's timeout and interval.
-    //
-    // The remaining time and old interval are saved before the settings are applied, and then
-    // returned afterwards.
     pub(crate) fn set_time(
         &self,
         expire_time: Duration,
@@ -148,16 +132,12 @@ impl TimerfdFile {
 
         timer_guard.set_interval(interval);
 
-        // Cancel the timer and clear the ticks counter.
         timer_guard.cancel();
         self.ticks.store(0, Ordering::Relaxed);
         self.pollee.invalidate();
 
         if expire_time != Duration::ZERO {
             if flags.contains(TFDSetTimeFlags::TFD_TIMER_CANCEL_ON_SET) {
-                // TODO: Currently this flag has no effect since the system time cannot be changed.
-                // Once add the support for modifying the system time, the corresponding logics for
-                // this flag need to be implemented.
                 warn!("TFD_TIMER_CANCEL_ON_SET is not implemented yet and has no effect");
             }
 
@@ -174,7 +154,6 @@ impl TimerfdFile {
         (old_interval, remain)
     }
 
-    /// Gets the timer's remaining time and interval.
     pub(crate) fn get_time(&self) -> (Duration, Duration) {
         let timer_guard = self.timer.lock();
         (timer_guard.interval(), timer_guard.remain())

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::time::Duration;
 
 use ostd::mm::VmIo;
@@ -36,7 +34,6 @@ pub(super) fn sys_timer_settime(
 
     timer_guard.set_interval(interval);
     if expire_time == Duration::ZERO {
-        // Clear previous timer
         timer_guard.cancel();
     } else {
         let timeout = if (flags & TIMER_ABSTIME) == 0 {

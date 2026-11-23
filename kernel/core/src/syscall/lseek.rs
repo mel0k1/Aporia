@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::SyscallReturn;
 use crate::{
     fs::file::{
@@ -33,7 +31,6 @@ pub(super) fn sys_lseek(
     Ok(SyscallReturn::Return(offset as _))
 }
 
-// Reference: <https://elixir.bootlin.com/linux/v6.17.7/source/include/uapi/linux/fs.h#L52>
 #[expect(non_camel_case_types)]
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, TryFromInt)]

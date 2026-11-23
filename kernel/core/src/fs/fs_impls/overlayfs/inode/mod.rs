@@ -1,48 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! The logical overlay inode and its VFS trait surface.
-//!
-//! [`OverlayInode`] is the published logical inode shared by every name bound
-//! to the same overlay object. It owns the per-object real-object facts, the
-//! per-inode transaction lock, the one-way name-taken latch, and the
-//! precomputed published identity.
-//!
-//! # Module map
-//!
-//! | Submodule | Responsibility |
-//! |---|---|
-//! | [`copyup`] | the per-object promotion rounds and the temp each round publishes |
-//! | [`data`] | the data path: read, write, seek, resize, sync, and the page cache |
-//! | [`dir`] | the create, link, remove, and rename namespace mutations, and the whiteout publication |
-//! | [`identity`] | the dev/ino identity translation and the durable origin record |
-//! | [`inode_cache`] | the mount-wide real-id inode reuse cache |
-//! | [`lookup`] | upper-first name resolution and inode projection |
-//! | [`metadata`] | the metadata setters |
-//! | [`open`] | the open entry and the per-open directory handle |
-//! | [`readdir`] | the merged-directory merge and its snapshot construction |
-//! | [`xattr`] | the private-record and passthrough name paths |
-//!
-//! # Locking
-//!
-//! [`OverlayInode::lock`] is the per-inode transaction lock that serializes one
-//! object's mutations. For a directory its payload is that directory's readdir
-//! snapshot — a [`readdir::ReaddirCache`], the merged entry table one merge
-//! produced; a non-directory uses the lock as a plain serialization token. The
-//! lock also serializes an object's promotion against the removal or
-//! displacement of its name.
-//! [`OverlayInode::append_write`] holds this lock across the underlying `size()` +
-//! `write_at` so concurrent appends serialize on the post-write size.
-//!
-//! The name-taken latch is written — by a removal, or by a rename that displaces
-//! the name — and read only inside that object's transaction lock; that lock is
-//! what orders a name removal against a promotion round, so the latch needs no
-//! ordering of its own.
-//!
-//! Two overlay-internal locks exist: the per-inode transaction lock and the
-//! [`InodeCache`] guard. A per-open snapshot slot sits outside both of them and
-//! is the outer lock of its pair: the directory transaction lock is taken and
-//! released inside its guard.
-
 mod copyup;
 mod data;
 mod dir;
@@ -91,34 +46,24 @@ use crate::{
 
 pub(super) struct OverlayInode {
     fs: Weak<OverlayFs>,
-    /// A directory keeps its whole merge stack; a non-directory only its visible topmost lower.
     lowers: Vec<RealObject>,
     upper: Once<RealObject>,
-    /// One-way name-taken latch, set under this object's lock: its name binding was taken away.
     name_taken: AtomicBool,
     object_id: ObjectVisibleId,
-    /// The current readdir snapshot slot; `None` means it is not built or was invalidated.
     lock: Mutex<OverlayInodeLockPayload>,
     extension: Extension,
     this: Weak<OverlayInode>,
 }
 
 impl OverlayInode {
-    /// Two directories of one mount publish the same pair exactly when they are one real directory.
     fn same_directory_as(&self, other: &OverlayInode) -> bool {
         debug_assert!(self.type_().is_directory() && other.type_().is_directory());
         self.object_id == other.object_id
     }
 
-    /// Returns the read-only take point: the real object this logical object currently shows.
-    ///
-    /// It is the upper when there is one, else the topmost lower, and reads go through the returned
-    /// object's real inode. The object may be a lower: handing it to a write method breaks the write
-    /// paths' discipline, which the type does not prevent.
     fn real_object(&self) -> &RealObject {
         match self.upper.get() {
             Some(upper) => upper,
-            // A real-object stack is never empty, so a lower-only object has a topmost lower.
             None => self
                 .lowers
                 .first()
@@ -126,10 +71,6 @@ impl OverlayInode {
         }
     }
 
-    /// Returns the real object a write may land on.
-    ///
-    /// Refuses an effectively read-only mount, returns the receiver's own upper when it has one, and
-    /// otherwise promotes the receiver into `copyup_dentry` first — so the answer is always an upper.
     fn writable_real_object(&self, copyup_dentry: &Dentry) -> Result<&RealObject> {
         let fs = self.fs_arc();
         if fs.policy().is_effective_read_only() {
@@ -142,28 +83,20 @@ impl OverlayInode {
         Ok(self.writable_upper())
     }
 
-    /// Sets the name-taken latch; the caller must hold this object's transaction lock.
     fn mark_name_taken(&self) {
-        // Only the transaction lock orders this against `is_name_taken`: no lock-free read exists.
         self.name_taken.store(true, Ordering::Relaxed);
     }
 
-    /// Reads the name-taken latch; the caller must hold this object's transaction lock.
     fn is_name_taken(&self) -> bool {
         self.name_taken.load(Ordering::Relaxed)
     }
 
-    /// Returns the receiver's own upper real object.
-    ///
-    /// The caller must establish that the receiver has an upper; a write path that has not promoted the
-    /// receiver should enter through `writable_real_object` instead.
     fn writable_upper(&self) -> &RealObject {
         self.upper
             .get()
             .expect("an overlay object on a write path has an upper real object")
     }
 
-    /// Takes the per-inode transaction lock.
     fn lock(&self) -> OverlayInodeLockGuard<'_> {
         Mutex::lock(&self.lock)
     }
@@ -181,7 +114,6 @@ impl OverlayInode {
     }
 }
 
-/// One create-family request; `mode` rides the op and the borrowed fields pass the VFS entry on.
 #[derive(Clone, Copy)]
 enum CreateOp<'a> {
     General {
@@ -212,8 +144,6 @@ impl<'a> CreateOp<'a> {
     }
 
     fn mknod(node: &'a MknodType, mode: InodeMode) -> Result<Self> {
-        // The read side reads a raw `0:0` char device back as a whiteout, so a caller must not
-        // be able to create one and forge the name-level shadow this mount publishes itself.
         if matches!(node, MknodType::CharDevice(0)) {
             return Err(errno!(
                 EPERM,
@@ -223,7 +153,6 @@ impl<'a> CreateOp<'a> {
         Ok(Self::Mknod { mode, node })
     }
 
-    /// Returns the inode type this request creates.
     fn object_type(&self) -> InodeType {
         match self {
             Self::General { kind, .. } => *kind,
@@ -236,7 +165,6 @@ impl<'a> CreateOp<'a> {
         }
     }
 
-    /// Runs the one real create call this request selects, in `dir`, under `name`.
     fn create_child_in(&self, dir: &Dentry, name: &str) -> Result<Arc<Dentry>> {
         let dir = dir.as_dir_dentry_or_err()?;
         match self {
@@ -324,9 +252,7 @@ impl Inode for OverlayInode {
     }
 
     fn lookup(&self, name: &str) -> Result<Arc<dyn Inode>> {
-        // The guard is still taken here: it orders this lookup against this directory's mutations.
         let _dir_guard = self.lock();
-        // The directory bit comes from the real object alone; the payload says nothing about it.
         if !self.type_().is_directory() {
             return Err(errno!(
                 ENOTDIR,

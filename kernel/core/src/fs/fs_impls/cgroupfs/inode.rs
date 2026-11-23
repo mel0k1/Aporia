@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::fs::CgroupFs;
 use crate::{
     fs::{
@@ -15,19 +13,12 @@ use crate::{
     prelude::*,
 };
 
-/// An inode abstraction used in the cgroup file system.
 pub(super) struct CgroupInode {
-    /// The corresponding node in the SysTree.
     node_kind: SysTreeNodeKind,
-    /// The metadata of this inode.
     metadata: Metadata,
-    /// The extension of this inode.
     extension: Extension,
-    /// The file mode (permissions) of this inode, protected by a lock.
     mode: RwLock<InodeMode>,
-    /// Weak reference to the parent inode.
     parent: Weak<CgroupInode>,
-    /// Weak self-reference for cyclic data structures.
     this: Weak<CgroupInode>,
 }
 
@@ -100,12 +91,8 @@ impl Inode for CgroupInode {
 
         let target_node = Arc::downcast::<CgroupNode>(child).unwrap();
 
-        // This will succeed only if the child is empty and has not been removed.
         target_node.mark_as_dead()?;
 
-        // This is guaranteed to remove `child` because the dentry lock prevents
-        // concurrent modification to the children, and there are no races because
-        // `mark_as_dead` can succeed at most once.
         branch_node.remove_child(&name).unwrap();
 
         Ok(())
@@ -121,9 +108,6 @@ impl Inode for CgroupInode {
     }
 
     fn revalidate_exists(&self, _name: &str, child: &dyn Inode) -> bool {
-        // Attribute nodes in the cache should not be trusted because they
-        // may be dynamically created or removed based on the state of the
-        // cgroup controller.
         child
             .downcast_ref::<Self>()
             .is_some_and(|child| !matches!(child.node_kind(), SysTreeNodeKind::Attr(..)))

@@ -1,10 +1,7 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use proc_macro2::{TokenStream, TokenTree};
 use quote::{ToTokens, TokenStreamExt};
 use syn::parse::Parse;
 
-/// The content inside typeflag macro
 pub(crate) struct ComponentInitFunction {
     function: Vec<TokenTree>,
     pub function_name: TokenTree,

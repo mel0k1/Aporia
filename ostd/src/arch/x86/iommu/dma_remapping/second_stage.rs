@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::{marker::PhantomData, ops::Range};
 
 use crate::mm::{
@@ -8,23 +6,15 @@ use crate::mm::{
     page_table::{PageTableConfig, PteScalar, PteTrait},
 };
 
-/// The page table used by iommu maps the device address
-/// space to the physical address space.
 #[derive(Clone, Debug)]
 pub(crate) struct IommuPtConfig {}
 
-// SAFETY: `item_raw_info`, `item_into_raw`, `item_from_raw`, and
-// `item_ref_from_raw` are correctly implemented with respect to the `Item` and
-// `ItemRef` types.
 unsafe impl PageTableConfig for IommuPtConfig {
-    /// From section 3.6 in "Intel(R) Virtualization Technology for Directed I/O",
-    /// only low canonical addresses can be used.
     const TOP_LEVEL_INDEX_RANGE: Range<usize> = 0..256;
 
     type E = PageTableEntry;
     type C = PagingConsts;
 
-    /// All mappings are untracked.
     type Item = PtItem;
     type ItemRef<'a> = PtItemRef<'a>;
 
@@ -63,25 +53,15 @@ impl PagingConstsTrait for PagingConsts {
 bitflags::bitflags! {
     #[derive(Clone, Copy, Debug)]
     pub struct PteFlags: usize {
-        /// Whether accesses to this page must snoop processor caches.
         const SNOOP      = 1 << 11;
 
-        /// Bits ignored by hardware.
         const IGN2       = 1 << 9;
         const IGN1       = 1 << 8;
 
-        /// Whether this page table entry is the last entry.
         const LAST_PAGE  = 1 << 7;
 
-        /// Ignore PAT, 1 if the scalable-mode PASID-table entry is not
-        /// used for effective memory-type determination.
         const IGNORE_PAT = 1 << 6;
 
-        /// Extended Memory Type, ignored by hardware when the
-        /// Extended Memory Type Enable (EMTE) field is Clear.
-        ///
-        /// When the EMTE field is Set, this field is used to compute effective
-        /// memory-type for second-stage-only and nested translations.
         const EMT        = 7 << 3;
 
         const WRITABLE   = 1 << 1;
@@ -95,7 +75,6 @@ bitflags::bitflags! {
 #[derive(Clone, Copy, Debug, Default, Pod)]
 pub(crate) struct PageTableEntry(usize);
 
-/// Parses a bit-flag bits `val` in the representation of `from` to `to` in bits.
 macro_rules! parse_flags {
     ($val:expr, $from:expr, $to:expr) => {
         (($val as usize & $from.bits() as usize) >> $from.bits().ilog2() << $to.bits().ilog2())
@@ -120,7 +99,6 @@ impl PageTableEntry {
 
         let priv_flags = parse_flags!(self.0, PteFlags::IGN1, PrivFlags::AVAIL1);
 
-        // TODO: The determination cache policy is not rigorous. We should revise it.
         let cache = if self.0 & PteFlags::SNOOP.bits() != 0 {
             CachePolicy::Writeback
         } else {
@@ -166,10 +144,6 @@ impl PageTableEntry {
 
 impl PodOnce for PageTableEntry {}
 
-// SAFETY: The implementation is safe because:
-//  - `from_usize` and `into_usize` are not overridden;
-//  - `from_repr` and `repr` are correctly implemented;
-//  - a zeroed PTE represents an absent entry.
 unsafe impl PteTrait for PageTableEntry {
     fn from_repr(repr: &PteScalar, level: PagingLevel) -> Self {
         match repr {

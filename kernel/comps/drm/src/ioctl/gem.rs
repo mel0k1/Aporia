@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use aster_core::prelude::*;
 use ostd::mm::PAGE_SIZE;
 
@@ -28,8 +26,6 @@ impl DrmFile {
             return Err(errno!(EINVAL, "the dumb-buffer pitch overflows u32"));
         };
 
-        // Linux rejects dumb buffers whose page-aligned size does not fit in `u32`,
-        // even though the UAPI exposes the resulting size as `u64`.
         let Some(size) = pitch
             .checked_mul(args.height)
             .and_then(|size| size.checked_next_multiple_of(PAGE_SIZE as u32))
@@ -71,9 +67,6 @@ impl DrmFile {
     }
 }
 
-/// `struct drm_gem_close` in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm.h#L600-L605>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(super) struct DrmGemClose {
@@ -81,9 +74,6 @@ pub(super) struct DrmGemClose {
     pad: u32,
 }
 
-/// `struct drm_mode_create_dumb` in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm_mode.h#L1057-L1079>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(super) struct DrmModeCreateDumb {
@@ -96,9 +86,6 @@ pub(super) struct DrmModeCreateDumb {
     size: u64,
 }
 
-/// `struct drm_mode_map_dumb` in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm_mode.h#L1081-L1092>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(super) struct DrmModeMapDumb {
@@ -107,9 +94,6 @@ pub(super) struct DrmModeMapDumb {
     offset: u64,
 }
 
-/// `struct drm_mode_destroy_dumb` in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm_mode.h#L1094-L1096>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(super) struct DrmModeDestroyDumb {

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use std::{
     borrow::Cow,
     time::{Duration, Instant},
@@ -10,19 +8,6 @@ use uuid::Uuid;
 
 use super::{Error, clean_output, truncate_output_for_error};
 
-/// Describes a runtime session configuration.
-///
-/// A session descriptor defines how to interact with a particular execution context,
-/// such as a shell environment, container, or remote session. It specifies the prompt
-/// pattern and the commands needed to enter and exit the context.
-///
-/// # Examples
-///
-/// ```rust
-/// use nixos_test_framework::SessionDesc;
-///
-/// let desc = SessionDesc::new("/ #", "podman run -it alpine", "exit");
-/// ```
 pub struct SessionDesc {
     prompt: Cow<'static, str>,
     enter_cmd: Cow<'static, str>,
@@ -30,7 +15,6 @@ pub struct SessionDesc {
 }
 
 impl SessionDesc {
-    /// Creates a new session descriptor.
     pub fn new(
         prompt: impl Into<Cow<'static, str>>,
         enter_cmd: impl Into<Cow<'static, str>>,
@@ -44,13 +28,6 @@ impl SessionDesc {
     }
 }
 
-/// An interactive session for running commands in a test environment.
-///
-/// `Session` provides a high-level interface for interacting with the test environment.
-/// It manages execution contexts and handles nested environments automatically.
-///
-/// It uses a [`SessionDesc`] to track the current prompt and the correct command
-/// to exit the current context.
 pub struct Session {
     uuid: String,
     desc: SessionDesc,
@@ -58,7 +35,6 @@ pub struct Session {
 }
 
 impl Session {
-    /// Creates a new session with the given PTY session and descriptor.
     pub(super) fn new(desc: SessionDesc, pty_session: PtySession) -> Self {
         Self {
             uuid: Uuid::new_v4().to_string(),
@@ -67,31 +43,9 @@ impl Session {
         }
     }
 
-    /// Executes a command in the current session.
-    ///
-    /// This method runs the specified command and waits for it to complete.
-    /// The command is considered complete when the session prompt reappears.
-    ///
-    /// Returns an error if the command times out or the session terminates unexpectedly.
-    ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// use nixos_test_framework::*;
-    ///
-    /// fn example(nixos_shell: &mut Session) -> Result<(), Error> {
-    ///     // Execute simple commands
-    ///     nixos_shell.run_cmd("ls -la")?;
-    ///     nixos_shell.run_cmd("cd /tmp")?;
-    ///     nixos_shell.run_cmd("mkdir test_dir")?;
-    ///
-    ///     Ok(())
-    /// }
-    /// ```
     pub fn run_cmd(&mut self, command: &str) -> Result<(), Error> {
         println!("--> Running: {}", command);
         self.pty_session.send_line(command).map_err(Error::from)?;
-        // Read and consume the echoed command line
         self.pty_session.exp_string(command).map_err(Error::from)?;
 
         if let Err(error) = self
@@ -106,38 +60,9 @@ impl Session {
         Ok(())
     }
 
-    /// Executes a command and verifies its output contains expected text.
-    ///
-    /// This method runs the command and checks that the specified string appears
-    /// in the output. This is useful for validating command results.
-    ///
-    /// Returns an error if:
-    /// - The expected string is not found in the output
-    /// - The command times out
-    /// - The session terminates unexpectedly
-    ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// use nixos_test_framework::*;
-    ///
-    /// fn example(nixos_shell: &mut Session) -> Result<(), Error> {
-    ///     // Verify output contains expected string
-    ///     nixos_shell.run_cmd_and_expect("echo 'Hello, World!'", "Hello")?;
-    ///
-    ///     // Check if a file exists
-    ///     nixos_shell.run_cmd_and_expect("ls /etc/hostname", "/etc/hostname")?;
-    ///
-    ///     // Verify system information
-    ///     nixos_shell.run_cmd_and_expect("cat /etc/os-release", "NixOS")?;
-    ///
-    ///     Ok(())
-    /// }
-    /// ```
     pub fn run_cmd_and_expect(&mut self, command: &str, expected: &str) -> Result<(), Error> {
         println!("--> Running: {} (expecting: {})", command, expected);
         self.pty_session.send_line(command).map_err(Error::from)?;
-        // Read and consume the echoed command line
         self.pty_session.exp_string(command).map_err(Error::from)?;
 
         match self
@@ -165,28 +90,6 @@ impl Session {
         Ok(())
     }
 
-    /// Executes a command and verifies its output matches the expected regex.
-    ///
-    /// This method runs the command and checks that the specified regex matches
-    /// the output before the prompt reappears.
-    ///
-    /// Returns an error if:
-    /// - The expected regex does not match the output
-    /// - The command times out
-    /// - The session terminates unexpectedly
-    ///
-    /// # Example
-    ///
-    /// ```rust,norun
-    /// use nixos_test_framework::*;
-    /// use rexpect::reader::Regex;
-    ///
-    /// fn example(nixos_shell: &mut Session) -> Result<(), Error> {
-    ///     let expected = Regex::new(r"(?m)^Hello, .*!$").unwrap();
-    ///     nixos_shell.run_cmd_and_expect_regex("echo 'Hello, World!'", &expected)?;
-    ///     Ok(())
-    /// }
-    /// ```
     pub fn run_cmd_and_expect_regex(
         &mut self,
         command: &str,
@@ -213,40 +116,6 @@ impl Session {
         Ok(())
     }
 
-    /// Enters a nested session, runs operations, and automatically exits.
-    ///
-    /// This method is used to work with nested environments like containers, SSH sessions,
-    /// or any interactive shell.
-    ///
-    /// Returns an error if entering, running operations, or exiting fails.
-    ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// use nixos_test_framework::*;
-    ///
-    /// fn container_test(nixos_shell: &mut Session) -> Result<(), Error> {
-    ///     // Define the container session
-    ///     let container_session_desc = SessionDesc::new(
-    ///         "/ #",
-    ///         "podman run -it docker.io/library/alpine",
-    ///         "exit",
-    ///     );
-    ///
-    ///     // Enter container, run tests, and automatically exit
-    ///     nixos_shell.enter_session_and_run(container_session_desc, |alpine_shell| {
-    ///         alpine_shell.run_cmd_and_expect(
-    ///             "cat /etc/os-release",
-    ///             "Alpine"
-    ///         )?;
-    ///         Ok(())
-    ///     })?;
-    ///
-    ///     // Back in the host - container has been exited
-    ///     nixos_shell.run_cmd("echo 'Back on host'")?;
-    ///     Ok(())
-    /// }
-    /// ```
     pub fn enter_session_and_run<F>(&mut self, desc: SessionDesc, test_ops: F) -> Result<(), Error>
     where
         F: FnOnce(&mut Session) -> Result<(), Error>,
@@ -270,34 +139,6 @@ impl Session {
         Ok(())
     }
 
-    /// Starts a background process, waits for readiness, and runs test operations.
-    ///
-    /// This method is intended for test cases that need temporary daemons such as HTTP servers.
-    /// It polls until the process becomes ready instead of relying on fixed sleeps. When the
-    /// method returns or unwinds, it makes a best-effort attempt to stop the background process.
-    ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// use nixos_test_framework::*;
-    ///
-    /// fn example(nixos_shell: &mut Session) -> Result<(), Error> {
-    ///     nixos_shell.with_background_process(
-    ///         BackgroundProcess::new(
-    ///             "python3 -m http.server 8000 >/tmp/http.log 2>&1 &",
-    ///             CommandCheck::new("curl http://127.0.0.1:8000", "Directory listing"),
-    ///             "pkill -f 'python3 -m http.server 8000'",
-    ///             CommandCheck::new(
-    ///                 "! pgrep -f 'python3 -m http.server 8000' >/dev/null && echo stopped",
-    ///                 "stopped",
-    ///             ),
-    ///         ),
-    ///         |shell| shell.run_cmd_and_expect("curl http://127.0.0.1:8000", "Directory listing"),
-    ///     )?;
-    ///
-    ///     Ok(())
-    /// }
-    /// ```
     pub fn with_background_process<F>(
         &mut self,
         background_process: BackgroundProcess,
@@ -523,20 +364,14 @@ impl Session {
     }
 }
 
-/// Describes how to manage a background process during a test.
 pub struct BackgroundProcess {
-    /// Starts the background process.
     start: Cow<'static, str>,
-    /// Checks whether the background process is ready for test operations.
     ready: CommandCheck,
-    /// Stops the background process.
     stop: Cow<'static, str>,
-    /// Checks whether the background process has fully stopped.
     stopped: CommandCheck,
 }
 
 impl BackgroundProcess {
-    /// Creates a new background process descriptor.
     pub fn new(
         start: impl Into<Cow<'static, str>>,
         ready: CommandCheck,
@@ -552,16 +387,12 @@ impl BackgroundProcess {
     }
 }
 
-/// Describes a command-based state check for a background process.
 pub struct CommandCheck {
-    /// Runs to observe whether the background process reached the target state.
     cmd: Cow<'static, str>,
-    /// Must appear in the command output for the check to succeed.
     expect: Cow<'static, str>,
 }
 
 impl CommandCheck {
-    /// Creates a new command-based state check.
     pub fn new(cmd: impl Into<Cow<'static, str>>, expect: impl Into<Cow<'static, str>>) -> Self {
         Self {
             cmd: cmd.into(),

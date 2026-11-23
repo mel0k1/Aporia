@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd::mm::VmIo;
 
 use crate::{
@@ -29,8 +27,6 @@ pub(super) fn sys_sendmmsg(
     }
 
     let file = {
-        // Reading control messages may access the file table,
-        // so we have to clone the file and drop the file table reference here.
         let file_table = ctx.thread_local.borrow_file_table();
         let file_table_locked = file_table.read();
         file_table_locked.get_file(sockfd.try_into()?)?.clone()
@@ -39,7 +35,6 @@ pub(super) fn sys_sendmmsg(
 
     let mut sent_msgs = 0;
     match send_mmsg_hdrs(socket, mmsghdrs_addr, count, flags, &mut sent_msgs, ctx) {
-        // Only return error if no packets are sent successfully.
         Err(e) if sent_msgs == 0 => Err(e),
         _ => Ok(SyscallReturn::Return(sent_msgs as _)),
     }

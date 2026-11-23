@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::{boxed::Box, fmt::Debug, string::ToString, sync::Arc, vec::Vec};
 use core::hint::spin_loop;
 
@@ -60,7 +58,6 @@ impl AnyConsoleDevice for ConsoleDevice {
             if callbacks.compare_exchange(callbacks_cloned).is_ok() {
                 break;
             }
-            // Contention on pushing, retry.
             spin_loop();
         }
     }
@@ -80,7 +77,6 @@ impl Debug for ConsoleDevice {
 impl ConsoleDevice {
     pub(crate) fn negotiate_features(features: u64) -> u64 {
         let mut features = ConsoleFeatures::from_bits_truncate(features);
-        // A virtio console device may have multiple ports, but we only use one port to communicate now.
         features.remove(ConsoleFeatures::VIRTIO_CONSOLE_F_MULTIPORT);
         features.bits()
     }
@@ -118,10 +114,8 @@ impl ConsoleDevice {
 
         device.activate_receive_buffer(&mut device.receive_queue.disable_irq().lock());
 
-        // Register IRQ callbacks.
         let mut transport = device.transport.lock();
         let handle_console_input = {
-            // FIXME: This callback captures a strong `Arc`, creating a reference cycle.
             let device = device.clone();
             move |_: &TrapFrame| device.handle_recv_irq()
         };
@@ -165,13 +159,6 @@ impl ConsoleDevice {
 
     fn activate_receive_buffer(&self, receive_queue: &mut VirtQueue) {
         receive_queue
-            // We limit the buffer length to one to work around a QEMU bug that causes incorrect
-            // results when pasting more than 32 bytes into the virtio console. This has no
-            // performance penalty, since QEMU always gets one byte at a time, regardless of
-            // whether we have this limit or not.
-            //
-            // For the QEMU bug, see details at
-            // <https://lore.kernel.org/qemu-devel/20240707111940.232549-3-lrh2000@pku.edu.cn/T/#u>.
             .add_output_bufs(&[&Slice::new(&self.receive_buffer, 0..1)])
             .unwrap();
     }

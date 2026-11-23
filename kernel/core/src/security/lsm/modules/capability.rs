@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::super::{
     LsmFlags, LsmModule,
     hooks::{AlienAccessContext, CapableContext, LsmAlienAccessHook, LsmCapabilityHook},
@@ -11,7 +9,6 @@ use crate::{
 
 pub(super) static CAPABILITY_LSM: CapabilityLsm = CapabilityLsm;
 
-/// Capability-based authorization checks for built-in kernel operations.
 pub(super) struct CapabilityLsm;
 
 impl LsmModule for CapabilityLsm {
@@ -26,11 +23,6 @@ impl LsmModule for CapabilityLsm {
 
 impl LsmCapabilityHook for CapabilityLsm {
     fn on_capable(&self, context: &CapableContext) -> Result<()> {
-        // Since creating new user namespaces is not supported at the moment,
-        // there is effectively only one user namespace in the entire system.
-        // Therefore, the thread has a single set of capabilities used for permission checks.
-        // FIXME: Once support for creating new user namespaces is added,
-        // we should verify the thread's capabilities within the relevant user namespace.
         if context
             .posix_thread()
             .credentials()

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use aster_util::printer::VmPrinter;
 
 use crate::{
@@ -12,12 +10,10 @@ use crate::{
     process::posix_thread::PID_MAX,
 };
 
-/// Represents the inode at `/proc/sys/kernel/pid_max`.
 pub(super) struct PidMaxFileOps;
 
 impl PidMaxFileOps {
     pub(super) fn new_inode(parent: Weak<dyn Inode>) -> Arc<dyn Inode> {
-        // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/kernel/pid.c#L721>
         ProcFile::new(Self, parent, mkmod!(a+r, u+w))
     }
 }

@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Inode implementation for `virtiofs`.
-
 mod cache;
 mod metadata;
 mod ops;
@@ -55,29 +51,12 @@ use crate::{
     vm::page_cache::{PageCache, Vmo},
 };
 
-/// Represents a cached virtio-fs inode and its kernel-side state.
 pub(super) struct VirtioFsInode {
     nodeid: FuseNodeId,
     generation: FuseGeneration,
     type_: InodeType,
     lookup_count: LookupCount,
-    /// The size of this inode.
-    ///
-    /// This field is intentionally kept outside `inner` to avoid deadlocks.
-    /// Since `VirtioFsInode` serves as its own page cache backend, page cache
-    /// operations may call back into this inode through the backend interface
-    /// to query the EOF position (i.e., the inode size). If the size were stored
-    /// inside `inner`, acquiring the `inner` lock would be required, which could
-    /// lead to a deadlock given that the `inner` lock may already be held by the
-    /// caller of the page cache operation.
     size: AtomicUsize,
-    /// The metadata lock also serializes file data I/O for this inode.
-    ///
-    /// Lock order: `self.entry_valid_until` -> `self.inner`
-    ///                 -> `open_handles.handles`
-    ///
-    /// `lookup_count` is not protected by any lock mentioned above and may be
-    /// touched at any time.
     inner: RwMutex<InodeInner>,
     entry_valid_until: Mutex<Duration>,
     open_handles: OpenHandles,
@@ -87,7 +66,6 @@ pub(super) struct VirtioFsInode {
 }
 
 impl VirtioFsInode {
-    /// Creates the root inode.
     pub(super) fn new_root(
         root_entry: EntryReply,
         fs: Weak<VirtioFs>,
@@ -105,7 +83,6 @@ impl VirtioFsInode {
         )
     }
 
-    /// Creates an inode from a fresh FUSE entry reply.
     pub(super) fn new_from_entry_reply(entry_reply: EntryReply, fs: &Arc<VirtioFs>) -> Arc<Self> {
         Self::new(
             entry_reply.nodeid(),
@@ -165,12 +142,6 @@ impl VirtioFsInode {
         self.size.load(Ordering::Acquire)
     }
 
-    /// Updates a cached inode with a fresh FUSE entry reply.
-    ///
-    /// A successful entry reply gives the client one additional lookup
-    /// reference and a refreshed directory-entry TTL. Even though the inode
-    /// object already exists, the cached lookup count and metadata still need
-    /// to observe the reply before the inode is returned to VFS.
     pub(super) fn update_from_entry_reply(
         &self,
         entry_reply: &EntryReply,
@@ -191,22 +162,15 @@ impl VirtioFsInode {
     }
 }
 
-/// An inode timestamp field updated through `SETATTR`.
 pub(super) enum TimeField {
-    /// The last access timestamp.
     Access,
-    /// The last metadata change timestamp.
     Change,
-    /// The last content modification timestamp.
     Modify,
 }
 
-/// A write offset resolved while holding the inode inner lock.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum WriteOffset {
-    /// Writes at the caller-provided absolute offset.
     Absolute(usize),
-    /// Writes at the current end of file.
     Append,
 }
 
@@ -218,7 +182,6 @@ struct InodeInner {
 }
 
 impl InodeInner {
-    /// Invalidates the whole page cache, if any.
     fn invalidate_page_cache(&self) -> Result<()> {
         let Some(page_cache) = &self.page_cache else {
             return Ok(());
@@ -232,12 +195,10 @@ impl InodeInner {
         Ok(())
     }
 
-    /// Returns whether cached attributes are still inside the server TTL.
     fn is_attr_valid(&self, now: Duration) -> bool {
         now < self.attr_valid_until
     }
 
-    /// Returns whether an incoming attribute reply can replace cached metadata.
     fn accepts_attr_version(&self, incoming: AttrVersion) -> bool {
         incoming >= self.attr_version
     }
@@ -351,7 +312,6 @@ impl Inode for VirtioFsInode {
         match self.type_ {
             InodeType::File => Some(self.open_file(access_mode, status_flags)),
             InodeType::Dir => Some(self.open_directory(access_mode, status_flags)),
-            // TODO: Support opening special files like device files and named pipes.
             _ => Some(Err(errno!(
                 EOPNOTSUPP,
                 "opening this virtiofs inode type is not supported",
@@ -515,9 +475,6 @@ impl Inode for VirtioFsInode {
 
         let fs = self.fs_ref();
 
-        // TODO: Invalidate the stale positive dentry for `old_name`
-        // when encountering `ENOENT` once the rename interface can
-        // pass the cached old dentry down.
         fs.session().do_fuse_op(
             self.nodeid(),
             RenameOperation::new(RenameReq::new(new_dir_inode.nodeid()), &old_name, new_name),
@@ -570,8 +527,6 @@ impl Inode for VirtioFsInode {
     }
 
     fn revalidate_absent(&self, _name: &str) -> bool {
-        // FIXME: FUSE negative-entry caching is not implemented yet.
-        // Force a fresh `FUSE_LOOKUP` for each negative lookup.
         false
     }
 
@@ -605,9 +560,6 @@ impl FileOps for VirtioFsInode {
             ));
         }
 
-        // `execve` may call `read_at` on the inode directly, bypassing the
-        // normal file-open path. Open a transient handle so FUSE I/O still has
-        // a server-provided file handle when this inode has no cached open.
         let handle = self.open_transient_handle(AccessMode::O_RDONLY)?;
         let file_flags = AccessMode::O_RDONLY as u32 | status_flags.bits();
         self.direct_read_at(offset, writer, handle.fh(), file_flags)
@@ -619,10 +571,6 @@ impl FileOps for VirtioFsInode {
         _reader: &mut VmReader,
         _status_flags: StatusFlags,
     ) -> Result<usize> {
-        // No current path should call inode-level `write_at` for virtio-fs:
-        // normal writes go through the per-open `VirtioFsFile`, which owns the
-        // server-provided handle from `FUSE_OPEN`. If a future direct-inode
-        // writer appears, it must define the handle semantics explicitly.
         Err(errno!(
             EOPNOTSUPP,
             "virtiofs inode write_at without an open file handle is not supported"
@@ -652,11 +600,6 @@ impl FileOps for VirtioFsInode {
             self.invalidate_whole_page_cache()?;
         }
 
-        // FIXME: `readdir_at` exposes the delta-based interface, while
-        // FUSE readdir offsets are opaque continuation cookies.
-        // FIXME: `readdir_at` should pass current status flags to the
-        // filesystem backend. The `FileOps` interface currently does not
-        // expose them, so `FUSE_READDIR` uses the transient handle flags.
         self.readdir(dir_handle.fh(), offset, dir_handle.file_flags(), visitor)
     }
 }

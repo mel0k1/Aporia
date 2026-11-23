@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use queue::Queue;
 use spin::Once;
 

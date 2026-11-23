@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Test the `run` command
-
 use crate::util::is_tdx_enabled;
 
 mod basic {
@@ -15,15 +11,12 @@ mod basic {
     fn new_kernel_and_run() {
         const KERNEL_NAME: &str = "myos";
 
-        // Use a per-test temporary directory to avoid cross-run collisions.
         let work_dir = tempdir().unwrap();
 
-        // Run `cargo osdk new --kernel KERNEL_NAME` in the workspace directory
         let mut cmd_new = cargo_osdk(["new", "--kernel", KERNEL_NAME]);
         cmd_new.current_dir(&work_dir);
         cmd_new.ok().expect("create kernel fails");
 
-        // Run `cargo osdk run` in the created kernel directory
         let os_dir = PathBuf::from(work_dir.path()).join(KERNEL_NAME);
         edit_config_files(&os_dir);
         let mut cmd_run = cargo_osdk(["run"]);
@@ -36,11 +29,12 @@ mod basic {
 const WORKSPACE: &str = "/tmp/kernel_test_workspace/run_command";
 
 mod workspace {
-    use crate::util::*;
     use std::{
         fs::{create_dir_all, remove_dir_all},
         path::Path,
     };
+
+    use crate::util::*;
 
     fn create_kernel_in_workspace(workspace: &str, kernel_name: &str) {
         let os_dir = Path::new(workspace).join(kernel_name);
@@ -90,13 +84,13 @@ mod workspace {
 }
 
 mod coverage_feature {
+    use std::path::Path;
+
     use super::*;
     use crate::util::{cargo_osdk, depends_on_coverage};
-    use std::path::Path;
 
     #[test]
     fn basic_coverage() {
-        // Test skipped because TDX is enabled.
         if is_tdx_enabled() {
             return;
         }
@@ -122,14 +116,15 @@ mod coverage_feature {
 }
 
 mod qemu_gdb_feature {
+    use std::{path::Path, thread::sleep};
+
+    use assert_cmd::Command;
+
     use super::*;
     use crate::util::cargo_osdk;
-    use assert_cmd::Command;
-    use std::{path::Path, thread::sleep};
 
     #[test]
     fn basic_debug() {
-        // Test skipped because TDX is enabled.
         if is_tdx_enabled() {
             return;
         }
@@ -179,7 +174,6 @@ mod qemu_gdb_feature {
 
         #[test]
         fn vsc_launch_file() {
-            // Test skipped because TDX is enabled.
             if is_tdx_enabled() {
                 return;
             }

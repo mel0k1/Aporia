@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Devices in a class.
-
 use alloc::{
     sync::{Arc, Weak},
     vec::Vec,
@@ -17,9 +13,6 @@ use crate::{
     uevent::UeventVars,
 };
 
-/// A device in class `C`: the interface user space sees.
-///
-/// Dereferences to the class-specific payload `C::Device`.
 pub struct ClassDevice<C: Class> {
     base: DeviceBase,
     class: Arc<ClassHandle<C>>,
@@ -28,12 +21,10 @@ pub struct ClassDevice<C: Class> {
     weak: Weak<Self>,
 }
 
-/// A builder for a [`ClassDevice`].
 pub type ClassDeviceBuilder<C> =
     DeviceBuilder<Arc<ClassHandle<C>>, <C as Class>::Device, ClassDevice<C>>;
 
 impl<C: Class> ClassDevice<C> {
-    /// Starts building a device in `class`.
     pub fn builder(
         class: &Arc<ClassHandle<C>>,
         name: impl Into<SysStr>,
@@ -42,17 +33,14 @@ impl<C: Class> ClassDevice<C> {
         DeviceBuilder::new(class.clone(), name.into(), payload)
     }
 
-    /// Returns the class this device is in.
     pub fn class(&self) -> &Arc<ClassHandle<C>> {
         &self.class
     }
 
-    /// Returns the class-specific payload.
     pub fn payload(&self) -> &C::Device {
         &self.payload
     }
 
-    /// Returns a strong reference to this device.
     pub(crate) fn this(&self) -> Arc<Self> {
         self.weak
             .upgrade()
@@ -61,15 +49,6 @@ impl<C: Class> ClassDevice<C> {
 }
 
 impl<C: Class> ClassDeviceBuilder<C> {
-    /// Builds the device.
-    ///
-    /// The device is not registered until [`add_device`] is called.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the device name is not a valid `SysTree` node name.
-    ///
-    /// [`add_device`]: crate::add_device
     pub fn build(self) -> Arc<ClassDevice<C>> {
         let declared = self.declared_parts();
         Arc::new_cyclic(|weak: &Weak<ClassDevice<C>>| {
@@ -109,8 +88,6 @@ impl<C: Class> DeviceInternals for ClassDevice<C> {
     }
 
     fn devnode_override(&self) -> Option<DevNode> {
-        // Use the device type's overrides if it provides a path.
-        // Otherwise, use the class's path and prefer its mode over the device type's.
         let from_type = self.declared.type_devnode(self);
         if from_type.as_ref().is_some_and(|node| node.path.is_some()) {
             return from_type;

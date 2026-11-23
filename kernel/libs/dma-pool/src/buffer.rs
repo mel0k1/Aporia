@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::ops::Range;
 
 use ostd::{
@@ -13,19 +11,14 @@ use ostd::{
 
 use crate::{DmaArena, DmaSegment};
 
-/// A DMA buffer, which is either directly allocated/mapped or comes from a pool.
 #[derive(Debug)]
 pub enum DmaBuffer<D: DmaDirection> {
-    /// A DMA buffer that is directly allocated/mapped.
     Direct(DmaStream<D>),
-    /// A DMA buffer that comes from a pool.
     Pooled(DmaSegment<D>),
-    /// A large DMA buffer allocated from a shared arena.
     Arena(DmaArena<D>),
 }
 
 impl<D: DmaDirection> DmaBuffer<D> {
-    /// Synchronizes the streaming DMA mapping data from the device.
     pub fn sync_from_device(&self, byte_range: Range<usize>) -> Result<()> {
         match self {
             Self::Direct(stream) => stream.sync_from_device(byte_range),
@@ -34,7 +27,6 @@ impl<D: DmaDirection> DmaBuffer<D> {
         }
     }
 
-    /// Synchronizes the streaming DMA mapping data to the device.
     pub fn sync_to_device(&self, byte_range: Range<usize>) -> Result<()> {
         match self {
             Self::Direct(stream) => stream.sync_to_device(byte_range),

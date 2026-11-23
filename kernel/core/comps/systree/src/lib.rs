@@ -1,24 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! This crate organizes the kernel information
-//! about the entire system in a tree structure called `SysTree`.
-//!
-//! Each `SysTree` instance represents a hierarchical model of system state,
-//! suitable for use by various subsystems. For example, sysfs, cgroup, and
-//! configfs can each maintain their own independent `SysTree`.
-//!
-//! The crate exposes a singleton for the primary system tree, typically used as
-//! the backing model for sysfs. Other trees can be instantiated as needed by
-//! subsystems or kernel modules.
-//!
-//! This design follows the model-view-controller (MVC) pattern:
-//! - The "model" is the in-kernel `SysTree`.
-//! - The "view" is a file system (such as sysfs) that exposes the tree to user space.
-//! - The "controller" consists of subsystems, buses, drivers, and kernel modules
-//!   that update the tree.
-//!
-//! By separating concerns, this architecture improves modularity, maintainability, and clarity.
-
 #![no_std]
 #![deny(unsafe_code)]
 
@@ -64,47 +43,27 @@ pub fn init_for_ktest() {
     SINGLETON.call_once(|| Arc::new(SysTree::new()));
 }
 
-/// Returns a reference to the primary `SysTree` instance.
-///
-/// This tree usually serves as the main system information model exposed to user space via sysfs.
-///
-/// # Panics
-///
-/// Panics if the tree has not been initialized.
 pub fn primary_tree() -> &'static Arc<SysTree<RootNode>> {
     SINGLETON.get().expect("SysTree not initialized")
 }
 
-/// An owned string or a static reference to string.
 pub type SysStr = Cow<'static, str>;
 
 pub type Result<T, E = Error> = core::result::Result<T, E>;
 
 #[derive(Debug)]
 pub enum Error {
-    /// Attempted to access a non-existent systree item
     NotFound,
-    /// Invalid operation occurred
     InvalidOperation,
-    /// The name is empty, `.` or `..`, or contains `/` or `NUL`.
     InvalidName,
-    /// Resource is unavailable
     ResourceUnavailable,
-    /// The attribute memory budget is exhausted.
     MemoryBudgetExhausted,
-    /// Attribute operation failed
     AttributeError,
-    /// Permission denied for operation
     PermissionDenied,
-    /// Other internal error
     InternalError(&'static str),
-    /// The systree item already exists
     AlreadyExists,
-    /// Arithmetic overflow occurred
     Overflow,
-    /// Page fault occurred during memory access
     PageFault,
-    /// The current systree item is dead
     IsDead,
 }
 

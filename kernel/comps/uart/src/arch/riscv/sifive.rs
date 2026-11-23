@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! SiFive UART console support.
-
 use alloc::string::ToString;
 
 use aster_util::{field_ptr, safe_ptr::SafePtr};
@@ -18,7 +14,6 @@ use crate::console::{Uart, UartConsole, UartMut};
 
 pub(super) const FDT_COMPATIBLES: [&str; 2] = ["sifive,uart0", "sifive,fu540-c000-uart"];
 
-/// IRQ line for UART serial.
 static IRQ_LINE: Once<MappedIrqLine> = Once::new();
 
 pub(super) fn init(fdt_node: FdtNode) {
@@ -33,8 +28,6 @@ pub(super) fn init(fdt_node: FdtNode) {
         .property("clock-frequency")
         .and_then(|prop| prop.as_usize())
         .and_then(|freq| u32::try_from(freq).ok())
-        // FIXME: Real FU540 device trees may provide the UART clock through
-        // a PRCI clock provider instead of a direct `clock-frequency` property.
         .unwrap_or(SifiveUart::DEFAULT_CLOCK_HZ);
 
     let mut uart: SpinLock<SifiveUart, LocalIrqDisabled> = SpinLock::new(SifiveUart::new(io_mem));
@@ -118,9 +111,6 @@ impl UartMut for SifiveUart {
     }
 }
 
-// Register layout and bit definitions are from the SiFive FU540-C000 Manual,
-// Chapter 13 "Universal Asynchronous Receiver/Transmitter (UART)".
-// Reference: <https://pdos.csail.mit.edu/6.828/2025/readings/FU540-C000-v1.0.pdf>
 #[repr(C)]
 struct Registers {
     txdata: u32,

@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! VMCS execution controls and host/guest state synchronization.
-
 use ::x86::{
     msr, segmentation,
     vmx::vmcs::{
@@ -29,7 +25,6 @@ use crate::{
     prelude::*,
 };
 
-/// A VMCS control field and its capability requirements.
 pub(super) struct VmcsControl {
     field: u32,
     msr: u32,
@@ -40,7 +35,6 @@ pub(super) struct VmcsControl {
 }
 
 impl VmcsControl {
-    /// Selects the capability MSR using the current CPU's `IA32_VMX_BASIC` value.
     pub(super) fn capability_msr(&self, vmx_basic: u64) -> u32 {
         if vmx_basic & (1 << 55) != 0 {
             self.msr_with_true_controls
@@ -120,22 +114,16 @@ macro_rules! read_vmcs_fields {
 }
 
 impl CurrentVmcs<'_> {
-    /// Initializes the fixed execution controls.
     pub(super) fn setup_fixed_controls(&self, _vmx_guard: &VmxGuard) -> Result<()> {
-        // SAFETY: `_vmx_guard` guarantees VMX support on every CPU.
         let vmx_basic = unsafe { msr::rdmsr(msr::IA32_VMX_BASIC) };
 
         for control in &VMCS_CONTROLS {
-            // SAFETY: `_vmx_guard` guarantees support for these capability MSRs,
-            // and `vmx_basic` determines whether to select true-control MSRs.
             let capability = unsafe { msr::rdmsr(control.capability_msr(vmx_basic)) };
             let value = (control.required_bits | capability as u32) & (capability >> 32) as u32;
 
-            // SAFETY: `_vmx_guard` validated the controls in `VMCS_CONTROLS`.
             unsafe { self.write(control.field, value as usize) }?;
         }
 
-        // SAFETY: Exceptions remain in the guest and MSR lists are disabled.
         unsafe {
             write_vmcs_fields!(self;
                 [control::EXCEPTION_BITMAP, 0],
@@ -150,12 +138,6 @@ impl CurrentVmcs<'_> {
         }
     }
 
-    /// Synchronizes the guest execution mode and EPT pointer.
-    ///
-    /// # Safety
-    ///
-    /// `eptp` must identify a valid EPT that isolates guest memory from the host.
-    /// Page-table and backing frames must remain alive while the guest can access them.
     pub(super) unsafe fn sync_controls(&self, eptp: u64, guest_efer: u64) -> Result<()> {
         const EPT_MEM_TYPE_WB: u64 = 6;
         const EPT_PAGE_WALK_LENGTH_4_LEVELS: u64 = 3 << 3;
@@ -168,8 +150,6 @@ impl CurrentVmcs<'_> {
 
         let eptp = eptp | EPT_MEM_TYPE_WB | EPT_PAGE_WALK_LENGTH_4_LEVELS;
 
-        // SAFETY: `VmxGuard` validates both guest modes, and the caller guarantees
-        // EPT isolation and frame lifetimes.
         unsafe {
             write_vmcs_fields!(self;
                 [control::VMENTRY_CONTROLS, entry],
@@ -178,12 +158,9 @@ impl CurrentVmcs<'_> {
         }
     }
 
-    /// Initializes host state that is stable on this CPU.
     pub(super) fn setup_fixed_host(&self) -> Result<()> {
         use x86_64::registers::segmentation::{GS, Segment64};
 
-        // SAFETY: These fields restore the kernel's code segment, CPU-local base,
-        // MSRs and descriptor tables, and return to the VM-exit handler.
         unsafe {
             write_vmcs_fields!(self;
                 [host::CS_SELECTOR, gdt::KERNEL_CS.0],
@@ -205,11 +182,9 @@ impl CurrentVmcs<'_> {
         }
     }
 
-    /// Refreshes host state for a VM exit on the current task.
     pub(super) fn sync_host(&self) -> Result<()> {
         use x86_64::registers::segmentation::{FS, Segment64};
 
-        // SAFETY: These fields restore the host's live control registers, selectors and FS base.
         unsafe {
             write_vmcs_fields!(self;
                 [host::CR0, Cr0::read_raw()],
@@ -226,7 +201,6 @@ impl CurrentVmcs<'_> {
         }
     }
 
-    /// Loads guest architectural state into the VMCS.
     pub(super) fn load_guest_context(
         &self,
         arch: &VcpuArchState,
@@ -234,7 +208,6 @@ impl CurrentVmcs<'_> {
     ) -> Result<()> {
         let sregs = &arch.sregs;
 
-        // We do not currently support 32-bit PAE paging in guests.
         if sregs.cr0 & Cr0Flags::PAGING.bits() != 0
             && sregs.cr4 & Cr4Flags::PHYSICAL_ADDRESS_EXTENSION.bits() != 0
             && sregs.efer & EferFlags::LONG_MODE_ACTIVE.bits() == 0
@@ -242,7 +215,6 @@ impl CurrentVmcs<'_> {
             return Err(Error::InvalidArgs);
         }
 
-        // SAFETY: These writes do not affect host state.
         unsafe {
             self.write_segment(&sregs.cs, CS)?;
             self.write_segment(&sregs.ds, DS)?;
@@ -277,14 +249,12 @@ impl CurrentVmcs<'_> {
                 [guest::IA32_SYSENTER_ESP, arch.msrs.sysenter_esp],
                 [guest::IA32_SYSENTER_EIP, arch.msrs.sysenter_eip],
 
-                // HLT exits are handled in software, so every explicit entry is active.
                 [guest::ACTIVITY_STATE, 0],
                 [guest::LINK_PTR_FULL, usize::MAX],
             )
         }
     }
 
-    /// Saves VMCS guest state into the architectural context.
     pub(super) fn save_guest_context(&self, arch: &mut VcpuArchState) -> Result<()> {
         let (sregs, regs) = (&mut arch.sregs, &mut arch.regs);
 
@@ -312,18 +282,11 @@ impl CurrentVmcs<'_> {
         Ok(())
     }
 
-    /// Writes a guest segment's VMCS fields.
-    ///
-    /// # Safety
-    ///
-    /// The caller should supply guest segment fields, which
-    /// do not affect the host state restored on VM exit.
     unsafe fn write_segment(
         &self,
         segment: &VcpuSegment,
         [selector, base, limit, rights]: [u32; 4],
     ) -> Result<()> {
-        // SAFETY: The caller ensures safety.
         unsafe {
             write_vmcs_fields!(self;
                 [selector, segment.selector],
@@ -334,7 +297,6 @@ impl CurrentVmcs<'_> {
         }
     }
 
-    /// Reads a guest segment's VMCS fields.
     fn read_segment(&self, [selector, base, limit, rights]: [u32; 4]) -> Result<VcpuSegment> {
         let mut segment = VcpuSegment::default();
         let access: usize;
@@ -379,21 +341,17 @@ impl VcpuSegment {
 }
 
 fn fix_guest_cr0(cr0: u64, _vmx_guard: &VmxGuard, _irq_guard: &DisabledLocalIrqGuard) -> u64 {
-    // SAFETY: `_vmx_guard` guarantees VMX support on every CPU.
     let (fixed0, fixed1) = unsafe {
         (
             msr::rdmsr(msr::IA32_VMX_CR0_FIXED0),
             msr::rdmsr(msr::IA32_VMX_CR0_FIXED1),
         )
     };
-    // Unrestricted guests need not have PE or PG set. The read shadow retains
-    // the architectural value, including bits forced by VMX requirements.
     let fixed0 = fixed0 & !(Cr0Flags::PROTECTED_MODE_ENABLE | Cr0Flags::PAGING).bits();
     (cr0 | fixed0) & fixed1
 }
 
 fn fix_guest_cr4(cr4: u64, _vmx_guard: &VmxGuard, _irq_guard: &DisabledLocalIrqGuard) -> u64 {
-    // SAFETY: `_vmx_guard` guarantees VMX support on every CPU.
     let (fixed0, fixed1) = unsafe {
         (
             msr::rdmsr(msr::IA32_VMX_CR4_FIXED0),
@@ -403,7 +361,6 @@ fn fix_guest_cr4(cr4: u64, _vmx_guard: &VmxGuard, _irq_guard: &DisabledLocalIrqG
     (cr4 | fixed0) & fixed1
 }
 
-// Each tuple names selector, base, limit and access-rights fields.
 const CS: [u32; 4] = [
     guest::CS_SELECTOR,
     guest::CS_BASE,

@@ -1,33 +1,18 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! `FUSE_WRITE` writes bytes to an open file handle sitting at server-side.
-//!
-//! The request body contains [`WriteReq`] followed by the raw bytes to write.
-//! The reply body contains [`WriteReply`], and the operation returns the number
-//! of bytes accepted by the server.
-
 use bitflags::bitflags;
 use ostd::mm::{Infallible, VmReader, VmWriter};
 
 use super::util::read_payload;
 use crate::{FuseError, FuseFileHandle, FuseOpcode, FuseOperation, FuseResult, ReplyExpectation};
 
-/// Flags for `FUSE_WRITE` requests.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.18/source/include/uapi/linux/fuse.h#L522-L531>
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub struct WriteFlags(u32);
 
 bitflags! {
     impl WriteFlags: u32 {
-        /// The write is serviced from the page cache (writeback mode).
         const WRITE_CACHE     = 1 << 0;
-        /// `lock_owner` is valid and should be used for lock-aware writes.
         const WRITE_LOCKOWNER = 1 << 1;
 
-        // This type accepts all bit patterns,
-        // although only some flags are recognized.
         const _               = !0;
     }
 }
@@ -35,17 +20,11 @@ bitflags! {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub struct WriteReq {
-    /// File handle to write to.
     fh: FuseFileHandle,
-    /// File offset to start writing at.
     offset: u64,
-    /// Number of bytes to write.
     size: u32,
-    /// FUSE-specific write flags.
     write_flags: WriteFlags,
-    /// Lock owner for lock-aware writes.
     lock_owner: u64,
-    /// POSIX open flags associated with the handle.
     flags: u32,
     padding: u32,
 }
@@ -69,7 +48,6 @@ impl WriteReq {
         }
     }
 
-    /// Returns the number of bytes to write.
     pub fn size(&self) -> u32 {
         self.size
     }
@@ -78,13 +56,11 @@ impl WriteReq {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub struct WriteReply {
-    /// Number of bytes written by the server.
     size: u32,
     padding: u32,
 }
 
 impl WriteReply {
-    /// Returns the number of bytes written by the server.
     pub fn size(&self) -> usize {
         self.size as usize
     }
@@ -99,7 +75,6 @@ impl WriteOperation {
         Self { write_req }
     }
 
-    /// Returns the number of payload bytes to write.
     pub fn payload_size(&self) -> usize {
         self.write_req.size() as usize
     }

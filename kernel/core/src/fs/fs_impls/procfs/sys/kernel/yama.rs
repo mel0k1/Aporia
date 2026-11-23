@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use aster_util::printer::VmPrinter;
 
 use crate::{
@@ -19,14 +17,10 @@ use crate::{
     security::lsm::yama,
 };
 
-/// Represents the inode at `/proc/sys/kernel/yama`.
 pub(super) struct YamaDirOps;
 
 impl YamaDirOps {
     pub(super) fn new_inode(parent: Weak<dyn Inode>) -> Arc<dyn Inode> {
-        // Reference:
-        // <https://elixir.bootlin.com/linux/v6.16.5/source/security/yama/yama_lsm.c#L463>
-        // <https://elixir.bootlin.com/linux/v6.16.5/source/fs/proc/proc_sysctl.c#L978>
         ProcDir::new(Self, parent, mkmod!(a+rx))
     }
 
@@ -60,12 +54,10 @@ impl ProcDirOps for YamaDirOps {
     }
 }
 
-/// Represents the inode at `/proc/sys/kernel/yama/ptrace_scope`.
 struct PtraceScopeFileOps;
 
 impl PtraceScopeFileOps {
     fn new_inode(parent: Weak<dyn Inode>) -> Arc<dyn Inode> {
-        // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/security/yama/yama_lsm.c#L455>
         ProcFile::new(Self, parent, mkmod!(a+r, u+w))
     }
 }

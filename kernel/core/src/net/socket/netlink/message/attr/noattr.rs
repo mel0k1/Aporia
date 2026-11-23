@@ -1,9 +1,6 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::{Attribute, CAttrHeader};
 use crate::{net::socket::netlink::message::ContinueAttrRead, prelude::*, util::MultiRead};
 
-/// A special type indicates that a segment cannot have attributes.
 #[derive(Debug)]
 pub(crate) enum NoAttr {}
 

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd::mm::VmIo;
 
 use super::SyscallReturn;
@@ -35,14 +33,12 @@ pub(super) fn sys_prctl(
             ctx.user_space().write_val(write_to_addr, &write_val)?;
         }
         PrctlCmd::PR_GET_DUMPABLE => {
-            // TODO: When coredump is supported, return the actual value.
             return Ok(SyscallReturn::Return(Dumpable::Disable as _));
         }
         PrctlCmd::PR_SET_DUMPABLE(dumpable) => {
             if dumpable != Dumpable::Disable && dumpable != Dumpable::User {
                 return Err(errno!(EINVAL, "invalid dumpable attribute"));
             }
-            // TODO: Implement coredump.
         }
         PrctlCmd::PR_GET_KEEPCAPS => {
             let keep_cap = {
@@ -92,11 +88,9 @@ pub(super) fn sys_prctl(
             credentials.set_securebits(securebits)?;
         }
         PrctlCmd::PR_SET_TIMERSLACK(slack_ns) => {
-            // Negative values are invalid.
             if (slack_ns as i64) < 0 {
                 return Err(errno!(EINVAL, "invalid timer slack"));
             }
-            // In Linux, a value of 0 means "use default slack".
             if slack_ns == 0 {
                 ctx.posix_thread.reset_timer_slack_to_default();
             } else {
@@ -199,9 +193,9 @@ enum PrctlCmd {
 #[repr(u64)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, TryFromInt)]
 enum Dumpable {
-    Disable = 0, /* No setuid dumping */
-    User = 1,    /* Dump as user of process */
-    Root = 2,    /* Dump as root */
+    Disable = 0,
+    User = 1,
+    Root = 2,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -264,7 +258,6 @@ impl PrctlCmd {
 }
 
 impl CapAmbientCmd {
-    // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/include/uapi/linux/prctl.h#L196-L199>
     const PR_CAP_AMBIENT_IS_SET: u64 = 1;
     const PR_CAP_AMBIENT_RAISE: u64 = 2;
     const PR_CAP_AMBIENT_LOWER: u64 = 3;

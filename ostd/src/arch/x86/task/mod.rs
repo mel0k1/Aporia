@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! The architecture support of context switch.
-
 use crate::task::TaskContextApi;
 
 core::arch::global_asm!(include_str!("switch.S"));
@@ -22,7 +18,6 @@ impl TaskContext {
     }
 }
 
-/// Callee-saved registers.
 #[repr(C)]
 #[derive(Clone, Debug)]
 struct CalleeRegs {
@@ -36,7 +31,6 @@ struct CalleeRegs {
 }
 
 impl CalleeRegs {
-    /// Creates new `CalleeRegs`
     pub(self) const fn new() -> Self {
         CalleeRegs {
             rsp: 0,

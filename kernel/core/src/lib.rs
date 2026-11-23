@@ -1,9 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! The core of the Asterinas kernel.
-//!
-//! This crate implements the Linux ABI and the core kernel mechanisms.
-
 #![no_std]
 #![deny(unsafe_code)]
 #![feature(alloc_io)]
@@ -27,7 +21,6 @@ extern crate getset;
 #[macro_use]
 extern crate ostd_pod;
 
-// Set this crate's log prefix for `ostd::log`.
 macro_rules! __log_prefix {
     () => {
         ""
@@ -59,12 +52,10 @@ mod syscall;
 mod thread;
 mod time;
 pub mod util;
-// TODO: Add vDSO support for LoongArch.
 #[cfg(not(target_arch = "loongarch64"))]
 mod vdso;
 pub mod vm;
 
-/// Boots the Asterinas core kernel.
 pub fn boot() {
     init::main();
 }

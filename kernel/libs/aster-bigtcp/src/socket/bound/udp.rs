@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::{boxed::Box, sync::Arc};
 use core::sync::atomic::{AtomicBool, Ordering};
 
@@ -24,7 +22,6 @@ use crate::{
 
 pub type UdpSocket<E> = Socket<UdpSocketInner, E>;
 
-/// States needed by [`UdpSocketBg`].
 pub struct UdpSocketInner {
     socket: SpinLock<Box<RawUdpSocket>, BottomHalfDisabled>,
     need_dispatch: AtomicBool,
@@ -37,7 +34,6 @@ impl<E: Ext> Inner<E> for UdpSocketInner {
     fn on_drop(this: &Arc<SocketBg<Self, E>>) {
         this.inner.socket.lock().close();
 
-        // A UDP socket can be removed immediately.
         this.bound.iface().common().remove_udp_socket(this);
     }
 }
@@ -45,7 +41,6 @@ impl<E: Ext> Inner<E> for UdpSocketInner {
 pub(crate) type UdpSocketBg<E> = SocketBg<UdpSocketInner, E>;
 
 impl<E: Ext> UdpSocketBg<E> {
-    /// Tries to process an incoming packet and returns whether the packet is processed.
     pub(crate) fn process(
         &self,
         cx: &mut Context,
@@ -59,8 +54,6 @@ impl<E: Ext> UdpSocketBg<E> {
 
         let mut socket = self.inner.socket.lock();
 
-        // The socket can close concurrently. If this happens, skip it because
-        // `RawUdpSocket::process` requires the socket to be open.
         if !socket.is_open() {
             return false;
         }
@@ -79,15 +72,9 @@ impl<E: Ext> UdpSocketBg<E> {
     }
 
     fn accepts(&self, ip_repr: &IpRepr, udp_repr: &UdpRepr) -> bool {
-        // This must be stricter than `RawUdpSocket::accepts` so that `RawUdpSocket::process` is
-        // guaranteed to work correctly if this method returns true.
-        //
-        // `RawUdpSocket::accepts` accepts all incoming broadcast and multicast packets, which is not
-        // what we want.
         ip_repr.dst_addr() == *self.bound.addr() && udp_repr.dst_port == self.bound.port()
     }
 
-    /// Tries to generate an outgoing packet and dispatches the generated packet.
     pub(crate) fn dispatch<D>(&self, cx: &mut Context, dispatch: D)
     where
         D: FnOnce(&mut Context, &IpRepr, &UdpRepr, &[u8]),
@@ -101,7 +88,6 @@ impl<E: Ext> UdpSocketBg<E> {
             })
             .unwrap();
 
-        // For UDP, dequeuing a packet means that we can queue more packets.
         self.notify_events(SocketEvents::CAN_SEND);
 
         self.inner
@@ -109,18 +95,12 @@ impl<E: Ext> UdpSocketBg<E> {
             .store(socket.send_queue() > 0, Ordering::Relaxed);
     }
 
-    /// Returns whether the socket _may_ generate an outgoing packet.
-    ///
-    /// The check is intended to be lock-free and fast, but may have false positives.
     pub(crate) fn need_dispatch(&self) -> bool {
         self.inner.need_dispatch.load(Ordering::Relaxed)
     }
 }
 
 impl<E: Ext> UdpSocket<E> {
-    /// Binds to a specified endpoint.
-    ///
-    /// Polling the iface is _not_ required after this method succeeds.
     pub fn new_bind(
         bound: BoundUdpPort<E>,
         observer: E::UdpEventObserver,
@@ -128,8 +108,6 @@ impl<E: Ext> UdpSocket<E> {
         let local_endpoint = {
             let mut endpoint = bound.endpoint();
 
-            // This is the address used to send packets. Source addresses can never be the broadcast
-            // address, even if it is the address that the socket binds to.
             let interface = bound.iface().common().interface();
             endpoint.addr = interface.map_broadcast_to_local(endpoint.addr);
 
@@ -161,9 +139,6 @@ impl<E: Ext> UdpSocket<E> {
         Ok(socket)
     }
 
-    /// Sends some data.
-    ///
-    /// Polling the iface is _always_ required after this method succeeds.
     pub fn send<F, R>(
         &self,
         size: usize,
@@ -190,9 +165,6 @@ impl<E: Ext> UdpSocket<E> {
         Ok(result)
     }
 
-    /// Receives some data.
-    ///
-    /// Polling the iface is _not_ required after this method succeeds.
     pub fn recv<CopyFn, R>(
         &self,
         behavior: ReceiveBehavior,
@@ -215,10 +187,6 @@ impl<E: Ext> UdpSocket<E> {
         Ok(result)
     }
 
-    /// Calls `f` with an immutable reference to the associated [`RawUdpSocket`].
-    //
-    // NOTE: If a mutable reference is required, add a method above that correctly updates the next
-    // polling time.
     pub fn raw_with<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&RawUdpSocket) -> R,

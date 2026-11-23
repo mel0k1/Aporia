@@ -1,13 +1,9 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::RouteTableId;
 
-/// One routing policy rule.
 #[derive(Clone, Debug)]
 pub(super) struct Rule {
     priority: RulePriority,
     action: RuleAction,
-    // TODO: Add selectors for additional routing policies.
 }
 
 impl Rule {
@@ -27,7 +23,6 @@ impl Rule {
     }
 }
 
-/// A route-rule priority.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) struct RulePriority(u32);
 
@@ -37,7 +32,6 @@ impl RulePriority {
     }
 }
 
-/// The action applied by a routing policy rule.
 #[derive(Clone, Debug)]
 pub(super) enum RuleAction {
     Lookup(RouteTableId),

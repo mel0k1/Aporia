@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd::arch::cpu::context::UserContext;
 
 use crate::{

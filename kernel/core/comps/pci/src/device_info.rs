@@ -1,17 +1,9 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! PCI device Information
-
 use crate::cfg_space::PciCommonCfgOffset;
 
-/// PCI device location.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct PciDeviceLocation {
-    /// Bus number
     pub bus: u8,
-    /// Device number with max 31
     pub device: u8,
-    /// Device number with max 7
     pub function: u8,
 }
 
@@ -24,13 +16,11 @@ impl PciDeviceLocation {
 }
 
 impl PciDeviceLocation {
-    /// Reads an 8-bit value from the PCI configuration space at the specified offset.
     pub fn read8(&self, offset: u16) -> u8 {
         let val = self.read32(offset & !0b11);
         ((val >> ((offset as usize & 0b11) << 3)) & 0xFF) as u8
     }
 
-    /// Reads a 16-bit value from the PCI configuration space at the specified offset.
     pub fn read16(&self, offset: u16) -> u16 {
         debug_assert!(
             (offset & 0b1) == 0,
@@ -41,7 +31,6 @@ impl PciDeviceLocation {
         ((val >> ((offset as usize & 0b10) << 3)) & 0xFFFF) as u16
     }
 
-    /// Reads a 32-bit value from the PCI configuration space at the specified offset.
     pub fn read32(&self, offset: u16) -> u32 {
         debug_assert!(
             (offset & 0b11) == 0,
@@ -51,7 +40,6 @@ impl PciDeviceLocation {
         crate::arch::read32(self, offset as u32).unwrap()
     }
 
-    /// Writes an 8-bit value to the PCI configuration space at the specified offset.
     pub fn write8(&self, offset: u16, val: u8) {
         let old = self.read32(offset & !0b11);
         let dest = (offset as usize & 0b11) << 3;
@@ -62,7 +50,6 @@ impl PciDeviceLocation {
         );
     }
 
-    /// Writes a 16-bit value to the PCI configuration space at the specified offset.
     pub fn write16(&self, offset: u16, val: u16) {
         debug_assert!(
             (offset & 0b1) == 0,
@@ -78,7 +65,6 @@ impl PciDeviceLocation {
         );
     }
 
-    /// Writes a 32-bit value to the PCI configuration space at the specified offset.
     pub fn write32(&self, offset: u16, val: u32) {
         debug_assert!(
             (offset & 0b11) == 0,
@@ -89,20 +75,13 @@ impl PciDeviceLocation {
     }
 }
 
-/// PCI device ID
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PciDeviceId {
-    /// Vendor ID
     pub vendor_id: u16,
-    /// Device ID
     pub device_id: u16,
-    /// Revision ID
     pub revision_id: u8,
-    /// Programming Interface Byte
     pub prog_if: u8,
-    /// Specifies the specific function the device performs.
     pub subclass: u8,
-    /// Specifies the type of function the device performs.
     pub class: u8,
 }
 

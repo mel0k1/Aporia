@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use crate::{net::socket::options::macros::impl_socket_options, prelude::*};
 
 impl_socket_options!(

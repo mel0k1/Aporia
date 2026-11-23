@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::fmt::Debug;
 
 use super::{
@@ -7,16 +5,12 @@ use super::{
 };
 use crate::packet::{FreshTxPacket, LinkLayer, RxPacket, TxPacket};
 
-/// A loopback network device.
 #[derive(Debug)]
 pub struct Loopback {
     _private: (),
 }
 
 impl Loopback {
-    /// Creates a loopback device.
-    ///
-    /// Every transmitted packet is made available for reception in FIFO order.
     #[expect(clippy::new_without_default)]
     pub fn new() -> Self {
         Self { _private: () }
@@ -49,8 +43,6 @@ impl AnyNetworkDevice for Loopback {
     }
 
     fn send(&mut self, _packet: TxPacket<LinkLayer>) -> Result<(), NetError> {
-        // We process packets that should loop back before reaching the loopback device. So this is
-        // an unexpected packet and we will just discard it.
         Ok(())
     }
 

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::{
     Pgid, Pid, Process, pid_table,
     posix_thread::AsPosixThread,
@@ -12,22 +10,13 @@ use crate::{
     thread::Tid,
 };
 
-/// Sends a signal to a process, using the current process as the sender.
-///
-/// The credentials of the current process will be checked to determine
-/// if it is authorized to send the signal to this particular target process.
-///
-/// If `signal` is `None`, this method will only check permission without sending
-/// any signal.
 pub(crate) fn kill(pid: Pid, signal: Option<Box<dyn Signal>>, ctx: &Context) -> Result<()> {
-    // Fast path: If the signal is sent to self, we can skip most checks.
     if pid == ctx.process.pid() {
         let Some(signal) = signal else {
             return Ok(());
         };
 
         if !ctx.posix_thread.has_signal_blocked(signal.num()) {
-            // Killing the current thread does not raise any permission issues.
             ctx.posix_thread.enqueue_signal(signal);
             return Ok(());
         }
@@ -35,7 +24,6 @@ pub(crate) fn kill(pid: Pid, signal: Option<Box<dyn Signal>>, ctx: &Context) -> 
         return kill_process(ctx.process.as_ref(), Some(signal), ctx);
     }
 
-    // Slow path
     let process = pid_table::pid_table_mut()
         .get_process(pid)
         .ok_or_else(|| errno!(ESRCH, "the target process does not exist"))?;
@@ -43,14 +31,6 @@ pub(crate) fn kill(pid: Pid, signal: Option<Box<dyn Signal>>, ctx: &Context) -> 
     kill_process(&process, signal, ctx)
 }
 
-/// Sends a signal to all processes in a group, using the current process
-/// as the sender.
-///
-/// The credentials of the current process will be checked to determine
-/// if it is authorized to send the signal to the target group.
-///
-/// If `signal` is `None`, this method will only check permission without sending
-/// any signal.
 pub(crate) fn kill_group<S: Signal + Clone>(
     pgid: Pgid,
     signal: Option<S>,
@@ -77,13 +57,6 @@ pub(crate) fn kill_group<S: Signal + Clone>(
     result
 }
 
-/// Sends a signal to a target thread, using the current process
-/// as the sender.
-///
-/// Checks the target thread belongs to the target process if `tgid` is provided.
-///
-/// If `signal` is `None`, this method will only check permission without sending
-/// any signal.
 pub(crate) fn tgkill(
     tid: Tid,
     tgid: Option<Pid>,
@@ -96,7 +69,6 @@ pub(crate) fn tgkill(
     let target_posix_thread = thread.as_posix_thread().unwrap();
 
     if let Some(tgid) = tgid {
-        // Check the TGID
         let pid = target_posix_thread.process().pid();
         if pid != tgid {
             return Err(errno!(
@@ -106,7 +78,6 @@ pub(crate) fn tgkill(
         }
     }
 
-    // Check permission
     let signum = signal.as_ref().map(|signal| signal.num());
     check_signal_perm(target_posix_thread, ctx, signum)?;
 
@@ -115,19 +86,12 @@ pub(crate) fn tgkill(
     }
 
     if let Some(signal) = signal {
-        // We've checked the permission issues above.
-        // FIXME: We should take some lock while checking the permission to avoid race conditions.
         target_posix_thread.enqueue_signal(signal);
     }
 
     Ok(())
 }
 
-/// Sends a signal to all processes except current process and init process, using
-/// the current process as the sender.
-///
-/// The credentials of the current process will be checked to determine
-/// if it is authorized to send the signal to the target group.
 pub(crate) fn kill_all<S: Signal + Clone>(signal: Option<S>, ctx: &Context) -> Result<()> {
     let mut result = Ok(());
 
@@ -161,7 +125,6 @@ fn kill_process(process: &Process, signal: Option<Box<dyn Signal>>, ctx: &Contex
     Ok(())
 }
 
-// Reference: <https://elixir.bootlin.com/linux/v6.17/source/kernel/signal.c#L799>.
 fn check_signal_perm(target: &PosixThread, ctx: &Context, signum: Option<SigNum>) -> Result<()> {
     let target_process = target.process();
 

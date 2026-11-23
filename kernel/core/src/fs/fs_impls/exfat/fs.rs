@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 #![expect(dead_code)]
 #![expect(unused_variables)]
 
@@ -51,17 +49,13 @@ pub(crate) struct ExfatFs {
     upcase_table: Arc<SpinLock<ExfatUpcaseTable>>,
 
     mount_option: ExfatMountOptions,
-    //Used for inode allocation.
     highest_inode_number: AtomicU64,
 
-    //inodes are indexed by their hash_value.
     inodes: RwMutex<HashMap<usize, Arc<ExfatInode>>>,
 
-    //Cache for fat table
     fat_cache: RwLock<LruCache<ClusterID, ClusterID>>,
     meta_cache: PageCache,
 
-    //A global lock, We need to hold the mutex before accessing bitmap or inode, otherwise there will be deadlocks.
     mutex: Mutex<()>,
 
     fs_event_subscriber_stats: FsEventSubscriberStats,
@@ -76,7 +70,6 @@ impl ExfatFs {
         block_device: Arc<dyn BlockDevice>,
         mount_option: ExfatMountOptions,
     ) -> Result<Arc<Self>> {
-        // Load the super_block
         let super_block = Self::read_super_block(block_device.as_ref())?;
         let fs_size = super_block.num_clusters as usize * super_block.cluster_size as usize;
         let exfat_fs = Arc::new_cyclic(|weak_self| ExfatFs {
@@ -95,9 +88,6 @@ impl ExfatFs {
             fs_event_subscriber_stats: FsEventSubscriberStats::new(),
         });
 
-        // TODO: if the main superblock is corrupted, should we load the backup?
-
-        // Verify boot region
         Self::verify_boot_region(exfat_fs.block_device())?;
 
         let weak_fs = Arc::downgrade(&exfat_fs);
@@ -116,10 +106,6 @@ impl ExfatFs {
 
         let bitmap = root.read_bitmap()?;
         *exfat_fs.bitmap.lock() = bitmap;
-
-        // TODO: Handle UTF-8
-
-        // TODO: Init NLS Table
 
         exfat_fs.inodes.write().insert(root.hash_index(), root);
 
@@ -207,7 +193,6 @@ impl ExfatFs {
         let sector_size = sb.sector_size;
         let raw_value: u32 = value.into();
 
-        // We expect the fat table to change less frequently, so we write its content to disk immediately instead of absorbing it.
         let position =
             sb.fat1_start_sector * sector_size as u64 + (cluster as u64) * FAT_ENTRY_SIZE as u64;
 
@@ -233,13 +218,11 @@ impl ExfatFs {
     }
 
     fn verify_boot_region(block_device: &dyn BlockDevice) -> Result<()> {
-        // TODO: Check boot signature and boot checksum.
         Ok(())
     }
 
     fn read_super_block(block_device: &dyn BlockDevice) -> Result<ExfatSuperBlock> {
         let boot_sector = block_device.read_val::<ExfatBootSector>(0)?;
-        /* Check the validity of BOOT */
         if boot_sector.signature != BOOT_SIGNATURE {
             return Err(errno!(EINVAL, "invalid boot record signature"));
         }
@@ -248,10 +231,6 @@ impl ExfatFs {
             return Err(errno!(EINVAL, "invalid fs name"));
         }
 
-        /*
-         * must_be_zero field must be filled with zero to prevent mounting
-         * from FAT volume.
-         */
         if boot_sector.must_be_zero.iter().any(|&x| x != 0) {
             return Err(errno!(
                 EINVAL,
@@ -263,7 +242,6 @@ impl ExfatFs {
             return Err(errno!(EINVAL, "bogus number of FAT structure"));
         }
 
-        // sect_size_bits could be at least 9 and at most 12.
         if boot_sector.sector_size_bits < EXFAT_MIN_SECT_SIZE_BITS
             || boot_sector.sector_size_bits > EXFAT_MAX_SECT_SIZE_BITS
         {
@@ -276,7 +254,6 @@ impl ExfatFs {
 
         let super_block = ExfatSuperBlock::try_from(boot_sector)?;
 
-        /* Check consistencies */
         if ((super_block.num_fat_sectors as u64) << boot_sector.sector_size_bits)
             < (super_block.num_clusters as u64) * 4
         {
@@ -304,7 +281,6 @@ impl ExfatFs {
     }
 
     fn calibrate_blocksize(super_block: &ExfatSuperBlock, logical_sec: u32) -> Result<()> {
-        // TODO: logical_sect should be larger than block_size.
         Ok(())
     }
 
@@ -451,7 +427,6 @@ impl FileSystem for ExfatFs {
 }
 
 #[derive(Clone, Debug, Default)]
-// Error handling
 pub(crate) enum ExfatErrorMode {
     #[default]
     Continue,
@@ -460,7 +435,6 @@ pub(crate) enum ExfatErrorMode {
 }
 
 #[derive(Clone, Debug, Default)]
-//Mount options
 pub(crate) struct ExfatMountOptions {
     pub(super) fs_uid: usize,
     pub(super) fs_gid: usize,

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd::mm::VmIo;
 
 use super::SyscallReturn;
@@ -14,12 +12,6 @@ pub(super) fn sys_getcwd(buf: Vaddr, len: usize, ctx: &Context) -> Result<Syscal
 
     debug!("getcwd: {:?}", abs_path);
 
-    // Linux will add a "(unreachable)" prefix to the path if the CWD is not reachable.
-    // However, according to POSIX, `getcwd()` should fail with ENOENT in this case.
-    // `glibc` treats the Linux's behavior as a bug and handles the Linux-specific prefix
-    // to conform to POSIX. Here follows Linux's behavior to keep compatibility.
-    //
-    // Reference: <https://man7.org/linux/man-pages/man3/getcwd.3.html>
     let abs_path = match abs_path {
         AbsPathResult::Reachable(s) => s,
         AbsPathResult::Unreachable(s) => alloc::format!("(unreachable){}", s),

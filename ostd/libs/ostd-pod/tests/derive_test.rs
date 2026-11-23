@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 #[macro_use]
 extern crate ostd_pod;
 use ostd_pod::{FromZeros, IntoBytes, Pod};

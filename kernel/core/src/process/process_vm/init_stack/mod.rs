@@ -1,17 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! The init stack for the process.
-//!
-//! The init stack is used to store `argv`, `envp`, and auxiliary vectors.
-//! We can read `argv` and `envp` of a process from the init stack.
-//! Usually, the lowest address of the init stack is
-//! the highest address of the user stack of the main thread.
-//!
-//! However, the init stack will be mapped to user space
-//! and the user process can write the content of the init stack,
-//! so the content reading from the init stack may not be the same as the initial one.
-//!
-
 use core::{
     ops::Range,
     sync::atomic::{AtomicUsize, Ordering},
@@ -30,80 +16,15 @@ use crate::{
 
 pub(crate) mod aux_vec;
 
-/// Set the initial stack size to 8 megabytes, following the default Linux stack size limit.
-pub(crate) const INIT_STACK_SIZE: usize = 8 * 1024 * 1024; // 8 MB
+pub(crate) const INIT_STACK_SIZE: usize = 8 * 1024 * 1024;
 
-/// The maximum number of argument or environment strings that can be supplied to
-/// the `execve` system call.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.15/source/include/uapi/linux/binfmts.h#L15>.
 pub(crate) const MAX_NR_STRING_ARGS: usize = i32::MAX as usize;
 
-/// The maximum size, in bytes, of a single argument or environment string
-/// (`argv` / `envp`) accepted by `execve`.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.15/source/include/uapi/linux/binfmts.h#L16>.
 pub(crate) const MAX_LEN_STRING_ARG: usize = PAGE_SIZE * 32;
 
-/*
- * Illustration of the virtual memory space containing the processes' init stack:
- *
- *  (high address)
- *  +---------------------+ <------+ Highest address
- *  |                     |          Random stack paddings
- *  +---------------------+ <------+ The base of stack (stack grows down)
- *  |                     |
- *  | Null-terminated     |
- *  | strings referenced  |
- *  | by variables below  |
- *  |                     |
- *  +---------------------+
- *  | AT_NULL             |
- *  +---------------------+
- *  | AT_NULL             |
- *  +---------------------+
- *  | ...                 |
- *  +---------------------+
- *  | aux_val[0]          |
- *  +---------------------+
- *  | aux_key[0]          | <------+ Auxiliary table
- *  +---------------------+
- *  | NULL                |
- *  +---------------------+
- *  | ...                 |
- *  +---------------------+
- *  | char* envp[0]       | <------+ Environment variables
- *  +---------------------+
- *  | NULL                |
- *  +---------------------+
- *  | char* argv[argc-1]  |
- *  +---------------------+
- *  | ...                 |
- *  +---------------------+
- *  | char* argv[0]       |
- *  +---------------------+
- *  | long argc           | <------+ Program arguments
- *  +---------------------+
- *  |                     |
- *  |                     |
- *  +---------------------+
- *  |                     |
- *  +---------------------+ <------+ User stack default rlimit
- *  (low address)
- */
-
-/// The initial portion of the main stack of a process.
 pub(crate) struct InitStack {
-    /// The top address of the init stack.
-    ///
-    /// The stack grows down from this address.
     initial_top: Vaddr,
-    /// The maximum size of the stack.
     max_size: usize,
-    /// The current stack pointer.
-    ///
-    /// Before initialization, `pos` points to `initial_top`.
-    /// After initialization, `pos` points to the top of the process stack.
     pos: AtomicUsize,
     auxv_range: SpinLock<Range<Vaddr>>,
     argv_range: SpinLock<Range<Vaddr>>,
@@ -126,13 +47,8 @@ impl Clone for InitStack {
 impl InitStack {
     pub(crate) fn new() -> Self {
         let nr_pages_padding = {
-            // We do not want the stack top too close to `VMAR_CAP_ADDR`.
-            // So we add this fixed padding. Any small value greater than zero will do.
             const NR_FIXED_PADDING_PAGES: usize = 7;
 
-            // Some random padding pages are added as a simple measure to
-            // make the stack values of a buggy user program harder
-            // to be exploited by attackers.
             let mut nr_random_padding_pages: u8 = 0;
             getrandom(nr_random_padding_pages.as_mut_bytes());
 
@@ -151,26 +67,20 @@ impl InitStack {
         }
     }
 
-    /// Returns the top address of the user stack.
-    ///
-    /// This method should only be called after the stack is initialized.
     pub(crate) fn user_stack_top(&self) -> Vaddr {
         debug_assert!(self.is_initialized());
 
         self.pos()
     }
 
-    /// Returns the range that held the initial arguments.
     pub(crate) fn argv_range(&self) -> Range<Vaddr> {
         self.argv_range.lock().clone()
     }
 
-    /// Returns the range that held the initial environment variables.
     pub(crate) fn envp_range(&self) -> Range<Vaddr> {
         self.envp_range.lock().clone()
     }
 
-    /// Maps the VMO of the init stack and constructs a writer to initialize its content.
     pub(super) fn map_and_write(
         &self,
         vmar: &Vmar,
@@ -211,9 +121,6 @@ impl InitStack {
         Ok(())
     }
 
-    /// Constructs a reader to parse the content of an `InitStack`.
-    ///
-    /// This method should only be called after the stack is initialized.
     pub(super) fn reader<'a>(&self, vmar: &'a Vmar) -> InitStackReader<'a> {
         debug_assert!(self.is_initialized());
 
@@ -238,36 +145,25 @@ impl InitStack {
     }
 }
 
-/// A writer to initialize the content of an `InitStack`.
 struct InitStackWriter<'a> {
     pos: &'a AtomicUsize,
     vmo: Arc<Vmo>,
     argv: Vec<CString>,
     envp: Vec<CString>,
     auxvec: AuxVec,
-    /// The mapping address of the `InitStack`.
     map_addr: usize,
 }
 
 impl InitStackWriter<'_> {
-    /// Writes the content to the init stack.
-    ///
-    /// Returns the range of auxv, argv and envp in the init stack.
     fn write(mut self) -> Result<(Range<Vaddr>, Range<Vaddr>, Range<Vaddr>)> {
-        // FIXME: Some OSes may put the first page of the executable file here
-        // for interpreting ELF headers.
-
-        // Write envp strings.
         let envp_end = self.pos();
         let envp_pointers = self.write_envp_strings()?;
         let envp_start = self.pos();
 
-        // Write argv strings.
         let argv_end = self.pos();
         let argv_pointers = self.write_argv_strings()?;
         let argv_start = self.pos();
 
-        // Generate random values for the auxiliary vector.
         let random_value_pointer = {
             let random_value = generate_random_for_aux_vec();
             self.write_bytes(&random_value)?
@@ -281,11 +177,9 @@ impl InitStackWriter<'_> {
         self.write_envp_pointers(envp_pointers)?;
         self.write_argv_pointers(argv_pointers)?;
 
-        // Write argc.
         let argc = self.argv.len();
         self.write_u64(argc as u64)?;
 
-        // Ensure the stack top is 16-byte aligned.
         debug_assert_eq!(self.pos() & !0xf, self.pos());
 
         Ok((
@@ -315,12 +209,7 @@ impl InitStackWriter<'_> {
         Ok(argv_pointers)
     }
 
-    /// Ensures that the top address of the user stack is 16-byte aligned.
-    ///
-    /// The 16-byte alignment is required by x86-64 System V ABI.
-    /// To meet that requirement, this method may write some extra 8-byte `u64`s.
     fn adjust_stack_alignment(&self, envp_pointers: &[u64], argv_pointers: &[u64]) -> Result<()> {
-        // Ensure 8-byte alignment.
         self.write_u64(0)?;
         let auxvec_size = (self.auxvec.table().len() + 1) * (size_of::<u64>() * 2);
         let envp_pointers_size = (envp_pointers.len() + 1) * size_of::<u64>();
@@ -334,10 +223,8 @@ impl InitStackWriter<'_> {
     }
 
     fn write_aux_vec(&self) -> Result<()> {
-        // Write a NULL auxiliary entry.
         self.write_u64(0)?;
         self.write_u64(AuxKey::AT_NULL as u64)?;
-        // Write the auxiliary vector.
         let aux_vec: Vec<_> = self
             .auxvec
             .table()
@@ -352,9 +239,7 @@ impl InitStackWriter<'_> {
     }
 
     fn write_envp_pointers(&self, mut envp_pointers: Vec<u64>) -> Result<()> {
-        // Write a NULL pointer.
         self.write_u64(0)?;
-        // Write envp pointers.
         envp_pointers.reverse();
         for envp_pointer in envp_pointers {
             self.write_u64(envp_pointer)?;
@@ -363,9 +248,7 @@ impl InitStackWriter<'_> {
     }
 
     fn write_argv_pointers(&self, mut argv_pointers: Vec<u64>) -> Result<()> {
-        // Write a NULL pointer.
         self.write_u64(0)?;
-        // Write argv pointers.
         argv_pointers.reverse();
         for argv_pointer in argv_pointers {
             self.write_u64(argv_pointer)?;
@@ -373,8 +256,6 @@ impl InitStackWriter<'_> {
         Ok(())
     }
 
-    /// Writes a `u64` to the stack.
-    /// Returns the writing address.
     fn write_u64(&self, val: u64) -> Result<u64> {
         let new_pos = self.reserve_pos(size_of::<u64>(), align_of::<u64>())?;
         let bytes = val.to_ne_bytes();
@@ -383,15 +264,11 @@ impl InitStackWriter<'_> {
         Ok(new_pos as u64)
     }
 
-    /// Writes a `CString` including the nul byte to the stack.
-    /// Returns the writing address.
     fn write_cstring(&self, val: &CString) -> Result<u64> {
         let bytes = val.as_bytes_with_nul();
         self.write_bytes(bytes)
     }
 
-    /// Writes bytes to the stack.
-    /// Returns the writing address.
     fn write_bytes(&self, bytes: &[u8]) -> Result<u64> {
         let new_pos = self.reserve_pos(bytes.len(), align_of::<u8>())?;
         let mut reader = VmReader::from(bytes).to_fallible();
@@ -421,7 +298,6 @@ fn generate_random_for_aux_vec() -> [u8; 16] {
     rand_val
 }
 
-/// A reader to parse the content of an `InitStack`.
 pub(crate) struct InitStackReader<'a> {
     vmar: &'a Vmar,
     auxv_range: Range<Vaddr>,
@@ -430,17 +306,14 @@ pub(crate) struct InitStackReader<'a> {
 }
 
 impl InitStackReader<'_> {
-    /// Reads auxv at the `offset` from the process init stack.
     pub(crate) fn auxv(&self, offset: usize, writer: &mut VmWriter) -> Result<usize> {
         self.read_range(offset, writer, &self.auxv_range)
     }
 
-    /// Reads argv at the `offset` from the process init stack.
     pub(crate) fn argv(&self, offset: usize, writer: &mut VmWriter) -> Result<usize> {
         self.read_range(offset, writer, &self.argv_range)
     }
 
-    /// Reads envp at the `offset` from the process init stack.
     pub(crate) fn envp(&self, offset: usize, writer: &mut VmWriter) -> Result<usize> {
         self.read_range(offset, writer, &self.envp_range)
     }

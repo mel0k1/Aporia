@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::vec::Vec;
 use core::ptr::NonNull;
 
@@ -48,11 +46,7 @@ struct Hpet {
 }
 
 impl Hpet {
-    /// # Safety
-    ///
-    /// The caller must ensure that the address is valid and points to the HPET MMIO region.
     unsafe fn new(base_address: NonNull<u8>) -> Hpet {
-        // SAFETY: The safety is upheld by the caller.
         let (
             information_register,
             general_configuration_register,
@@ -76,13 +70,8 @@ impl Hpet {
         let num_comparator = ((information_register.as_ptr().read() & 0x1F00) >> 8) as u8 + 1;
         let num_comparator = num_comparator as usize;
 
-        // FIXME: We now trust the hardware. We should instead find a way to check that
-        // `num_comparator` are reasonable values before proceeding.
-
         let mut comparators = Vec::with_capacity(num_comparator);
         for i in 0..num_comparator {
-            // SAFETY: The safety is upheld by the caller and the correctness of the information
-            // value.
             let comp = unsafe {
                 VolatileRef::new(
                     base_address
@@ -95,7 +84,6 @@ impl Hpet {
         }
 
         let irq = IrqLine::alloc().unwrap();
-        // FIXME: The index of HPET interrupt needs to be tested.
         let irq = IRQ_CHIP.get().unwrap().map_isa_pin_to(irq, 0).unwrap();
 
         Hpet {
@@ -133,7 +121,6 @@ impl Hpet {
     }
 }
 
-/// HPET init, need to init IOAPIC before init this function
 #[expect(dead_code)]
 pub(super) fn init() -> Result<(), AcpiError> {
     let tables = get_acpi_tables().unwrap();
@@ -142,7 +129,6 @@ pub(super) fn init() -> Result<(), AcpiError> {
     assert_ne!(hpet_info.base_address, 0, "HPET address should not be zero");
 
     let base = NonNull::new(paddr_to_vaddr(hpet_info.base_address) as *mut u8).unwrap();
-    // SAFETY: The base address is from the ACPI table and points to the HPET MMIO region.
     let hpet = unsafe { Hpet::new(base) };
     HPET_INSTANCE.call_once(|| hpet);
 

@@ -1,17 +1,6 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! The test suite for file management and terminal applications on Asterinas NixOS.
-//!
-//! See `test/nixos/README.md#documentation-maintenance` for sync requirements
-//! between this test suite and the corresponding "Verified Usage" book section.
-
 use nixos_test_framework::*;
 
 nixos_test_main!();
-
-// ============================================================================
-// Archiving & Compression - bzip2
-// ============================================================================
 
 #[nixos_test]
 fn bzip2_compress_decompress(nixos_shell: &mut Session) -> Result<(), Error> {
@@ -32,10 +21,6 @@ fn bzip2_cat_grep_archive(nixos_shell: &mut Session) -> Result<(), Error> {
     Ok(())
 }
 
-// ============================================================================
-// Archiving & Compression - gzip
-// ============================================================================
-
 #[nixos_test]
 fn gzip_compress_decompress(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd("echo 'hello gzip' > /tmp/gzip_test.txt")?;
@@ -54,10 +39,6 @@ fn gzip_cat_grep_archive(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd_and_expect("zgrep 'search' /tmp/ztest.txt.gz", "search me")?;
     Ok(())
 }
-
-// ============================================================================
-// Archiving & Compression - p7zip
-// ============================================================================
 
 #[nixos_test]
 fn p7zip_create_extract_archive(nixos_shell: &mut Session) -> Result<(), Error> {
@@ -79,10 +60,6 @@ fn p7zip_test_archive(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd_and_expect("7z t /tmp/test_archive.7z", "Everything is Ok")?;
     Ok(())
 }
-
-// ============================================================================
-// Archiving & Compression - tar
-// ============================================================================
 
 #[nixos_test]
 fn tar_create_extract_archive(nixos_shell: &mut Session) -> Result<(), Error> {
@@ -116,10 +93,6 @@ fn tar_append_file(nixos_shell: &mut Session) -> Result<(), Error> {
     Ok(())
 }
 
-// ============================================================================
-// Archiving & Compression - XZ Utils
-// ============================================================================
-
 #[nixos_test]
 fn xz_compress_decompress(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd("echo 'hello xz' > /tmp/xz_test.txt")?;
@@ -142,10 +115,6 @@ fn xz_cat_grep_archive(nixos_shell: &mut Session) -> Result<(), Error> {
     Ok(())
 }
 
-// ============================================================================
-// Archiving & Compression - Zip
-// ============================================================================
-
 #[nixos_test]
 fn zip_create_extract_archive(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd("mkdir -p /tmp/zip_test")?;
@@ -167,13 +136,8 @@ fn zip_list_grep_archive(nixos_shell: &mut Session) -> Result<(), Error> {
     Ok(())
 }
 
-// ============================================================================
-// Terminal Multiplexers - Screen
-// ============================================================================
-
 #[nixos_test]
 fn screen_manage_session(nixos_shell: &mut Session) -> Result<(), Error> {
-    // Start and enter an attached screen
     let screen_desc = SessionDesc::new(
         "screen-test> ",
         "screen -S testsession env PS1='screen-test> ' bash --noprofile --norc -i",
@@ -186,21 +150,15 @@ fn screen_manage_session(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd("sleep 1")?;
     nixos_shell.run_cmd_and_expect("screen -ls", "No Sockets found")?;
 
-    // Start a daemon session in detached mode
     nixos_shell.run_cmd("screen -dmS testsession1")?;
     nixos_shell.run_cmd("sleep 1")?;
     nixos_shell.run_cmd_and_expect("screen -ls", "Detached")?;
-    // Kill the session
     nixos_shell.run_cmd("screen -S testsession1 -X quit")?;
     nixos_shell.run_cmd("sleep 1")?;
     nixos_shell.run_cmd_and_expect("screen -ls", "No Sockets found")?;
 
     Ok(())
 }
-
-// ============================================================================
-// File Inspection - file
-// ============================================================================
 
 #[nixos_test]
 fn file_detect_type(nixos_shell: &mut Session) -> Result<(), Error> {
@@ -216,10 +174,6 @@ fn file_detect_mime_type(nixos_shell: &mut Session) -> Result<(), Error> {
     Ok(())
 }
 
-// ============================================================================
-// Text Processing - bat
-// ============================================================================
-
 #[nixos_test]
 fn bat_display_file(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd("echo 'bat test content' > /tmp/bat_test.txt")?;
@@ -233,10 +187,6 @@ fn bat_display_plain_output(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd_and_expect("bat --plain /tmp/bat_plain.txt", "plain output")?;
     Ok(())
 }
-
-// ============================================================================
-// Text Processing - gawk
-// ============================================================================
 
 #[nixos_test]
 fn gawk_field_separator(nixos_shell: &mut Session) -> Result<(), Error> {
@@ -262,10 +212,6 @@ fn gawk_sum_numbers(nixos_shell: &mut Session) -> Result<(), Error> {
     Ok(())
 }
 
-// ============================================================================
-// Text Processing - sd
-// ============================================================================
-
 #[nixos_test]
 fn sd_replace_in_files(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd("mkdir -p /tmp/sd_test")?;
@@ -274,10 +220,6 @@ fn sd_replace_in_files(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd_and_expect("cat /tmp/sd_test/hello.txt", "world")?;
     Ok(())
 }
-
-// ============================================================================
-// Text Processing - sed
-// ============================================================================
 
 #[nixos_test]
 fn sed_print_lines(nixos_shell: &mut Session) -> Result<(), Error> {
@@ -303,10 +245,6 @@ fn sed_delete_lines(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd_and_expect("sed '2d' /tmp/sed_delete.txt", "line3")?;
     Ok(())
 }
-
-// ============================================================================
-// Search & Filtering - eza
-// ============================================================================
 
 #[nixos_test]
 fn eza_list_files(nixos_shell: &mut Session) -> Result<(), Error> {
@@ -334,10 +272,6 @@ fn eza_directories_only(nixos_shell: &mut Session) -> Result<(), Error> {
     Ok(())
 }
 
-// ============================================================================
-// Search & Filtering - fd
-// ============================================================================
-
 #[nixos_test]
 fn fd_find_files(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd("mkdir -p /tmp/fd_test")?;
@@ -357,10 +291,6 @@ fn fd_execute_command(nixos_shell: &mut Session) -> Result<(), Error> {
     Ok(())
 }
 
-// ============================================================================
-// Search & Filtering - fzf
-// ============================================================================
-
 #[nixos_test]
 fn fzf_filter_candidates(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd(r"echo -e 'apple\nbanana\ncherry\napricot' > /tmp/fzf_test.txt")?;
@@ -368,10 +298,6 @@ fn fzf_filter_candidates(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd_and_expect("cat /tmp/fzf_test.txt | fzf -f 'ap'", "apricot")?;
     Ok(())
 }
-
-// ============================================================================
-// Search & Filtering - ripgrep
-// ============================================================================
 
 #[nixos_test]
 fn ripgrep_search_pattern(nixos_shell: &mut Session) -> Result<(), Error> {
@@ -405,10 +331,6 @@ fn ripgrep_list_matching_files(nixos_shell: &mut Session) -> Result<(), Error> {
     Ok(())
 }
 
-// ============================================================================
-// Search & Filtering - The Silver Searcher
-// ============================================================================
-
 #[nixos_test]
 fn silver_searcher_pattern_search(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd("mkdir -p /tmp/ag_test")?;
@@ -426,10 +348,6 @@ fn silver_searcher_cc_filter(nixos_shell: &mut Session) -> Result<(), Error> {
     Ok(())
 }
 
-// ============================================================================
-// Search & Filtering - tree
-// ============================================================================
-
 #[nixos_test]
 fn tree_list_depth_limited(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd("mkdir -p /tmp/tree_test/level1/level2")?;
@@ -446,10 +364,6 @@ fn tree_show_hidden_files(nixos_shell: &mut Session) -> Result<(), Error> {
     Ok(())
 }
 
-// ============================================================================
-// Security & Backup - age
-// ============================================================================
-
 #[nixos_test]
 fn age_encrypt_decrypt_file(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd("echo 'top secret' > /tmp/age-secret.txt")?;
@@ -462,10 +376,6 @@ fn age_encrypt_decrypt_file(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd_and_expect("cat /tmp/age-decrypted.txt", "top secret")?;
     Ok(())
 }
-
-// ============================================================================
-// Security & Backup - crunch
-// ============================================================================
 
 #[nixos_test]
 fn crunch_generate_wordlist(nixos_shell: &mut Session) -> Result<(), Error> {
@@ -484,10 +394,6 @@ fn crunch_generate_pattern_list(nixos_shell: &mut Session) -> Result<(), Error> 
     )?;
     Ok(())
 }
-
-// ============================================================================
-// Security & Backup - GnuPG
-// ============================================================================
 
 #[nixos_test]
 fn gnupg_generate_export_sign_and_verify(nixos_shell: &mut Session) -> Result<(), Error> {
@@ -536,10 +442,6 @@ fn gnupg_symmetric_encrypt_decrypt(nixos_shell: &mut Session) -> Result<(), Erro
     Ok(())
 }
 
-// ============================================================================
-// Security & Backup - John the Ripper
-// ============================================================================
-
 #[nixos_test]
 fn john_crack_password_hash(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd(
@@ -556,10 +458,6 @@ fn john_crack_password_hash(nixos_shell: &mut Session) -> Result<(), Error> {
     Ok(())
 }
 
-// ============================================================================
-// Security & Backup - restic
-// ============================================================================
-
 #[nixos_test]
 fn restic_backup_list_snapshots(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd("mkdir -p /tmp/restic-src")?;
@@ -573,10 +471,6 @@ fn restic_backup_list_snapshots(nixos_shell: &mut Session) -> Result<(), Error> 
     )?;
     Ok(())
 }
-
-// ============================================================================
-// Security & Backup - wipe
-// ============================================================================
 
 #[nixos_test]
 fn wipe_overwrite_file_zero_pass(nixos_shell: &mut Session) -> Result<(), Error> {

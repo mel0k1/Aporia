@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Handles trap.
-
 #[expect(clippy::module_inception)]
 mod trap;
 
@@ -22,22 +18,12 @@ use crate::{
     irq::call_irq_callback_functions,
 };
 
-/// Initializes interrupt handling on RISC-V.
-///
-/// # Safety
-///
-/// On the current CPU, this function must be called
-/// - only once and
-/// - before any trap can occur.
 pub(crate) unsafe fn init_on_cpu() {
-    // SAFETY: The caller ensures the safety conditions.
     unsafe {
         trap::init_on_cpu();
     }
 }
 
-/// Handle traps (only from kernel).
-// SAFETY: The name does not collide with other symbols.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn trap_handler(f: &mut TrapFrame) {
     fn enable_local_if(cond: bool) {
@@ -71,8 +57,6 @@ unsafe extern "C" fn trap_handler(f: &mut TrapFrame) {
         }
     };
 
-    // The IRQ state before trapping. We need to ensure that the IRQ state
-    // during exception handling is consistent with the state before the trap.
     const SSTATUS_SPIE: usize = 1 << 5;
     let was_irq_enabled = (f.sstatus & SSTATUS_SPIE) != 0;
 
@@ -103,7 +87,6 @@ pub(super) fn handle_irq(trap_frame: &TrapFrame, interrupt: Interrupt, priv_leve
             );
         }
         Interrupt::SupervisorExternal => {
-            // No races because we're in IRQs.
             let hart_id = crate::arch::boot::smp::get_current_hart_id();
             while let Some(hw_irq_line) = IRQ_CHIP.get().unwrap().claim_interrupt(hart_id) {
                 call_irq_callback_functions(trap_frame, &hw_irq_line, priv_level);

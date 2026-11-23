@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::SyscallReturn;
 use crate::{
     fs,
@@ -21,9 +19,6 @@ pub(super) fn sys_read(
     let mut file_table = ctx.thread_local.borrow_file_table_mut();
     let file = get_file_fast!(&mut file_table, raw_fd.try_into()?);
 
-    // According to <https://man7.org/linux/man-pages/man2/read.2.html>, if
-    // the user specified an empty buffer, we should detect errors by checking
-    // the file descriptor. If no errors detected, return 0 successfully.
     let read_len = {
         if buf_len != 0 {
             let user_space = ctx.user_space();

@@ -1,13 +1,8 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::{marker::PhantomData, ptr::NonNull};
 
 use super::NonNullPtr;
 use crate::util::Either;
 
-// If both `L` and `R` have at least one alignment bit (i.e., their alignments are at least 2), we
-// can use the alignment bit to indicate whether a pointer is `L` or `R`, so it's possible to
-// implement `NonNullPtr` for `Either<L, R>`.
 unsafe impl<L: NonNullPtr, R: NonNullPtr> NonNullPtr for Either<L, R> {
     type Target = PhantomData<Self>;
 
@@ -31,33 +26,21 @@ unsafe impl<L: NonNullPtr, R: NonNullPtr> NonNullPtr for Either<L, R> {
     }
 
     unsafe fn from_raw(ptr: NonNull<Self::Target>) -> Self {
-        // SAFETY: The caller ensures that the pointer comes from `Self::into_raw`, which
-        // guarantees that `real_ptr` is a non-null pointer.
         let (is_right, real_ptr) = unsafe { remove_bits(ptr, 1 << Self::ALIGN_BITS) };
 
         if is_right == 0 {
-            // SAFETY: `Self::into_raw` guarantees that `real_ptr` comes from `L::into_raw`. Other
-            // safety requirements are upheld by the caller.
             Either::Left(unsafe { L::from_raw(real_ptr.cast()) })
         } else {
-            // SAFETY: `Self::into_raw` guarantees that `real_ptr` comes from `R::into_raw`. Other
-            // safety requirements are upheld by the caller.
             Either::Right(unsafe { R::from_raw(real_ptr.cast()) })
         }
     }
 
     unsafe fn raw_as_ref<'a>(raw: NonNull<Self::Target>) -> Self::Ref<'a> {
-        // SAFETY: The caller ensures that the pointer comes from `Self::into_raw`, which
-        // guarantees that `real_ptr` is a non-null pointer.
         let (is_right, real_ptr) = unsafe { remove_bits(raw, 1 << Self::ALIGN_BITS) };
 
         if is_right == 0 {
-            // SAFETY: `Self::into_raw` guarantees that `real_ptr` comes from `L::into_raw`. Other
-            // safety requirements are upheld by the caller.
             Either::Left(unsafe { L::raw_as_ref(real_ptr.cast()) })
         } else {
-            // SAFETY: `Self::into_raw` guarantees that `real_ptr` comes from `R::into_raw`. Other
-            // safety requirements are upheld by the caller.
             Either::Right(unsafe { R::raw_as_ref(real_ptr.cast()) })
         }
     }
@@ -72,22 +55,16 @@ unsafe impl<L: NonNullPtr, R: NonNullPtr> NonNullPtr for Either<L, R> {
     }
 }
 
-// A `min` implementation for use in constant evaluation.
 const fn min(a: u32, b: u32) -> u32 {
     if a < b { a } else { b }
 }
 
-/// # Safety
-///
-/// The caller must ensure that removing the bits from the non-null pointer will result in another
-/// non-null pointer.
 unsafe fn remove_bits<T>(ptr: NonNull<T>, bits: usize) -> (usize, NonNull<T>) {
     use core::num::NonZeroUsize;
 
     let removed_bits = ptr.addr().get() & bits;
-    let result_ptr = ptr.map_addr(|addr|
-        // SAFETY: The safety is upheld by the caller.
-        unsafe { NonZeroUsize::new_unchecked(addr.get() & !bits) });
+    let result_ptr =
+        ptr.map_addr(|addr| unsafe { NonZeroUsize::new_unchecked(addr.get() & !bits) });
 
     (removed_bits, result_ptr)
 }

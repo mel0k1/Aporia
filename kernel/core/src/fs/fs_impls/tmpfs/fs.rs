@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use crate::{
     fs::{
         fs_impls::ramfs::{self, RamFs},
@@ -15,22 +13,13 @@ use crate::{
 
 const TMPFS_MAGIC: u64 = 0x0102_1994;
 
-/// The temporary file system (tmpfs) structure.
-//
-// TODO: `TmpFs` currently aliases `RamFs` and relies on `RamFs::new_tmpfs()`
-// to create tmpfs-flavored ramfs instances. In the future we need to
-// implement a dedicated tmpfs with tmpfs-specific features such as memory
-// limits and swap support.
 pub(crate) type TmpFs = RamFs;
 
 impl TmpFs {
-    /// Creates a tmpfs filesystem instance.
     pub(in crate::fs) fn new_tmpfs() -> Arc<Self> {
         Self::new_tmpfs_backing("tmpfs", RevalidationPolicy::empty())
     }
 
-    /// Creates a tmpfs-backed filesystem instance with a custom filesystem name
-    /// and directory-entry revalidation policy.
     pub(in crate::fs) fn new_tmpfs_backing(
         name: &'static str,
         revalidation_policy: RevalidationPolicy,
@@ -56,9 +45,6 @@ impl TmpFs {
     }
 }
 
-// FIXME: These defaults are only a rough approximation for tmpfs-over-ramfs.
-// A dedicated tmpfs implementation should replace them with real tmpfs limit
-// and accounting semantics.
 fn default_max_blocks() -> usize {
     crate::vm::mem_total() / PAGE_SIZE / 2
 }

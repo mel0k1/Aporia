@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! This module is used to decompress payload.
-
 extern crate alloc;
 
 use alloc::vec::Vec;
@@ -31,33 +27,21 @@ impl TryFrom<&[u8]> for MagicNumber {
     }
 }
 
-/// Detects the format used to encode the payload and decodes the payload accordingly.
 pub(super) fn decode_payload(payload: &[u8]) -> Vec<u8> {
     let magic = MagicNumber::try_from(payload).unwrap();
     match magic {
         MagicNumber::Elf => payload.to_vec(),
-        // `miniz_oxide` does not parse the gzip wrapper, so strip the header and
-        // inflate the raw DEFLATE body (the trailing footer is ignored, as
-        // inflation stops at the end of the DEFLATE stream).
         MagicNumber::Gzip => decompress_to_vec(strip_gzip_header(payload)).unwrap(),
         MagicNumber::Zlib => decompress_to_vec_zlib(payload).unwrap(),
     }
 }
 
-/// Parses the gzip header and returns the remaining bytes.
-///
-/// # Panics
-///
-/// Panics if `buf` contains an invalid or incomplete gzip header.
 fn strip_gzip_header(buf: &[u8]) -> &[u8] {
-    // The gzip header flag bits.
-    // Reference: <https://datatracker.ietf.org/doc/html/rfc1952>.
     const FLG_FHCRC: u8 = 0x02;
     const FLG_FEXTRA: u8 = 0x04;
     const FLG_FNAME: u8 = 0x08;
     const FLG_FCOMMENT: u8 = 0x10;
 
-    // Fixed 10-byte header: ID1, ID2, CM, FLG, MTIME(4), XFL, OS.
     let flg = buf[3];
     let mut pos = 10;
 

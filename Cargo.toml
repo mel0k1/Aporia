@@ -1,14 +1,6 @@
-# The Cargo workspace configuration shared by in-kernel crates.
-#
-# Most crates in Asterinas are written and built for the kernel space.
-# The user-space and host-native exceptions are listed in `workspace.exclude`.
 
 [workspace]
 resolver = "2"
-# All in-kernel crates.
-#
-# These crates share a single workspace
-# so their `Cargo.toml` files do not need to repeat common settings.
 members = [
     "osdk/deps/frame-allocator",
     "osdk/deps/heap-allocator",
@@ -68,14 +60,6 @@ members = [
     "kernel/libs/typeflags-util",
     "kernel/libs/xarray",
 ]
-# All OSDK-based in-kernel crates.
-#
-# Use `cargo osdk <cmd>` for these crates.
-# When adding a workspace crate that depends on OSTD,
-# include it in `default-members`
-# unless it requires special handling,
-# such as only compiling on specific architectures
-# or relying on its own Cargo configuration.
 default-members = [
     "osdk/deps/frame-allocator",
     "osdk/deps/heap-allocator",
@@ -113,11 +97,6 @@ default-members = [
     "kernel/libs/sparse-id-alloc",
     "kernel/libs/xarray",
 ]
-# All user-space or host-native crates.
-#
-# Use plain `cargo <cmd>` for these crates.
-# Their crate-level `Cargo.toml` files are not affected
-# by the shared in-kernel workspace configuration.
 exclude = [
     "kernel/libs/comp-sys/cargo-component",
     "kernel/libs/comp-sys/component",
@@ -138,12 +117,6 @@ allow_attributes = "warn"
 inconsistent_struct_constructor = "warn"
 redundant_test_prefix = "warn"
 
-# Keys under `workspace.package` and the `package` section of each crate
-# follow the ordering suggested at:
-# https://github.com/crate-ci/cargo-cargofmt/issues/29#issuecomment-3647516745
-#
-# FIXME: The current key order is not yet finalized.
-# Once `cargo-cargofmt` becomes stable, we will use it to enforce a consistent key order.
 [workspace.package]
 version = "0.19.0"
 repository = "https://github.com/asterinas/asterinas"
@@ -153,7 +126,6 @@ edition = "2024"
 [workspace.dependencies]
 ostd = { path = "ostd", version = "0.19.0" }
 
-# Crates under ostd/libs
 align_ext = { path = "ostd/libs/align_ext", version = "0.1.0" }
 id-alloc = { path = "ostd/libs/id-alloc", version = "0.1.0" }
 int-to-c-enum = { path = "ostd/libs/int-to-c-enum", version = "0.2.0" }
@@ -167,13 +139,11 @@ padding-struct = { path = "ostd/libs/padding-struct", version = "0.2.0" }
 
 aster-core = { path = "kernel/core", default-features = false }
 
-# Crates under kernel/comps
 aster-drm = { path = "kernel/comps/drm" }
 aster-i8042 = { path = "kernel/comps/i8042" }
 aster-simpledrm = { path = "kernel/comps/simpledrm" }
 aster-uart = { path = "kernel/comps/uart" }
 
-# Crates under kernel/core/comps
 aster-block = { path = "kernel/core/comps/block" }
 aster-cmdline = { path = "kernel/core/comps/cmdline" }
 aster-console = { path = "kernel/core/comps/console" }
@@ -189,7 +159,6 @@ aster-systree = { path = "kernel/core/comps/systree" }
 aster-time = { path = "kernel/core/comps/time" }
 aster-virtio = { path = "kernel/core/comps/virtio" }
 
-# Crates under kernel/libs
 aster-bigtcp = { path = "kernel/libs/aster-bigtcp" }
 aster-fuse = { path = "kernel/libs/aster-fuse" }
 aster-rights = { path = "kernel/libs/aster-rights" }
@@ -211,18 +180,15 @@ typeflags = { path = "kernel/libs/typeflags" }
 typeflags-util = { path = "kernel/libs/typeflags-util" }
 xarray = { path = "kernel/libs/xarray" }
 
-# Crates under kernel/libs/comp-sys
 component = { path = "kernel/libs/comp-sys/component" }
 
-# Crates under osdk/deps
 osdk-frame-allocator = { path = "osdk/deps/frame-allocator" }
 osdk-heap-allocator = { path = "osdk/deps/heap-allocator" }
 
-# External dependencies only for unsafe crates (i.e., crates under ostd directory)
-acpi = "=5.2.0" # This upstream often bump minor versions with API changes
+acpi = "=5.2.0"
 bit_field = "0.10.4"
 gimli = { version = "0.28", default-features = false, features = ["read-core"] }
-minicov = "=0.3.9" # This upstream may use an LLVM version which is incompatible with the one used by the Rust toolchain.
+minicov = "=0.3.9"
 multiboot2 = "0.24.0"
 num-traits = { version = "0.2", default-features = false }
 sbi-rt = "0.0.3"
@@ -234,14 +200,6 @@ uefi-raw = "0.14.0"
 volatile = "0.6.1"
 x86 = "0.52.0"
 
-# External dependencies only for safe crates (i.e., crates under kernel or osdk/deps directories)
-#
-# Enable `force-soft` feature to disable `AES-NI` and `CLMUL` intrinsics, ensuring that the implementation
-# relies solely on software, and in the software implementation, unsafe code is rarely used.
-# FIXME: to utilize `AES-NI` and `CLMUL` intrinsics, some specific flags must be added to `RUSTFLAGS`,
-# i.e. `-Ctarget-cpu=sandybridge -Ctarget-feature=+aes,+sse2,+sse4.1,+ssse3`.
-# This suggests that `Asterinas` should support saving and restoring the `FPU` state within the kernel context,
-# a capability it currently lacks.
 aes-gcm = { version = "0.9.4", features = ["force-soft"] }
 bittle = "0.5.6"
 chrono = { version = "0.4.38", default-features = false }
@@ -270,7 +228,6 @@ smoltcp = { git = "https://github.com/asterinas/smoltcp", tag = "r_2026-08-11_1b
 takeable = "0.2.2"
 time = { version = "0.3", default-features = false, features = ["alloc"] }
 
-# External dependencies for both safe and unsafe crates
 bitflags = "2.13"
 bitvec = { version = "1.0.1", default-features = false, features = ["alloc"] }
 crc32fast = "1.4"
@@ -287,17 +244,12 @@ tdx-guest = "0.5.0"
 unwinding = { version = "0.2.11", default-features = false, features = ["hide-trace", "panic", "personality", "unwinder"] }
 x86_64 = "0.15.5"
 xmas-elf = "0.10.0"
-# Note: when updating the zerocopy version,
-# also update it in `ostd/libs/ostd-pod/README.md`.
 zerocopy = { version = "0.8.34", features = [ "derive" ] }
 
-# Proc-macro dependencies
 proc-macro2 = { version = "1.0.95", features = ["span-locations"] }
 quote = "1.0.35"
 syn = { version = "2.0.77", features = ["full", "parsing", "fold", "visit-mut"] }
 
-# Cargo only looks at the profile settings
-# in the Cargo.toml manifest at the root of the workspace
 
 [profile.dev]
 panic = "unwind"
@@ -306,16 +258,8 @@ panic = "unwind"
 lto = "thin"
 panic = "unwind"
 
-# Release profile configuration with Link Time Optimization (LTO) enabled.
-#
-# This profile is optimized for maximum runtime performance,
-# (achieving a 2% reduction in latency for the getpid system call).
-# However, enabling LTO significantly increases compilation times,
-# approximately doubling them compared to when LTO is not enabled.
 [profile.release-lto]
 inherits = "release"
 lto = true
-# lto can only be enabled when panic strategy is abort
 panic = "abort"
-# set codegen-units as the smallest number
 codegen-units = 1

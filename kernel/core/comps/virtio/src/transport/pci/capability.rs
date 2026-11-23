@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use aster_pci::{
     capability::vendor::CapabilityVndrData, cfg_space::BarAccess, common_device::BarManager,
 };

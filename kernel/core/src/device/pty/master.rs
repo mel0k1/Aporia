@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd::task::Task;
 
 use super::{PtySlave, driver::PtyDriver};
@@ -25,15 +23,6 @@ use crate::{
 
 const IO_CAPACITY: usize = 4096;
 
-/// A pseudoterminal master.
-///
-/// A pseudoterminal contains two buffers:
-///  * The input buffer is written by the master and read by the slave, which is maintained in the
-///    line discipline (part of [`PtySlave`], which is a [`Tty`]).
-///  * The output buffer is written by the slave and read by the master, which is maintained in the
-///    driver (i.e., [`PtyDriver`]).
-///
-/// [`Tty`]: crate::device::tty::Tty
 pub(crate) struct PtyMaster {
     ptmx: Arc<Ptmx>,
     slave: Arc<PtySlave>,
@@ -73,7 +62,6 @@ impl PtyMaster {
             events |= IoEvents::HUP;
         }
 
-        // Deal with packet mode.
         let packet_ctrl = self.slave.driver().packet_ctrl();
         if packet_ctrl.has_status() {
             events |= IoEvents::PRI | IoEvents::IN | IoEvents::RDNORM;
@@ -99,7 +87,6 @@ impl FileOps for PtyMaster {
         writer: &mut VmWriter,
         status_flags: StatusFlags,
     ) -> Result<usize> {
-        // TODO: Add support for timeout.
         let mut buf = vec![0u8; writer.avail().min(IO_CAPACITY)];
         let is_nonblocking = status_flags.contains(StatusFlags::O_NONBLOCK);
         let read_len = if is_nonblocking {
@@ -112,7 +99,6 @@ impl FileOps for PtyMaster {
         self.slave.driver().pollee().invalidate();
         self.slave.notify_output();
 
-        // TODO: Confirm what we should do if `write_fallible` fails in the middle.
         writer.write_fallible(&mut buf[..read_len].into())?;
         Ok(read_len)
     }
@@ -126,7 +112,6 @@ impl FileOps for PtyMaster {
         let mut buf = vec![0u8; reader.remain().min(IO_CAPACITY)];
         let write_len = reader.read_fallible(&mut buf.as_mut_slice().into())?;
 
-        // TODO: Add support for timeout.
         let is_nonblocking = status_flags.contains(StatusFlags::O_NONBLOCK);
         let len = if is_nonblocking {
             self.slave.push_input(&buf[..write_len])?

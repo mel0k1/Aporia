@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Handle address-related requests.
-
 use alloc::borrow::ToOwned;
 use core::{net::IpAddr, num::NonZeroU32};
 
@@ -38,10 +34,6 @@ pub(super) fn do_get_addr(
     validate_getaddr_request(request_segment, strict_check)?;
 
     let requested_family = request_segment.body().family;
-    // Linux filters address dumps by a nonzero interface index only in strict mode.
-    // References:
-    // - <https://elixir.bootlin.com/linux/v7.1/source/net/ipv4/devinet.c#L1950>
-    // - <https://elixir.bootlin.com/linux/v7.1/source/net/ipv6/addrconf.c#L5430>
     let requested_index = strict_check
         .then(|| NonZeroU32::new(request_segment.body().index))
         .flatten();
@@ -56,8 +48,6 @@ pub(super) fn do_get_addr(
         .flat_map(|iface| iface_to_new_addrs(request_segment.header(), requested_family, iface))
         .collect();
 
-    // Linux dumps IPv4 addresses before IPv6 addresses
-    // while preserving interface order within each family.
     addr_segments.sort_by_key(|segment| segment.body().family);
 
     let mut response_segments: Vec<RtnlSegment> = addr_segments
@@ -85,8 +75,6 @@ fn validate_getaddr_request(request_segment: &AddrSegment, strict_check: bool) -
     }
 
     let body = request_segment.body();
-    // These fields are reserved in GETADDR dumps.
-    // Reference: <https://elixir.bootlin.com/linux/v7.1/source/net/ipv4/devinet.c#L1800>.
     if body.prefix_len != 0 || body.flags != 0 || body.scope != 0 {
         return Err(errno!(
             EINVAL,
@@ -94,8 +82,6 @@ fn validate_getaddr_request(request_segment: &AddrSegment, strict_check: bool) -
         ));
     }
 
-    // Linux permits only `IFA_TARGET_NETNSID` in strict address dumps.
-    // Reference: <https://elixir.bootlin.com/linux/v7.1/source/net/ipv4/devinet.c#L1811>.
     const ALLOWED: AddrAttrClass = AddrAttrClass::TARGET_NETNSID;
     if request_segment
         .attrs()
@@ -117,8 +103,6 @@ fn iface_to_new_addrs(
 ) -> impl IntoIterator<Item = AddrSegment> {
     let mut addr_segments = [None, None];
 
-    // Linux dumps addresses for all families
-    // when the requested family is neither AF_INET nor AF_INET6.
     let dump_ipv4 = requested_family != CSocketAddrFamily::AF_INET6 as u8;
     let dump_ipv6 = requested_family != CSocketAddrFamily::AF_INET as u8;
 
@@ -190,58 +174,21 @@ fn iface_to_new_addr(
 
     let attrs = match address {
         IpAddr::V4(_) => {
-            // Linux may report the following IPv4 address attributes, in order:
-            // `IFA_ADDRESS`, `IFA_LOCAL`, `IFA_BROADCAST`, `IFA_LABEL`, `IFA_PROTO`,
-            // `IFA_FLAGS`, `IFA_RT_PRIORITY`, and `IFA_CACHEINFO`.
-            // TODO: Support `IFA_PROTO`, `IFA_RT_PRIORITY`, and `IFA_CACHEINFO`.
-            // Reference: <https://elixir.bootlin.com/linux/v7.1/source/net/ipv4/devinet.c#L1759>.
-            let mut attrs = vec![
-                // On a point-to-point link, `IFA_ADDRESS` is the peer address.
-                // Otherwise, it equals `IFA_LOCAL`.
-                // Since `Iface` does not support peer addresses,
-                // report the local address here.
-                // Reference: <https://elixir.bootlin.com/linux/v7.1/source/include/uapi/linux/if_addr.h#L16>.
-                AddrAttr::Address(address),
-                AddrAttr::Local(address),
-            ];
+            let mut attrs = vec![AddrAttr::Address(address), AddrAttr::Local(address)];
             if iface.flags().contains(InterfaceFlags::BROADCAST)
                 && let Some(broadcast_address) = iface.broadcast_addr()
             {
                 attrs.push(AddrAttr::Broadcast(broadcast_address));
             }
             attrs.extend([
-                // Linux defaults `IFA_LABEL` to the interface name
-                // when no per-address label is configured.
-                // Since `Iface` does not support per-address labels,
-                // report the interface name.
-                // Reference: <https://elixir.bootlin.com/linux/v7.1/source/net/ipv4/devinet.c#L1765>.
                 AddrAttr::Label(iface.name().as_cstr().to_owned()),
                 AddrAttr::Flags(flags),
             ]);
             attrs
         }
         IpAddr::V6(_) => {
-            // Linux may report the following IPv6 address attributes, in order:
-            // `IFA_LOCAL`, `IFA_ADDRESS`, `IFA_RT_PRIORITY`, `IFA_CACHEINFO`,
-            // `IFA_FLAGS`, and `IFA_PROTO`.
-            // TODO: Support `IFA_RT_PRIORITY` and `IFA_CACHEINFO`.
-            // TODO: Support `IFA_PROTO` for non-loopback addresses.
-            // Reference: <https://elixir.bootlin.com/linux/v7.1/source/net/ipv6/addrconf.c#L5143>.
-            let mut attrs = vec![
-                // When a peer address is configured,
-                // `IFA_ADDRESS` is the peer address,
-                // and `IFA_LOCAL` is the local address.
-                // Otherwise, `IFA_ADDRESS` is the local address,
-                // and `IFA_LOCAL` is omitted.
-                // Since `Iface` does not support peer addresses,
-                // report only `IFA_ADDRESS` with the local address.
-                // Reference: <https://elixir.bootlin.com/linux/v7.1/source/net/ipv6/addrconf.c#L5189>.
-                AddrAttr::Address(address),
-                AddrAttr::Flags(flags),
-            ];
+            let mut attrs = vec![AddrAttr::Address(address), AddrAttr::Flags(flags)];
             if address.is_loopback() {
-                // Linux marks an IPv6 loopback address with `IFAPROT_KERNEL_LO`.
-                // Reference: <https://elixir.bootlin.com/linux/v7.1/source/net/ipv6/addrconf.c#L3289>.
                 attrs.push(AddrAttr::Protocol(AddrProtocol::KernelLoopback));
             }
             attrs

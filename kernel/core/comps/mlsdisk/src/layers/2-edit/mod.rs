@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! The layer of edit journal.
-
 mod edits;
 mod journal;
 

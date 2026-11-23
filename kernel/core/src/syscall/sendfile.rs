@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd::mm::VmIo;
 
 use super::SyscallReturn;
@@ -57,7 +55,6 @@ pub(super) fn sys_sendfile(
             Ok::<_, Error>((out_file, in_file))
         })?;
 
-    // `sendfile` can transfer at most `MAX_COUNT` bytes.
     const MAX_COUNT: usize = 0x7fff_f000;
     if count > MAX_COUNT {
         count = MAX_COUNT;
@@ -67,21 +64,7 @@ pub(super) fn sys_sendfile(
         .downcast_ref::<InodeHandle>()
         .is_some_and(|inode_handle| inode_handle.path().inode().type_() == InodeType::NamedPipe);
 
-    // The saved offset is used to restore the correct file position in case a short write occurs.
     let origin_f_pos = if offset.is_none() {
-        // When no explicit offset is provided,
-        // `in_file` must be seekable
-        // so that we can track and restore its file position correctly.
-        //
-        // Linux normally requires `in_file` to be seekable.
-        // See <https://elixir.bootlin.com/linux/v7.0/source/fs/splice.c#L1038>.
-        // The one exception is when `out_file` is a pipe,
-        // where `sendfile` is desugared into `splice`,
-        // which can handle non-seekable `in_file`s.
-        //
-        // We do not yet support the pipe case
-        // and reject non-seekable `in_file`s unconditionally for simplicity.
-        // TODO: Support `sendfile` from a non-seekable `in_file` to a pipe.
         Some(in_file.seek(SeekFrom::Current(0)).map_err(|_| {
             if outfile_is_pipe {
                 warn!("sendfile from a non-seekable in_file to a pipe is not yet supported");
@@ -92,8 +75,6 @@ pub(super) fn sys_sendfile(
         None
     };
 
-    // Verify that `in_file` is readable and `out_file` is writable upfront,
-    // even if the total transfer count is zero.
     if !in_file.access_mode().is_readable() {
         return Err(errno!(EBADF, "in_file is not readable"));
     }
@@ -101,10 +82,6 @@ pub(super) fn sys_sendfile(
         return Err(errno!(EBADF, "out_file is not writable"));
     }
 
-    // Linux returns `EINVAL` when `in_file` is a directory,
-    // because directories do not implement `splice_read`.
-    // We do not yet have `splice_read` on `FileLike`,
-    // so we perform this check manually.
     let in_file_is_dir = in_file
         .downcast_ref::<InodeHandle>()
         .is_some_and(|inode_handle| inode_handle.path().inode().type_() == InodeType::Dir);
@@ -112,7 +89,6 @@ pub(super) fn sys_sendfile(
         return Err(errno!(EINVAL, "in_file is a directory"));
     }
 
-    // Sending to an append-only file is not allowed.
     if !outfile_is_pipe && out_file.status_flags().contains(StatusFlags::O_APPEND) {
         return Err(errno!(EINVAL, "out_file is opened with O_APPEND"));
     }
@@ -124,15 +100,8 @@ pub(super) fn sys_sendfile(
     let mut short_write_occurs = false;
 
     while total_len < count {
-        // The offset decides how to read from `in_file`.
-        // If the offset is `Some(_)`, the data will be read from the given offset,
-        // and after reading, the file offset of `in_file` will remain unchanged.
-        // If the offset is `None`, the data will be read from the file offset,
-        // and the file offset of `in_file` is adjusted
-        // to reflect the number of bytes read from `in_file`.
         let max_readlen = buffer.len().min(count - total_len);
 
-        // Read from `in_file`.
         let read_res = if let Some(offset) = offset {
             in_file.read_bytes_at(offset, &mut buffer[..max_readlen])
         } else {
@@ -154,8 +123,6 @@ pub(super) fn sys_sendfile(
             break;
         }
 
-        // Note: `sendfile` allows sending partial data,
-        // so short reads and short writes are all acceptable.
         let write_res = out_file.write_bytes(&buffer[..read_len]);
 
         match write_res {
@@ -186,11 +153,6 @@ pub(super) fn sys_sendfile(
     if let Some(offset) = offset {
         ctx.user_space().write_val(offset_ptr, &(offset as isize))?;
     } else if short_write_occurs {
-        // Seek `in_file` to the position corresponding to the last byte actually transferred.
-        // Note: Since the file offset lock is not held
-        // between saving `origin_f_pos` and this point,
-        // a race condition may occur if another thread reads from the same file concurrently.
-        // Linux permits this behavior and leaves it to userspace to avoid such races.
         let new_f_pos = origin_f_pos.unwrap() + total_len;
         in_file.seek(SeekFrom::Start(new_f_pos))?;
     }

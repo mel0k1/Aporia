@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use aster_time::read_system_time;
 use ostd::mm::VmIo;
 

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd::mm::VmIo;
 
 use super::SyscallReturn;
@@ -44,8 +42,6 @@ pub(super) fn sys_pipe2(fds: Vaddr, flags: u32, ctx: &Context) -> Result<Syscall
     debug!("pipe_fds: {:?}", pipe_fds);
 
     if let Err(err) = ctx.user_space().write_val(fds, &pipe_fds) {
-        // FIXME: Introduce reserved FDs to ensure that the files are never visible to user space
-        // before `write_val` succeeds and cleanup closes the exact reserved FDs below.
         let closed_files = {
             let mut file_table_locked = file_table.write();
             [

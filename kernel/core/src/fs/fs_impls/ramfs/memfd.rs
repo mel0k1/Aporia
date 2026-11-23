@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Memfd Implementation.
-
 use alloc::format;
 use core::time::Duration;
 
@@ -28,13 +24,9 @@ use crate::{
 };
 
 pub(super) fn init() {
-    // Touch the mount node to trigger the initialization of all singletons.
     let _ = MemfdTmpFs::mount_node();
 }
 
-/// Maximum file name length for `memfd_create`, excluding the final `\0` byte.
-///
-/// See <https://man7.org/linux/man-pages/man2/memfd_create.2.html>
 pub(crate) const MAX_MEMFD_NAME_LEN: usize = 249;
 
 pub(crate) struct MemfdInode {
@@ -51,7 +43,6 @@ impl MemfdInode {
             return Err(errno!(EPERM, "the file is sealed against sealing"));
         }
 
-        // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/mm/memfd.c#L262-L266>
         if new_seals.contains(FileSeals::F_SEAL_EXEC)
             && self.mode().unwrap().intersects(mkmod!(a+x))
         {
@@ -75,16 +66,12 @@ impl MemfdInode {
         *self.seals.lock()
     }
 
-    /// Checks whether writing to this memfd inode is allowed.
-    ///
-    /// This method restricts the `may_perms` if needed.
     pub(crate) fn check_writable(&self, perms: VmPerms, may_perms: &mut VmPerms) -> Result<()> {
         let seals = self.seals.lock();
         if seals.intersects(FileSeals::F_SEAL_WRITE | FileSeals::F_SEAL_FUTURE_WRITE) {
             if perms.contains(VmPerms::WRITE) {
                 return Err(errno!(EPERM, "the file is sealed against writing"));
             }
-            // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/mm/memfd.c#L356>
             may_perms.remove(VmPerms::MAY_WRITE);
         }
         Ok(())
@@ -120,16 +107,6 @@ impl FileOps for MemfdInode {
         }
 
         if seals.contains(FileSeals::F_SEAL_GROW) {
-            // For a memfd sealed with `F_SEAL_GROW`, if a write that would grow the file occurs,
-            // the entire write within the page containing the EOF is rejected. Writes before
-            // the EOF page are not affected.
-            //
-            // For detailed explanation, please see:
-            // <https://github.com/asterinas/asterinas/pull/2555#discussion_r2509179520>
-            //
-            // Reference:
-            // <https://elixir.bootlin.com/linux/v6.16.5/source/mm/shmem.c#L3309-L3310>
-            // <https://github.com/google/gvisor/blob/6db745970118635edec4c973f47df2363924d3a7/test/syscalls/linux/memfd.cc#L261-L280>
             let old_size = self.inode.size();
             let new_size = offset.saturating_add(reader.remain());
             if new_size > old_size {
@@ -308,7 +285,6 @@ struct MemfdTmpFs {
 }
 
 impl MemfdTmpFs {
-    // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/mm/shmem.c#L3828-L3850>
     pub(self) fn singleton() -> &'static Arc<TmpFs> {
         static MEMFD_TMPFS: Once<Arc<TmpFs>> = Once::new();
 
@@ -332,15 +308,10 @@ impl MemfdTmpFs {
 bitflags! {
     #[derive(Clone, Copy, Debug)]
     pub(crate) struct MemfdFlags: u32 {
-        /// Close on exec.
         const MFD_CLOEXEC       = 1 << 0;
-        /// Allow sealing operations on this file.
         const MFD_ALLOW_SEALING = 1 << 1;
-        /// Create in the hugetlbfs.
         const MFD_HUGETLB       = 1 << 2;
-        /// Not executable and sealed to prevent changing to executable.
         const MFD_NOEXEC_SEAL   = 1 << 3;
-        /// Executable.
         const MFD_EXEC          = 1 << 4;
     }
 }
@@ -348,17 +319,11 @@ bitflags! {
 bitflags! {
     #[derive(Clone, Copy, Debug)]
     pub(crate) struct FileSeals: u32 {
-        /// Prevent further seals from being set.
         const F_SEAL_SEAL         = 0x0001;
-        /// Prevent file from shrinking.
         const F_SEAL_SHRINK       = 0x0002;
-        /// Prevent file from growing.
         const F_SEAL_GROW         = 0x0004;
-        /// Prevent writes.
         const F_SEAL_WRITE        = 0x0008;
-        /// Prevent future writes while mapped.
         const F_SEAL_FUTURE_WRITE = 0x0010;
-        /// Prevent chmod modifying exec bits.
         const F_SEAL_EXEC         = 0x0020;
     }
 }

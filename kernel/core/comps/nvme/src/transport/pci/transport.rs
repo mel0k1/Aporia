@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::sync::Arc;
 use core::{
     fmt::Debug,
@@ -41,9 +39,6 @@ impl Debug for NvmePciTransport {
 }
 
 impl NvmePciTransport {
-    /// Creates a PCI NVMe transport for `common_device`.
-    ///
-    /// Returns `Err` if BAR0 is unusable, too small, cannot be mapped, or MSI-X setup fails.
     pub(super) fn new(common_device: Arc<PciDevice>) -> Result<Self, aster_device::common::Error> {
         let Some(config_bar) = Self::check_and_acquire_bar0(&common_device) else {
             error!("BAR0 is unusable: missing, not MMIO, map failed, or too small");
@@ -64,8 +59,6 @@ impl NvmePciTransport {
         })
     }
 
-    /// Validates BAR0, maps it, and checks its size against the fixed layout and
-    /// [`Self::required_bar0_size_bytes`].
     fn check_and_acquire_bar0(device: &PciCommonDevice) -> Option<BarAccess> {
         let bar0 = device.bar_manager().bar(0)?;
         let bar_size = match bar0 {
@@ -87,15 +80,12 @@ impl NvmePciTransport {
         Some(config_bar)
     }
 
-    /// Returns the minimum BAR0 size in bytes required for the controller register block and the
-    /// doorbell array for all queue pairs used by this driver.
     fn required_bar0_size_bytes(cap: u64) -> u64 {
         let dstrd = ((cap >> NvmeRegs64::CAP_DSTRD_SHIFT) & NvmeRegs64::CAP_DSTRD_MASK) as u16;
         NVME_BAR0_FIXED_REGS_END
             .max(NvmeDoorbellRegs::Sqtdbl.offset(QUEUE_NUM as u16, dstrd) as u64)
     }
 
-    /// Initializes MSI-X capability if available.
     fn init_msix(common_device: &Arc<PciDevice>) -> Option<NvmeMsixManager> {
         let msix_opt = common_device.acquire_msix_capability().ok()?;
         let msix_data = msix_opt?;
@@ -104,24 +94,20 @@ impl NvmePciTransport {
         Some(manager)
     }
 
-    /// Returns a mutable reference to the MSI-X manager.
     pub(crate) fn msix_manager_mut(&mut self) -> &mut NvmeMsixManager {
         self.inner.msix_manager_mut()
     }
 
-    /// Returns access to the NVMe registers.
     pub(crate) fn regs(&mut self) -> RegAccess<'_> {
         RegAccess(&self.config_bar)
     }
 
-    /// Returns access to the doorbell registers.
     pub(crate) fn dbregs(&self) -> DbregAccess<'_> {
         DbregAccess(&self.config_bar)
     }
 }
 
 impl NvmePciTransportInner {
-    /// Returns a mutable reference to the MSI-X manager.
     pub(crate) fn msix_manager_mut(&mut self) -> &mut NvmeMsixManager {
         &mut self.msix_manager
     }
@@ -151,7 +137,6 @@ impl DerefMut for NvmePciTransportGuard<'_> {
 }
 
 impl NvmePciTransportLock {
-    /// Wraps a probed [`NvmePciTransport`] for concurrent access.
     pub(crate) fn new(inner: NvmePciTransport) -> Self {
         Self {
             inner: SpinLock::new(inner.inner),
@@ -159,34 +144,24 @@ impl NvmePciTransportLock {
         }
     }
 
-    /// Locks the inner transport and returns a guard for register and MSI-X access.
     pub(crate) fn lock(&self) -> NvmePciTransportGuard<'_> {
         NvmePciTransportGuard {
             inner: self.inner.lock(),
         }
     }
 
-    /// Returns doorbell access without taking the transport lock.
     pub(crate) fn dbregs(&self) -> DbregAccess<'_> {
         DbregAccess(&self.config_bar)
     }
 }
 
-/// Access to NVMe registers (i.e., [`NvmeRegs32`] and [`NvmeRegs64`]).
-///
-/// These NVMe registers are protected by the spin lock on [`NvmePciTransportInner`].
-/// `RegAccess` can only be constructed from
-/// a mutable reference of [`NvmePciTransport`] or [`NvmePciTransportGuard`],
-/// so reading/writing the registers are race-free.
 pub(crate) struct RegAccess<'a>(&'a BarAccess);
 
 impl RegAccess<'_> {
-    /// Reads a 32-bit controller register.
     pub(crate) fn read32(&self, reg: NvmeRegs32) -> u32 {
         self.0.read_once(reg as usize).unwrap()
     }
 
-    /// Reads a 64-bit controller register.
     pub(crate) fn read64(&self, reg: NvmeRegs64) -> u64 {
         let base = reg as usize;
         let reg_low: u32 = self.0.read_once(base).unwrap();
@@ -194,12 +169,10 @@ impl RegAccess<'_> {
         ((reg_high as u64) << 32) | (reg_low as u64)
     }
 
-    /// Writes a 32-bit controller register.
     pub(crate) fn write32(&self, reg: NvmeRegs32, val: u32) {
         self.0.write_once(reg as usize, val).unwrap();
     }
 
-    /// Writes a 64-bit controller register.
     pub(crate) fn write64(&self, reg: NvmeRegs64, val: u64) {
         let base = reg as usize;
         let val_low = (val & 0xFFFF_FFFF) as u32;
@@ -209,25 +182,9 @@ impl RegAccess<'_> {
     }
 }
 
-/// Access to doorbell registers (i.e., [`NvmeDoorbellRegs`]).
-///
-/// These doorbell registers are protected by the queue's spin lock.
-/// From the perspective of the NVMe transport,
-/// we can only provide racy APIs.
-/// This is reflected by the fact that `DbregAccess` can be constructed
-/// from an immutable reference of [`NvmePciTransportLock`].
-/// The caller should call these APIs after locking the queue.
-///
-/// We only expose write access here. Doorbell registers are used by the host to
-/// notify the controller of queue updates; reading them is not relied upon.
 pub(crate) struct DbregAccess<'a>(&'a BarAccess);
 
 impl DbregAccess<'_> {
-    /// Writes a queue doorbell.
-    ///
-    /// This API is intentionally racy: `DbregAccess` can be obtained from shared transport
-    /// references, so multiple writers may exist at once. Callers must hold the corresponding
-    /// queue lock to keep doorbell updates ordered with queue memory updates.
     pub(crate) fn write_racy(&self, reg: NvmeDoorbellRegs, qid: u16, dstrd: u16, val: u32) {
         let offset = reg.offset(qid, dstrd);
         self.0.write_once(offset, val).unwrap();

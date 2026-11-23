@@ -1,4 +1,3 @@
-# template
 [components]
 block = { name = "aster-block" }
 cmdline = { name = "aster-cmdline" }

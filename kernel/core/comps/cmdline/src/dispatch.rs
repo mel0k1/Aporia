@@ -1,10 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Kernel command-line parameter dispatch and init forwarding.
-//!
-//! Dispatches kernel command-line parameters to registered handlers and
-//! forwards unrecognized parameters to the init process.
-
 use alloc::{
     collections::BTreeMap,
     ffi::CString,
@@ -18,7 +11,6 @@ use spin::Once;
 
 use crate::early::is_early_param;
 
-/// The arguments passed to the init process, extracted from the kernel command line.
 #[derive(Debug, PartialEq)]
 pub struct InitprocArgs {
     argv: Vec<CString>,
@@ -26,12 +18,10 @@ pub struct InitprocArgs {
 }
 
 impl InitprocArgs {
-    /// Returns the argument vector (`argv`) of the init process.
     pub fn argv(&self) -> &[CString] {
         &self.argv
     }
 
-    /// Returns the environment vector (`envp`) of the init process.
     pub fn envp(&self) -> &[CString] {
         &self.envp
     }
@@ -86,8 +76,6 @@ fn init() -> Result<(), ComponentInitError> {
     Ok(())
 }
 
-// Splits the command line string by spaces but preserve
-// ones that are protected by double quotes(`"`).
 fn split_arg(input: &str) -> impl Iterator<Item = &str> {
     let mut inside_quotes = false;
 
@@ -108,7 +96,6 @@ fn dispatch_params(cmdline: &str) -> InitprocArgs {
 
     let mut kcmdline_end = false;
 
-    // Step 1: Build lookup from registered param name to handler.
     let mut registry = BTreeMap::new();
     for p in inventory::iter::<KernelParam> {
         if let Some(prev) = registry.insert(p.name, p) {
@@ -119,10 +106,8 @@ fn dispatch_params(cmdline: &str) -> InitprocArgs {
         }
     }
 
-    // Step 2: Tokenize the kernel command line and group recognized param by normalized name.
     let mut grouped: BTreeMap<String, (Vec<Option<&str>>, usize)> = BTreeMap::new();
     for (pos, arg) in split_arg(cmdline).enumerate() {
-        // Everything after "--" goes to init.
         if kcmdline_end {
             result.argv.push(CString::new(arg).unwrap());
             continue;
@@ -136,11 +121,9 @@ fn dispatch_params(cmdline: &str) -> InitprocArgs {
             Some(pos) => (&arg[..pos], Some(&arg[pos + 1..])),
             None => (arg, None),
         };
-        // Normalize hyphens to underscores (Linux compatibility)
         let normalized = key.replace('-', "_");
 
         if registry.contains_key(normalized.as_str()) {
-            // Group by normalized name
             grouped
                 .entry(normalized)
                 .and_modify(|occurrences| {
@@ -149,29 +132,20 @@ fn dispatch_params(cmdline: &str) -> InitprocArgs {
                 })
                 .or_insert_with(|| (vec![value], pos));
         } else if is_early_param(normalized.as_str()) {
-            // Handled by OSTD during bootstrap: do not forward to init
             continue;
         } else {
-            // Unknown parameter: forward to init
             if key.contains('.') {
-                // The entry contains a dot, which is treated as a module argument.
-                // Unrecognized module arguments are ignored.
                 continue;
             } else if let Some(value) = value {
-                // If the entry is not recognized, it is passed to the init process.
-                // Pattern 'entry=value' is treated as the init environment.
                 let envp_entry = CString::new(key.to_string() + "=" + value).unwrap();
                 result.envp.push(envp_entry);
             } else {
-                // If the entry is not recognized, it is passed to the init process.
-                // Pattern 'entry' without value is treated as the init argument.
                 let argv_entry = CString::new(key.to_string()).unwrap();
                 result.argv.push(argv_entry);
             }
         }
     }
 
-    // Step 3: Dispatch each group to its handler.
     let (mut early_params, mut params): (Vec<_>, Vec<_>) = grouped
         .iter()
         .filter_map(|(name, occurrences)| {

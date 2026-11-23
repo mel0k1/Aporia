@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 mod gem;
 mod general;
 mod kms;
@@ -13,7 +11,6 @@ impl DrmFile {
         use ioctl_defs::*;
 
         dispatch_ioctl!(match raw_ioctl {
-            // General ioctl cmds.
             cmd @ Version => {
                 self.check_ioctl_access(DrmIoctlAccess::RENDER_ALLOW)?;
                 self.drm_get_version(cmd)
@@ -42,7 +39,6 @@ impl DrmFile {
                 self.check_ioctl_access(DrmIoctlAccess::empty())?;
                 self.drm_drop_master(cmd)
             }
-            // GEM ioctl cmds.
             cmd @ GemClose => {
                 self.check_gem_ioctl_access(DrmIoctlAccess::RENDER_ALLOW)?;
                 self.drm_gem_close(cmd)
@@ -59,7 +55,6 @@ impl DrmFile {
                 self.check_gem_ioctl_access(DrmIoctlAccess::empty())?;
                 self.drm_mode_destroy_dumb(cmd)
             }
-            // KMS ioctl cmds.
             cmd @ SetClientCap => {
                 self.check_kms_ioctl_access(DrmIoctlAccess::empty())?;
                 self.drm_set_client_cap(cmd)
@@ -177,13 +172,9 @@ impl DrmFile {
 bitflags::bitflags! {
     #[derive(Clone, Copy, Debug)]
     struct DrmIoctlAccess: u32 {
-        /// Requires the client to be authenticated or the current master.
         const AUTH         = 1 << 0;
-        /// Requires the current file to be the DRM master.
         const MASTER       = 1 << 1;
-        /// Requires the caller to have `CAP_SYS_ADMIN`.
         const ROOT_ONLY    = 1 << 2;
-        /// Allows the ioctl on a render node.
         const RENDER_ALLOW = 1 << 3;
     }
 }
@@ -204,7 +195,6 @@ mod ioctl_defs {
         },
     };
 
-    // Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm.h>
     pub(super) type Version                 = ioc!(DRM_IOCTL_VERSION,                   b'd', 0x00, InOutData<DrmVersion>);
     pub(super) type GetUnique               = ioc!(DRM_IOCTL_GET_UNIQUE,                b'd', 0x01, InOutData<DrmUnique>);
     pub(super) type GetMagic                = ioc!(DRM_IOCTL_GET_MAGIC,                 b'd', 0x02, OutData<DrmAuth>);

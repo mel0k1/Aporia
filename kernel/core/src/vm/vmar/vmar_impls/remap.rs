@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::ops::Range;
 
 use ostd::{mm::vm_space::VmQueriedItem, task::disable_preempt};
@@ -7,37 +5,13 @@ use ostd::{mm::vm_space::VmQueriedItem, task::disable_preempt};
 use super::{RssDelta, Vmar, util::is_intersected};
 use crate::{prelude::*, vm::vmar::is_userspace_vaddr_range};
 
-/// Controls how the old mapping is handled during a `remap` operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RemapOldMappingAction {
-    /// Remove the old mapping after moving pages.
     Unmap,
-    /// Keep the old address range mapped with its original properties.
-    /// Its physical pages are moved away, so subsequent page faults at
-    /// the old address will allocate fresh pages.
     Keep,
 }
 
 impl Vmar {
-    /// Resizes the original mapping.
-    ///
-    /// The range of the mapping goes from `map_addr..map_addr + old_size` to
-    /// `map_addr..map_addr + new_size`.
-    ///
-    /// If the new mapping size is smaller than the original mapping size, the
-    /// extra part will be unmapped. If the new mapping is larger than the old
-    /// mapping and the extra part overlaps with existing mapping, resizing
-    /// will fail and return `Err`.
-    ///
-    /// - When `check_single_mapping` is `true`, this method will check whether
-    ///   the range of the original mapping is covered by a single [`VmMapping`].
-    ///   If not, this method will return an `Err`.
-    /// - When `check_single_mapping` is `false`, The range of the original
-    ///   mapping does not have to solely map to a whole [`VmMapping`], but it
-    ///   must ensure that all existing ranges have a mapping. Otherwise, this
-    ///   method will return an `Err`.
-    ///
-    /// [`VmMapping`]: crate::vm::vmar::vm_mapping::VmMapping
     pub(crate) fn resize_mapping(
         &self,
         map_addr: Vaddr,
@@ -53,34 +27,10 @@ impl Vmar {
         } else if inner.vm_mappings.find_one(&map_addr).is_none() {
             return Err(errno!(EFAULT, "there is no mapping at the old address"));
         }
-        // FIXME: We should check whether all existing ranges in
-        // `map_addr..map_addr + old_size` have a mapping. If not,
-        // we should return an `Err`.
 
         inner.resize_mapping(self, map_addr, old_size, new_size, &mut rss_delta)
     }
 
-    /// Remaps the original mapping to a new address and/or size.
-    ///
-    /// If the new mapping size is smaller than the original mapping size, the
-    /// extra part will be unmapped.
-    ///
-    /// - If `new_addr` is `Some(new_addr)`, this method attempts to move the
-    ///   mapping from `old_addr..old_addr + old_size` to `new_addr..new_addr +
-    ///   new_size`. If any existing mappings lie within the target range,
-    ///   they will be unmapped before the move.
-    /// - If `new_addr` is `None`, a new range of size `new_size` will be
-    ///   allocated, and the original mapping will be moved there.
-    ///
-    /// When `action` is [`RemapOldMappingAction::Keep`], the old mapping
-    /// stays in the tree with its original properties; see
-    /// [`RemapOldMappingAction::Keep`] for details.
-    ///
-    /// # Panics
-    ///
-    /// This method panics if `new_addr` is `None` and `new_size <= old_size`
-    /// (unless `action` is [`RemapOldMappingAction::Keep`]).
-    /// Use `resize_mapping` instead in this case.
     pub(crate) fn remap(
         &self,
         old_addr: Vaddr,
@@ -93,9 +43,6 @@ impl Vmar {
         debug_assert_eq!(old_size % PAGE_SIZE, 0);
         debug_assert_eq!(new_size % PAGE_SIZE, 0);
 
-        // Check the new range before looking up or changing any mapping, as Linux
-        // does, so that a call rejected for its new range changes no mapping.
-        // Reference: <https://elixir.bootlin.com/linux/v6.18/source/mm/mremap.c#L1920>
         if let Some(new_addr) = new_addr {
             if !new_addr.is_multiple_of(PAGE_SIZE) || !is_userspace_vaddr_range(new_addr, new_size)
             {
@@ -104,7 +51,6 @@ impl Vmar {
                     "remap: the new range is not aligned or not in userspace"
                 ));
             }
-            // The new range must not overlap any part of the old range.
             if is_intersected(
                 &(old_addr..old_addr.saturating_add(old_size)),
                 &(new_addr..new_addr + new_size),
@@ -138,7 +84,6 @@ impl Vmar {
             inner.check_extra_size_fits_rlimit(new_size - old_size)?;
         }
 
-        // Shrink the old mapping first.
         if old_addr.checked_add(old_size).is_none() {
             return Err(errno!(EINVAL, "remap: the address range overflows"));
         }
@@ -154,13 +99,9 @@ impl Vmar {
             (old_size, old_addr..old_addr + old_size)
         };
 
-        // Allocate a new free region that does not overlap with the old range.
         let new_range = if let Some(new_addr) = new_addr {
             inner.alloc_free_region_exact_truncate(self, new_addr, new_size, &mut rss_delta)
         } else {
-            // Fast path: expand the old mapping in place to the new size.
-            // Skip when `action` is `RemapOldMappingAction::Keep` since we must
-            // actually move pages and keep the old mapping in the tree.
             if action == RemapOldMappingAction::Unmap
                 && is_userspace_vaddr_range(old_addr, new_size)
                 && inner
@@ -191,8 +132,6 @@ impl Vmar {
                 inner.insert_without_try_merge(self, right, rmap.as_deref_mut());
             }
 
-            // Create a new `VmMapping` at the target address.
-            // Note that we have ensured that `new_size >= old_size` at the beginning.
             let new_mapping = old_mapping.clone_for_remap_at(new_range.start);
             inner.insert_try_merge(
                 self,
@@ -200,15 +139,12 @@ impl Vmar {
                 rmap.as_deref_mut(),
             );
 
-            // Move the mapping before dropping `rmap`.
             self.move_pt(old_range, new_range.clone());
         } else {
             let old_mapping = inner.vm_mappings.find_one(&old_mapping_addr).unwrap();
             let vmo_for_rmap = old_mapping.vmo_for_rmap().cloned();
             let mut rmap = vmo_for_rmap.as_ref().map(|vmo| vmo.rmap().lock());
 
-            // Create a new `VmMapping` at the target address.
-            // Note that we have ensured that `new_size >= old_size` at the beginning.
             let new_mapping = old_mapping
                 .clone_range_for_remap_at(old_addr..old_addr + old_size, new_range.start);
             inner.insert_try_merge(
@@ -217,17 +153,12 @@ impl Vmar {
                 rmap.as_deref_mut(),
             );
 
-            // Move the mapping before dropping `rmap`.
             self.move_pt(old_range, new_range.clone());
         }
 
         Ok(new_range.start)
     }
 
-    /// Moves the mapping.
-    ///
-    /// If there are associated reverse mappings, we must hold the reverse mapping lock to avoid
-    /// race conditions with unmapping from reverse mappings.
     fn move_pt(&self, old_range: Range<Vaddr>, new_range: Range<Vaddr>) {
         let preempt_guard = disable_preempt();
         let total_range = old_range.start.min(new_range.start)..old_range.end.max(new_range.end);
@@ -264,8 +195,6 @@ impl Vmar {
                     cursor.unmap(PAGE_SIZE);
                     cursor.jump(new_map_va).unwrap();
 
-                    // For MMIO pages, find the corresponding `IoMem` and map it
-                    // at the new location
                     let (iomem, offset) = cursor.find_iomem_by_paddr(paddr).unwrap();
                     cursor.map_iomem(iomem, prop, PAGE_SIZE, offset);
                 }

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use align_ext::AlignExt;
 
 use super::SyscallReturn;
@@ -65,11 +63,6 @@ fn do_sys_mmap(
     };
     check_offset(offset, len, option.flags())?;
 
-    // On x86_64 and riscv64, `PROT_WRITE` implies `PROT_READ`.
-    // Reference:
-    // <https://man7.org/linux/man-pages/man2/mmap.2.html>,
-    // Section 5.11.3 from <https://www.intel.com/content/dam/www/public/us/en/documents/manuals/64-ia-32-architectures-software-developer-vol-3a-part-1-manual.pdf>,
-    // <https://riscv.github.io/riscv-isa-manual/snapshot/privileged/#translation>.
     #[cfg(any(target_arch = "x86_64", target_arch = "riscv64"))]
     let vm_perms = if !vm_perms.contains(VmPerms::READ) && vm_perms.contains(VmPerms::WRITE) {
         vm_perms | VmPerms::READ
@@ -110,14 +103,12 @@ fn do_sys_mmap(
         }
 
         if option.flags().contains(MMapFlags::MAP_ANONYMOUS) {
-            // Linux rejects MAP_SHARED_VALIDATE for anonymous mappings.
             if option.typ() == MMapType::SharedValidate {
                 return Err(errno!(
                     EINVAL,
                     "MAP_SHARED_VALIDATE and MAP_ANONYMOUS cannot be used together"
                 ));
             }
-            // Anonymous shared mappings should share the same memory pages.
             if option.typ().is_shared() {
                 let shared_vmo = {
                     let vmo_options = VmoOptions::new(len);
@@ -146,8 +137,6 @@ fn do_sys_mmap(
                 vm_may_perms.remove(VmPerms::MAY_WRITE);
             }
 
-            // File access errors take precedence over the `noexec` restriction.
-            // Clear MAY_EXEC to prevent a later `mprotect` from granting execution.
             let mount_flags = file.path().mount_node().flags();
             if mount_flags.contains(PerMountFlags::NOEXEC) {
                 if vm_perms.contains(VmPerms::EXEC) {
@@ -203,17 +192,13 @@ fn check_addr(addr: Vaddr, len: usize) -> Result<()> {
 fn adjust_addr_hint(mut addr: Vaddr, len: usize) -> Vaddr {
     addr = addr.align_down(PAGE_SIZE);
     if addr == 0 {
-        // No hint.
         return 0;
     }
 
     if addr < VMAR_LOWEST_ADDR {
-        // This is Linux behavior.
-        // Reference: <https://elixir.bootlin.com/linux/v6.19.3/source/mm/mmap.c#L219>.
         addr = VMAR_LOWEST_ADDR;
     }
     if addr > VMAR_CAP_ADDR - len {
-        // Illegal hint. Treat it as if there were no hint.
         addr = 0;
     }
 
@@ -239,13 +224,6 @@ fn check_offset(offset: usize, len: usize, flags: MMapFlags) -> Result<()> {
     Ok(())
 }
 
-// Definition of mmap flags, conforming to the Linux mmap interface:
-// <https://man7.org/linux/man-pages/man2/mmap.2.html>.
-//
-// The first 4 bits of the flag value represents the type of the mapping,
-// while other bits are used as the flags of the mapping.
-
-/// The mask for the mapping type.
 const MAP_TYPE_MASK: u32 = 0xf;
 
 #[repr(u8)]
@@ -263,7 +241,6 @@ impl MMapType {
 }
 
 bitflags! {
-    // If you update the flags here, please also check and update `LEGACY_MMAP_FLAGS` below.
     #[derive(Clone, Copy, Debug)]
     struct MMapFlags: u32 {
         const MAP_FIXED           = 0x10;
@@ -289,7 +266,6 @@ const ARCH_LEGACY_MMAP_FLAGS: MMapFlags = MMapFlags::MAP_32BIT;
 #[cfg(not(target_arch = "x86_64"))]
 const ARCH_LEGACY_MMAP_FLAGS: MMapFlags = MMapFlags::empty();
 
-// Reference: <https://elixir.bootlin.com/linux/v6.18.1/source/include/linux/mman.h#L35-L59>
 const LEGACY_MMAP_FLAGS: MMapFlags = MMapFlags::MAP_FIXED
     .union(MMapFlags::MAP_ANONYMOUS)
     .union(MMapFlags::MAP_GROWSDOWN)
@@ -322,8 +298,6 @@ impl TryFrom<u32> for MMapOptions {
         let typ_raw = (value & MAP_TYPE_MASK) as u8;
         let typ = MMapType::try_from(typ_raw)?;
 
-        // According to the Linux behavior, unknown flags are silently ignored unless
-        // `MAP_SHARED_VALIDATE` is specified.
         let flags_raw = value & !MAP_TYPE_MASK;
         if typ == MMapType::SharedValidate && (flags_raw & !LEGACY_MMAP_FLAGS.bits()) != 0 {
             return Err(errno!(EOPNOTSUPP, "the mapping flags are not supported"));

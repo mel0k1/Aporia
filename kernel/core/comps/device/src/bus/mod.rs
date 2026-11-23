@@ -1,32 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Buses, their devices, and drivers.
-//!
-//! A bus is the mechanism by which devices are found and addressed,
-//! and it decides which driver serves which device.
-//! A [`Bus`] implementation supplies the per-device payload type,
-//! the match data drivers declare, and the matching rule.
-//! Registering it yields a [`BusHandle`],
-//! which owns the `/sys/bus/<name>` directory and the lists of devices and drivers.
-//!
-//! To add a new bus, implement [`Bus`] and pass it to [`register`].
-//! For each discovered device, use [`BusDevice::builder`] with the returned handle,
-//! then register the device with [`add_device`].
-//!
-//! To write a driver, implement [`Driver<B>`] for the target bus
-//! and register it through [`BusHandle::register_driver`].
-//! [`Driver::on_probe`] initializes a matched device, and
-//! [`Driver::on_release`] releases its resources.
-//! Driver attributes are declared with [`Attr`] through [`Driver::dev_attrs`].
-//!
-//! Binding is symmetric: a new device is offered to every registered driver,
-//! and a new driver to every unbound device.
-//! The first driver whose [`on_probe`] succeeds wins.
-//! Automatic probing can be disabled through `/sys/bus/<name>/drivers_autoprobe`.
-//!
-//! [`add_device`]: crate::add_device
-//! [`on_probe`]: Driver::on_probe
-
 mod device;
 mod driver;
 
@@ -58,41 +29,20 @@ use crate::{
     uevent::{self, UeventAction, UeventVars},
 };
 
-/// A kind of bus.
 pub trait Bus: Sized + Send + Sync + 'static {
-    /// The bus name: the directory under `/sys/bus`.
-    ///
-    /// Must be a valid node name according to [`aster_systree::is_valid_name`].
     const NAME: &'static str;
 
-    /// The payload type of devices on this bus.
     type Device: Send + Sync + 'static;
 
-    /// What a driver declares to say which devices it accepts.
     type MatchData: ?Sized + Send + Sync + 'static;
 
-    /// Decides whether a driver's match data accepts a device.
     fn matches(&self, dev: &Self::Device, data: &Self::MatchData) -> bool;
 
-    /// Returns the attributes shared by all devices on this bus.
     fn dev_attrs(&self) -> &'static [Attr<BusDevice<Self>>];
 
-    /// Appends bus-specific entries to a device's uevent environment.
-    ///
-    /// Called for automatic and explicit events and for `uevent` reads.
-    /// Do not add `DRIVER`; the model derives it.
-    ///
-    /// Must not bind, unbind, or remove the same device,
-    /// or read or write its driver-provided attributes,
-    /// because automatic bind/unbind events hold the device's binding lock.
     fn append_uevent_vars(&self, dev: &BusDevice<Self>, vars: &mut UeventVars) -> Result<()>;
 }
 
-/// Registers a bus, creating `/sys/bus/<name>/{devices,drivers}`.
-///
-/// # Panics
-///
-/// Panics if the bus name is not a valid `SysTree` node name.
 pub fn register<B: Bus>(bus: B) -> Result<Arc<BusHandle<B>>> {
     let dir = Dir::with_attrs(
         SysStr::from(B::NAME),
@@ -124,7 +74,6 @@ pub fn register<B: Bus>(bus: B) -> Result<Arc<BusHandle<B>>> {
     Ok(handle)
 }
 
-/// A registered bus.
 pub struct BusHandle<B: Bus> {
     bus: B,
     dir: Arc<Dir>,
@@ -137,12 +86,6 @@ pub struct BusHandle<B: Bus> {
 }
 
 impl<B: Bus> BusHandle<B> {
-    /// Registers a driver, creating `/sys/bus/<bus>/drivers/<name>`,
-    /// and offers it every unbound device.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the driver name is not a valid `SysTree` node name.
     pub fn register_driver(&self, driver: Box<dyn Driver<B>>) -> Result<Arc<DriverHandle<B>>> {
         if self
             .drivers
@@ -168,9 +111,6 @@ impl<B: Bus> BusHandle<B> {
         Ok(handle)
     }
 
-    /// Unregisters a driver, unbinding its devices first.
-    ///
-    /// Waits for ongoing probes and their cleanup before returning.
     pub fn unregister_driver(&self, driver: &Arc<DriverHandle<B>>) -> Result<()> {
         let removed = {
             let mut drivers = self.drivers.lock();
@@ -182,8 +122,6 @@ impl<B: Bus> BusHandle<B> {
             return Err(Error::NotFound);
         }
 
-        // Close registration and collect every binding in one critical section.
-        // Release this lock before waiting on each device's binding lock.
         let devices = driver.state().lock().set_unregistered()?;
         for dev in devices {
             let _ = self.unbind_from(&dev, driver);
@@ -193,21 +131,10 @@ impl<B: Bus> BusHandle<B> {
         Ok(())
     }
 
-    /// Unbinds the device from its driver.
-    ///
-    /// Removes the driver's attributes and links, calls its [`on_release`]
-    /// callback, and clears the binding.
-    ///
-    /// Use this before [`remove_device`]
-    /// when this device has child devices created by the driver.
-    ///
-    /// [`remove_device`]: crate::remove_device
-    /// [`on_release`]: Driver::on_release
     pub fn unbind(&self, dev: &Arc<BusDevice<B>>) -> Result<()> {
         self.unbind_inner(dev, None)
     }
 
-    /// Binds a specific driver to a device, if the bus matches them.
     pub(crate) fn bind(
         &self,
         dev: &Arc<BusDevice<B>>,
@@ -219,7 +146,6 @@ impl<B: Bus> BusHandle<B> {
         self.try_bind(dev, driver)
     }
 
-    /// Offers an unbound device to every driver until one accepts it.
     fn probe(&self, dev: &Arc<BusDevice<B>>) -> Result<()> {
         if dev.driver().is_some() {
             return Err(Error::AlreadyBound);
@@ -232,9 +158,6 @@ impl<B: Bus> BusHandle<B> {
         Err(Error::NoDriver)
     }
 
-    /// Unbinds the device only if it is still bound to `expected`.
-    ///
-    /// Returns [`Error::NotBound`] if the device is unbound or has been bound to a different driver.
     fn unbind_from(&self, dev: &Arc<BusDevice<B>>, expected: &Arc<DriverHandle<B>>) -> Result<()> {
         self.unbind_inner(dev, Some(expected))
     }
@@ -268,11 +191,7 @@ impl<B: Bus> BusHandle<B> {
         Ok(())
     }
 
-    /// Completes a binding recorded in the driver's list, undoing it on error.
-    /// The caller must hold the device's binding lock throughout.
     fn bind_inner(&self, dev: &Arc<BusDevice<B>>, driver: &Arc<DriverHandle<B>>) -> Result<()> {
-        // Create the links before `on_probe` so it can find the device and driver through sysfs.
-        // Remove them if probing fails.
         add_link(
             driver.dir().as_ref(),
             dev.base().name(),
@@ -315,8 +234,6 @@ impl<B: Bus> BusHandle<B> {
         }
         let driver = dev.driver().ok_or(Error::NotBound)?;
 
-        // Driver attribute callbacks have finished and cannot start
-        // while we hold the binding lock.
         driver::remove_driver_links(dev, &driver);
         dev.remove_attrs(driver.dev_attrs());
         driver.on_release(dev);
@@ -332,32 +249,26 @@ impl<B: Bus> BusHandle<B> {
         Ok(())
     }
 
-    /// Returns whether new devices and drivers are matched automatically.
     fn is_autoprobe_enabled(&self) -> bool {
         self.autoprobe.load(Ordering::Relaxed)
     }
 
-    /// Enables or disables automatic matching.
     fn set_autoprobe(&self, on: bool) {
         self.autoprobe.store(on, Ordering::Relaxed);
     }
 
-    /// Returns the bus itself.
     fn bus(&self) -> &B {
         &self.bus
     }
 
-    /// Returns the devices currently on the bus.
     fn devices(&self) -> Vec<Arc<BusDevice<B>>> {
         self.devices.lock().clone()
     }
 
-    /// Returns the registered drivers.
     fn drivers(&self) -> Vec<Arc<DriverHandle<B>>> {
         self.drivers.lock().clone()
     }
 
-    /// Finds a device on the bus by name.
     fn find_device(&self, name: &str) -> Option<Arc<BusDevice<B>>> {
         self.devices
             .lock()
@@ -393,7 +304,6 @@ impl<B: Bus> SubsystemOps for BusHandle<B> {
 
         self.devices.lock().push(dev.clone());
         if self.autoprobe.load(Ordering::Relaxed) {
-            // Automatic probing failure does not fail device registration.
             let _ = self.probe(&dev);
         }
     }
@@ -423,7 +333,6 @@ impl<B: Bus> core::fmt::Debug for BusHandle<B> {
     }
 }
 
-/// The `drivers_autoprobe` and `drivers_probe` files of a bus directory.
 struct BusDirOps<B: Bus> {
     bus: Weak<BusHandle<B>>,
 }
@@ -452,8 +361,6 @@ impl<B: Bus> DirAttrOps for BusDirOps<B> {
             },
             "drivers_probe" => {
                 let dev = bus.find_device(value.trim()).ok_or(Error::NotFound)?;
-                // A probe request succeeds even if the device is already bound
-                // or no driver matches.
                 match bus.probe(&dev) {
                     Ok(()) | Err(Error::AlreadyBound) | Err(Error::NoDriver) => {}
                     Err(e) => return Err(e),

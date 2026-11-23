@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use aster_systree::{EmptyNode, SysBranchNode};
 use systree_node::ConfigRootNode;
 
@@ -11,8 +9,6 @@ mod systree_node;
 #[cfg(ktest)]
 mod test;
 
-// This method should be called during kernel file system initialization,
-// _after_ `aster_systree::init`.
 pub(super) fn init() {
     let config_kernel_sysnode = EmptyNode::new("config".into());
     super::sysfs::register_kernel_sysnode(config_kernel_sysnode).unwrap();
@@ -20,12 +16,6 @@ pub(super) fn init() {
     crate::fs::vfs::registry::register(&ConfigFsType).unwrap();
 }
 
-/// Registers a subsystem `SysTree` node under the root node of [`ConfigFs`].
-///
-/// If a subsystem with the same name has already been registered,
-/// this function returns an error.
-///
-/// [`ConfigFs`]: fs::ConfigFs
 #[cfg_attr(not(any(ktest, target_arch = "x86_64")), expect(dead_code))]
 pub(crate) fn register_subsystem(subsystem: Arc<dyn SysBranchNode>) -> Result<()> {
     ConfigRootNode::singleton().add_child(subsystem)?;
@@ -33,11 +23,6 @@ pub(crate) fn register_subsystem(subsystem: Arc<dyn SysBranchNode>) -> Result<()
     Ok(())
 }
 
-/// Unregisters a subsystem from the root node of [`ConfigFs`] by its name.
-///
-/// If no subsystem with the given name exists, this function returns an error.
-///
-/// [`ConfigFs`]: fs::ConfigFs
 #[expect(dead_code)]
 pub(crate) fn unregister_subsystem(name: &str) -> Result<()> {
     ConfigRootNode::singleton().remove_child(name)?;

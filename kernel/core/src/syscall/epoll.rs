@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::time::Duration;
 
 use ostd::mm::VmIo;
@@ -19,7 +17,6 @@ use crate::{
     time::timespec_t,
 };
 
-// See: https://elixir.bootlin.com/linux/v6.11.5/source/fs/eventpoll.c#L2437
 const EP_MAX_EVENTS: usize = i32::MAX as usize / size_of::<c_epoll_event>();
 
 pub(super) fn sys_epoll_create(size: i32, ctx: &Context) -> Result<SyscallReturn> {
@@ -40,7 +37,6 @@ pub(super) fn sys_epoll_create1(flags: u32, ctx: &Context) -> Result<SyscallRetu
         } else if flags == CreationFlags::O_CLOEXEC {
             FdFlags::CLOEXEC
         } else {
-            // Only O_CLOEXEC is valid
             return Err(errno!(EINVAL, "invalid flags"));
         }
     };
@@ -87,7 +83,6 @@ pub(super) fn sys_epoll_ctl(
 
     let mut file_table = ctx.thread_local.borrow_file_table_mut();
     let file = get_file_fast!(&mut file_table, epfd.try_into()?).into_owned();
-    // Drop `file_table` as `EpollFile::control` also performs `borrow_file_table_mut()`.
     drop(file_table);
 
     let epoll_file = file
@@ -132,10 +127,6 @@ fn do_epoll_pwait2(
 
     let result = epoll_file.wait(max_events, timeout.as_ref());
 
-    // As mentioned in the manual, the return value should be zero if no file descriptor becomes ready
-    // during the requested `timeout` milliseconds. So we ignore `Err(ETIME)` and return an empty vector.
-    //
-    // Manual: <https://www.man7.org/linux/man-pages/man2/epoll_wait.2.html>
     let epoll_events = match result {
         Ok(events) => events,
         Err(e) if e.error() == Errno::ETIME => {
@@ -146,7 +137,6 @@ fn do_epoll_pwait2(
         }
     };
 
-    // Write back
     let mut write_addr = events_addr;
     let user_space = ctx.user_space();
     for epoll_event in epoll_events.iter() {
@@ -250,8 +240,6 @@ pub(super) fn sys_epoll_pwait2(
 }
 
 #[repr(C)]
-// Here we use `repr(packed)` on x86_64 to ensure the same layout as Linux.
-// Reference: <https://elixir.bootlin.com/linux/v6.16.9/source/include/uapi/linux/eventpoll.h#L71-L81>.
 #[cfg_attr(target_arch = "x86_64", repr(packed))]
 #[cfg_attr(not(target_arch = "x86_64"), padding_struct)]
 #[derive(Clone, Copy, Debug, Default, Pod)]

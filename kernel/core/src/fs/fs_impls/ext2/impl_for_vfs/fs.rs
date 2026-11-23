@@ -1,10 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! [`FileSystem`] trait implementation for [`Ext2`].
-//!
-//! Translates VFS-level mount, sync, stat, and root-inode requests into
-//! the corresponding ext2-internal operations.
-
 use aster_block::{BLOCK_SIZE, bio::BioStatus};
 
 use crate::{

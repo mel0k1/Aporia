@@ -1,10 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Kernel command-line parameter parsing and storage.
-//!
-//! This module defines traits for parsing different types of parameters and
-//! provides implementations for common cases (e.g., `FromStr` types, flags).
-
 use alloc::vec::Vec;
 use core::{
     str::FromStr,
@@ -13,7 +6,6 @@ use core::{
 
 use spin::Once;
 
-/// Trait for types that can store a parsed parameter value.
 pub trait ParamStorage: Sync + 'static {
     type Value;
     fn store_param(&self, value: Self::Value);
@@ -47,54 +39,35 @@ impl ParamStorage for AtomicBool {
     }
 }
 
-/// Errors while parsing kernel command line parameters.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ParamError {
     InvalidValue,
 }
 
-/// Parses a single-value key-value parameter (e.g., log_level=3).
-///
-/// If the parameter appears multiple times, the framework applies last-wins
-/// semantics (matching Linux behavior) and passes only the final value.
 pub trait ParseParamValue: Sized {
     fn parse_param(value: &str) -> Result<Self, ParamError>;
 }
 
-/// Parses a repeatable key-value parameter (e.g., "console=ttyS0 console=ttyS1").
-///
-/// The framework collects all occurrences and passes the full slice.
 pub trait ParseRepeatableParamValue: Sized {
     fn parse_all(values: &[&str]) -> Result<Self, ParamError>;
 }
 
-/// Parses a flag parameter (e.g., "ro", "debug", "nokaslr").
-///
-/// Flags may optionally accept a value (e.g., "debug=1" in Linux).
 pub trait ParseFlag: Sized {
-    /// Prases the flag with an optional value.
-    ///
-    /// If the flag is specified as "flag=v", then `value` is `Some(v)`;
-    /// if the flag is bare, then `value` is `None`.
     fn parse_flag(value: Option<&str>) -> Result<Self, ParamError>;
 }
 
-/// Any `FromStr` type can be a single-value parameter.
 impl<T: FromStr> ParseParamValue for T {
     fn parse_param(value: &str) -> Result<Self, ParamError> {
         value.parse().map_err(|_| ParamError::InvalidValue)
     }
 }
 
-/// A `Vec<T>` where `T: ParseParamValue` can be a repeatable parameter.
 impl<T: ParseParamValue> ParseRepeatableParamValue for Vec<T> {
     fn parse_all(values: &[&str]) -> Result<Self, ParamError> {
         values.iter().map(|value| T::parse_param(value)).collect()
     }
 }
 
-/// `bool` as a flag: a bare flag means `true`;
-/// flags with typical values such as `1`/`0`, `on`/`off` are also accepted.
 impl ParseFlag for bool {
     fn parse_flag(value: Option<&str>) -> Result<Self, ParamError> {
         match value {

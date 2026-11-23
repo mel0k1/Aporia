@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use proc_macro::TokenStream;
 use quote::quote;
 
@@ -24,13 +22,11 @@ fn push_zerocopy_derive(
 pub(super) fn expand_derive(attrs: TokenStream, input: TokenStream) -> TokenStream {
     use proc_macro2::TokenTree;
 
-    // Process the derive attributes
     let mut new_derives = Vec::new();
     let attr_tokens = proc_macro2::TokenStream::from(attrs);
     for token in attr_tokens.into_iter() {
         match token {
             TokenTree::Ident(ident) if ident == "Pod" => {
-                // Replace Pod with zerocopy traits
                 push_zerocopy_derive(&mut new_derives, "FromBytes", true);
                 push_zerocopy_derive(&mut new_derives, "IntoBytes", true);
                 push_zerocopy_derive(&mut new_derives, "Immutable", true);
@@ -42,7 +38,6 @@ pub(super) fn expand_derive(attrs: TokenStream, input: TokenStream) -> TokenStre
         }
     }
 
-    // Build the output: #[::core::prelude::v1::derive(...)] + input
     let input2: proc_macro2::TokenStream = input.into();
     quote!(
         #[::core::prelude::v1::derive(#(#new_derives)*)]

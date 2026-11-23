@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use aster_virtio::device::socket::header::VirtioVsockHdr;
 
 use crate::net::socket::vsock::{VsockSocketAddr, transport::BoundPort};

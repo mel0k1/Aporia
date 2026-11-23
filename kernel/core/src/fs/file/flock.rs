@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
 use alloc::fmt;
 use core::ptr;
 
@@ -7,25 +6,18 @@ use ostd::sync::{WaitQueue, Waiter, Waker};
 use super::{FileLike, InodeHandle};
 use crate::prelude::*;
 
-/// Represents a file lock (FLOCK) with an owner and type.
 #[derive(Clone, Debug)]
 struct Flock {
-    /// Owner of the lock, which is an opened file descriptor.
     owner: Weak<dyn FileLike>,
-    /// Type of the lock, either shared or exclusive.
     type_: FlockType,
 }
 
-/// Represents a Flock item that can be held in a list of file locks.
-/// Each FlockItem contains a lock and a wait queue for threads that are blocked by the lock.
 pub(crate) struct FlockItem {
     lock: Flock,
-    /// A wait queue for any threads that are blocked by this lock.
     waitqueue: Arc<WaitQueue>,
 }
 
 impl FlockItem {
-    /// Creates a new FlockItem with the specified owner and lock type.
     pub(crate) fn new(owner: &Arc<dyn FileLike>, type_: FlockType) -> Self {
         Self {
             lock: Flock {
@@ -36,18 +28,14 @@ impl FlockItem {
         }
     }
 
-    /// Returns the owner of the lock if it exists.
     pub(crate) fn owner(&self) -> Option<Arc<dyn FileLike>> {
         Weak::upgrade(&self.lock.owner)
     }
 
-    /// Checks if this lock has the same owner as another lock.
     pub(crate) fn same_owner_with(&self, other: &Self) -> bool {
         self.lock.owner.ptr_eq(&other.lock.owner)
     }
 
-    /// Returns true if this lock conflicts with another lock.
-    /// Two locks conflict if they have different owners and at least one of them is an exclusive lock.
     pub(crate) fn conflict_with(&self, other: &Self) -> bool {
         if self.same_owner_with(other) {
             return false;
@@ -60,7 +48,6 @@ impl FlockItem {
         false
     }
 
-    /// Wakes all threads that are waiting for this lock.
     pub(crate) fn wake_all(&self) {
         self.waitqueue.wake_all();
     }
@@ -75,7 +62,6 @@ impl Clone for FlockItem {
     }
 }
 
-/// When a FlockItem is dropped, it wakes all threads that are waiting for the lock.
 impl Drop for FlockItem {
     fn drop(&mut self) {
         self.waitqueue.wake_all();
@@ -91,26 +77,17 @@ impl Debug for FlockItem {
     }
 }
 
-/// Represents a list of non-POSIX file advisory locks (FLOCK).
-/// The list is used to manage file locks and resolve conflicts between them.
 pub(crate) struct FlockList {
     inner: Mutex<Vec<FlockItem>>,
 }
 
 impl FlockList {
-    /// Creates a new FlockList.
     pub(crate) fn new() -> Self {
         Self {
             inner: Mutex::new(Vec::new()),
         }
     }
 
-    /// Attempts to set a lock on the file.
-    ///
-    /// If no conflicting locks exist, the lock is set and the function returns `Ok(())`.
-    /// If a conflicting lock exists:
-    /// - If waker is not `None`, it is added to the conflicting lock's waitqueue, and the function returns `EAGAIN`.
-    /// - If waker is `None`, the function returns `EAGAIN`.
     fn try_set_lock(&self, req_lock: &FlockItem, waker: Option<&Arc<Waker>>) -> Result<()> {
         let mut list = self.inner.lock();
         if let Some(conflict_lock) = list.iter().find(|l| req_lock.conflict_with(l)) {
@@ -131,11 +108,6 @@ impl FlockList {
         }
     }
 
-    /// Sets a lock on the file.
-    ///
-    /// If no conflicting locks exist, the lock is set and the function returns `Ok(())`.
-    /// If is_nonblocking is true and a conflicting lock exists, the function returns `EAGAIN`.
-    /// Otherwise, the function waits until the lock can be acquired or until it is interrupted by a signal.
     pub(crate) fn set_lock(&self, req_lock: FlockItem, is_nonblocking: bool) -> Result<()> {
         debug!(
             "set_lock with Flock: {:?}, is_nonblocking: {}",
@@ -156,11 +128,6 @@ impl FlockList {
         }
     }
 
-    /// Unlocks the specified owner, waking any waiting threads.
-    /// If the owner is no longer valid, the lock is removed from the list.
-    /// If the owner is valid, the lock is removed from the list and all threads waiting for the lock are woken.
-    /// The function does nothing if the owner is not found in the list.
-    /// The function is called when the file is closed or the lock is released.
     pub(crate) fn unlock(&self, req_owner: &InodeHandle) {
         debug!("unlock with owner: {:?}", req_owner as *const InodeHandle);
         let mut list = self.inner.lock();
@@ -170,13 +137,13 @@ impl FlockList {
                     Arc::as_ptr(&owner) as *const InodeHandle,
                     req_owner as *const InodeHandle,
                 ) {
-                    lock.wake_all(); // Wake all threads waiting for this lock.
-                    false // Remove lock from the list.
+                    lock.wake_all();
+                    false
                 } else {
-                    true // Keep lock in the list.
+                    true
                 }
             } else {
-                false // Remove lock if the owner is no longer valid.
+                false
             }
         });
     }
@@ -188,12 +155,9 @@ impl Default for FlockList {
     }
 }
 
-/// Represents the type of a Flock - either shared or exclusive.
 #[repr(u16)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum FlockType {
-    /// Represents a shared lock.
     SharedLock = 0,
-    /// Represents an exclusive lock.
     ExclusiveLock = 1,
 }

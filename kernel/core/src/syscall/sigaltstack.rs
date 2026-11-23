@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd::{arch::cpu::context::UserContext, mm::VmIo, user::UserContextApi};
 
 use super::SyscallReturn;
@@ -90,9 +88,6 @@ fn check_new_ss_flags(ss_flags: u32) -> Result<SigStackFlags> {
 
     let status_flags = SigStackStatusFlags::from_bits_truncate(ss_flags.bits());
 
-    // Linux permits SS_ONSTACK to be set on a new stack, so we follow Linux's behavior here.
-    // However, this may be considered a BUG.
-    // Reference: <https://man7.org/linux/man-pages/man2/sigaltstack.2.html#BUGS>.
     if status_flags != SigStackStatusFlags::SS_DISABLE
         && status_flags != SigStackStatusFlags::SS_ONSTACK
         && status_flags != SigStackStatusFlags::empty()
@@ -106,14 +101,6 @@ fn check_new_ss_flags(ss_flags: u32) -> Result<SigStackFlags> {
 #[expect(unused)]
 const SIGSTKSZ: usize = 8192;
 const MINSTKSZ: usize = 2048;
-
-// The signal stack flags are categorized into two classes: attribute flags and status flags.
-//
-// They behave differently for access and modification:
-// - When retrieving flags, only user-set attribute flags are visible. Status flags
-//   are managed internally to reflect the stack's operational state.
-// - When setting flags, multiple attributes can be combined, but at most one
-//   status flag may be set.
 
 bitflags! {
     #[derive(Clone, Copy, Debug)]

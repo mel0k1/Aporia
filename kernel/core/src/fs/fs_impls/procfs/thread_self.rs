@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::format;
 
 use crate::{
@@ -12,12 +10,10 @@ use crate::{
     process::posix_thread::AsPosixThread,
 };
 
-/// Represents the inode at `/proc/self-thread`.
 pub(super) struct ThreadSelfSymOps;
 
 impl ThreadSelfSymOps {
     pub(super) fn new_inode(parent: Weak<dyn Inode>) -> Arc<dyn Inode> {
-        // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/fs/proc/thread_self.c#L50>
         ProcSym::new(Self, parent, mkmod!(a+rwx))
     }
 }

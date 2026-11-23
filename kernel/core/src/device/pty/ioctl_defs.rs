@@ -1,11 +1,7 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use crate::{
     ioc,
     util::ioctl::{InData, OutData, PassByVal},
 };
-
-// Reference: <https://elixir.bootlin.com/linux/v6.18/source/include/uapi/asm-generic/ioctls.h>
 
 pub(super) type SetPtyLock   = ioc!(TIOCSPTLCK,  b'T', 0x31, InData<i32>);
 pub(super) type GetPtyLock   = ioc!(TIOCGPTLCK,  b'T', 0x39, OutData<i32>);

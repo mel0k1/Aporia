@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use crate::{
     prelude::*,
     syscall::{SyscallReturn, setdomainname::read_uts_field},

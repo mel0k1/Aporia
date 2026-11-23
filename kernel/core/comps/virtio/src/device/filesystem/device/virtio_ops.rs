@@ -1,11 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Virtio-fs device initialization and virtqueue interrupt handling.
-//!
-//! This module connects [`FileSystemDevice`] to the generic virtio transport:
-//! it negotiates feature bits, creates high-priority and request queues, and
-//! dispatches virtqueue completions to the request queue layer.
-
 use alloc::{boxed::Box, string::ToString, sync::Arc, vec::Vec};
 use core::cmp;
 
@@ -29,7 +21,6 @@ use crate::{
 };
 
 impl FileSystemDevice {
-    /// Negotiates the feature bits supported by the virtio-fs driver.
     pub(crate) fn negotiate_features(features: u64) -> u64 {
         let device_features = FileSystemFeatures::from_bits_truncate(features);
         let supported_features = FileSystemFeatures::supported_features();
@@ -38,7 +29,6 @@ impl FileSystemDevice {
         fs_features.bits()
     }
 
-    /// Initializes one virtio-fs device from its virtio transport.
     pub(crate) fn init(mut device_transport: DeviceTransport) -> Result<(), VirtioDeviceError> {
         let config_manager = VirtioFsConfig::new_manager(device_transport.as_ref());
         let config = config_manager.read_config();
@@ -47,10 +37,6 @@ impl FileSystemDevice {
             device_transport.read_device_features(),
         ));
         let notify_supported = negotiated_features.contains(FileSystemFeatures::NOTIFICATION);
-        // Queue layout:
-        // - Queue 0: high-priority queue (always present);
-        // - Queue 1: notification queue (present only if notifications were negotiated);
-        // - Remaining queues: request queues.
         let request_queue_start_idx = if notify_supported { 2 } else { 1 };
 
         let total_queues = device_transport.num_queues();
@@ -92,16 +78,13 @@ impl FileSystemDevice {
             ))
         };
 
-        // Register completion taskless.
         device.init_completion_taskless();
 
-        // Register configuration callback.
         let mut transport = device.transport.lock();
         transport.register_cfg_callback(Box::new(|_: &TrapFrame| {
             debug!("Virtio-FS device configuration space changed");
         }))?;
 
-        // Register the callback for the high-priority queue.
         let hiprio_queue_callback = {
             let device = device.clone();
             move |_: &TrapFrame| {
@@ -114,9 +97,6 @@ impl FileSystemDevice {
             false,
         )?;
 
-        // TODO: Register the callback for the notification queue, if present.
-
-        // Register the callback for each request queue.
         for idx in 0..request_queue_count {
             let queue_index = request_queue_start_idx + idx as u16;
 

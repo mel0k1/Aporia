@@ -1,20 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! A safe Rust CPIO (the newc format) decoder.
-//!
-//! # Example
-//!
-//! ```rust
-//! use cpio_decoder::CpioDecoder;
-//! use lending_iterator::LendingIterator;
-//!
-//! let short_buffer: Vec<u8> = Vec::new();
-//! let mut decoder = CpioDecoder::new(short_buffer.as_slice());
-//! if let Some(entry_result) = decoder.next() {
-//!     println!("The entry_result is: {:?}", entry_result);
-//! }
-//! ```
-
 #![cfg_attr(not(test), no_std)]
 #![deny(unsafe_code)]
 #![feature(alloc_io)]
@@ -39,16 +22,6 @@ pub mod error;
 #[cfg(test)]
 mod test;
 
-/// A CPIO (the newc format) decoder to iterator over the results of CPIO entries.
-///
-/// "newc" is the new portable format and CRC format.
-///
-/// Each file has a 110 byte header, a variable length NULL-terminated filename,
-/// and variable length file data.
-/// A header for a filename "TRAILER!!!" indicates the end of the archive.
-///
-/// All the fields in the header are ISO 646 (approximately ASCII) strings
-/// of hexadecimal numbers, left padded, not NULL terminated.
 pub struct CpioDecoder<R> {
     reader: R,
     is_error: bool,
@@ -58,7 +31,6 @@ impl<R> CpioDecoder<R>
 where
     R: Read,
 {
-    /// Create a decoder.
     pub fn new(reader: R) -> Self {
         Self {
             reader,
@@ -74,9 +46,7 @@ where
 {
     type Item<'a> = Result<CpioEntry<'a, R>>;
 
-    /// Stops if reaches to the trailer entry or encounters an error.
     fn next(&mut self) -> Option<Self::Item<'_>> {
-        // Stop to iterate entries if encounters an error.
         if self.is_error {
             return None;
         }
@@ -84,7 +54,6 @@ where
         let entry_result = CpioEntry::new(&mut self.reader);
         match &entry_result {
             Ok(entry) => {
-                // A correct CPIO buffer must end with a trailer.
                 if entry.is_trailer() {
                     return None;
                 }
@@ -97,13 +66,11 @@ where
     }
 }
 
-/// A file entry in the CPIO.
 #[derive(Debug)]
 pub struct CpioEntry<'a, R: Read> {
     metadata: FileMetadata,
     name: String,
     reader: &'a mut R,
-    // The entry's data (plus padding) that has not been consumed yet.
     unread_data: usize,
 }
 
@@ -127,8 +94,6 @@ where
             } else {
                 FileMetadata::new(&header)?
             };
-            // The header (and file name) is padded up to a 4-byte boundary
-            // before the file data begins.
             let header_padding_len = align_up_pad(header.len() + name.len() + 1, 4);
             if header_padding_len > 0 {
                 let mut pad_buf = vec![0u8; header_padding_len];
@@ -137,7 +102,6 @@ where
 
             (metadata, name)
         };
-        // The data and its padding are unconsumed until `read_all` (or drop).
         let unread_data = metadata.size() as usize + align_up_pad(metadata.size() as usize, 4);
         Ok(Self {
             metadata,
@@ -147,17 +111,14 @@ where
         })
     }
 
-    /// The metadata of the file.
     pub fn metadata(&self) -> &FileMetadata {
         &self.metadata
     }
 
-    /// The name of the file.
     pub fn name(&self) -> &str {
         &self.name
     }
 
-    /// Read all data to the writer.
     pub fn read_all<W>(&mut self, mut writer: W) -> Result<()>
     where
         W: Write,
@@ -186,15 +147,11 @@ where
 }
 
 impl<R: Read> Drop for CpioEntry<'_, R> {
-    /// Skips any data the caller did not read, leaving the reader aligned to the
-    /// next header.
     fn drop(&mut self) {
         let mut buffer = [0u8; 512];
         while self.unread_data > 0 {
             let chunk = min(buffer.len(), self.unread_data);
             if self.reader.read_exact(&mut buffer[..chunk]).is_err() {
-                // The stream cannot be realigned. The next `next()` will observe
-                // the desynchronized stream and reports it.
                 break;
             }
             self.unread_data -= chunk;
@@ -202,7 +159,6 @@ impl<R: Read> Drop for CpioEntry<'_, R> {
     }
 }
 
-/// The metadata of the file.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct FileMetadata {
     ino: u32,
@@ -241,85 +197,65 @@ impl FileMetadata {
         Ok(metadata)
     }
 
-    /// The inode number.
     pub fn ino(&self) -> u32 {
         self.ino
     }
 
-    /// The file type.
     pub fn file_type(&self) -> FileType {
         self.type_
     }
 
-    /// The file permission mode, e.g., 0o0755.
     pub fn permission_mode(&self) -> u16 {
         self.mode
     }
 
-    /// The user ID of the file owner.
     pub fn uid(&self) -> u32 {
         self.uid
     }
 
-    /// The group ID of the file owner.
     pub fn gid(&self) -> u32 {
         self.gid
     }
 
-    /// The number of hard links.
     pub fn nlink(&self) -> u32 {
         self.nlink
     }
 
-    /// The last modification time.
     pub fn mtime(&self) -> u32 {
         self.mtime
     }
 
-    /// The size of the file in bytes.
     pub fn size(&self) -> u32 {
         self.size
     }
 
-    /// The device major ID on which the file resides.
     pub fn dev_maj(&self) -> u32 {
         self.dev_maj
     }
 
-    /// The device minor ID on which the file resides.
     pub fn dev_min(&self) -> u32 {
         self.dev_min
     }
 
-    /// The device major ID that the file represents. Only relevant for special file.
     pub fn rdev_maj(&self) -> u32 {
         self.rdev_maj
     }
 
-    /// The device minor ID that the file represents. Only relevant for special file.
     pub fn rdev_min(&self) -> u32 {
         self.rdev_min
     }
 }
 
-/// The type of the file.
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, TryFromInt)]
 pub enum FileType {
-    /// FIFO special file
     FiFo = 0o010000,
-    /// Character device
     Char = 0o020000,
-    /// Directory
     Dir = 0o040000,
-    /// Block device
     Block = 0o060000,
-    /// Regular file
     #[default]
     File = 0o100000,
-    /// Symbolic link
     Link = 0o120000,
-    /// Socket
     Socket = 0o140000,
 }
 

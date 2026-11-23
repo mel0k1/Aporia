@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Tests for the kernel slab allocation counter.
-
 use alloc::vec::Vec;
 
 use ostd::{
@@ -11,8 +7,6 @@ use ostd::{
 
 use crate::slab_cache::SlabCache;
 
-/// Allocating enough slots forces new slabs, increasing the counter by at
-/// least one page each, and freeing them releases some slabs back.
 #[ktest]
 fn slab_counter_tracks_slab_pages() {
     const NR_SLABS: usize = 20;
@@ -42,8 +36,6 @@ fn slab_counter_tracks_slab_pages() {
          before_free={after_alloc}, after_free={after_free}",
     );
 
-    // Dropping the cache releases the remaining slabs back to the frame
-    // allocator, so the counter returns to its original value.
     drop(cache);
     let after_drop = crate::load_total_slab_size();
     assert_eq!(

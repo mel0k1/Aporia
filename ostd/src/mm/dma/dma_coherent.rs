@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::{fmt::Debug, mem::ManuallyDrop};
 
 use super::util::{
@@ -16,15 +14,6 @@ use crate::{
     },
 };
 
-/// A DMA memory object that can be accessed in a cache-coherent manner.
-///
-/// The users need not manually synchronize the CPU cache and the device when
-/// accessing the memory region with [`VmReader`] and [`VmWriter`]. If the
-/// device doesn't not support cache-coherent access, the memory region will be
-/// mapped without caching enabled.
-///
-/// For whether the associated methods can be used in IRQs, refer to
-/// [module-level docs](crate::mm::dma#usage-in-irqs).
 #[derive(Debug)]
 pub struct DmaCoherent {
     inner: Inner,
@@ -39,30 +28,12 @@ enum Inner {
 }
 
 impl DmaCoherent {
-    /// Allocates a region of physical memory for coherent DMA access.
-    ///
-    /// The memory of the newly-allocated DMA buffer is initialized to zeros.
-    ///
-    /// The `is_cache_coherent` argument specifies whether the target device
-    /// that the DMA mapping is prepared for can access the main memory in a
-    /// CPU cache coherent way or not.
-    ///
-    /// This method [requires](crate::mm::dma#usage-in-irqs) the caller to
-    /// have IRQs enabled.
     pub fn alloc(nframes: usize, is_cache_coherent: bool) -> Result<Self, Error> {
         Self::alloc_uninit(nframes, is_cache_coherent).inspect(|dma| {
             dma.writer().fill_zeros(dma.size());
         })
     }
 
-    /// Allocates a region of physical memory for coherent DMA access
-    /// without initialization.
-    ///
-    /// This method is the same as [`DmaCoherent::alloc`]
-    /// except that it skips zeroing the memory of newly-allocated DMA region.
-    ///
-    /// This method [requires](crate::mm::dma#usage-in-irqs) the caller to
-    /// have IRQs enabled.
     pub fn alloc_uninit(nframes: usize, is_cache_coherent: bool) -> Result<Self, Error> {
         debug_assert!(irq::is_local_enabled());
 
@@ -81,7 +52,6 @@ impl DmaCoherent {
             (Inner::Kva(kva, paddr), paddr..paddr + nframes * PAGE_SIZE)
         };
 
-        // SAFETY: The physical address range is untyped DMA memory before `drop`.
         let map_daddr = unsafe { prepare_dma(&paddr_range) };
 
         Ok(Self {
@@ -100,7 +70,6 @@ impl Split for DmaCoherent {
         let (inner, map_daddr, is_cache_coherent) = {
             let this = ManuallyDrop::new(self);
             (
-                // SAFETY: `this.inner` will never be used or dropped later.
                 unsafe { core::ptr::read(&this.inner as *const Inner) },
                 this.map_daddr,
                 this.is_cache_coherent,
@@ -138,7 +107,6 @@ impl Split for DmaCoherent {
 
 impl Drop for DmaCoherent {
     fn drop(&mut self) {
-        // SAFETY: The physical address range was prepared in `alloc`.
         unsafe { unprepare_dma(&self.paddr_range(), self.map_daddr) };
     }
 }
@@ -173,26 +141,18 @@ impl HasVmReaderWriter for DmaCoherent {
     fn reader(&self) -> VmReader<'_, Infallible> {
         match &self.inner {
             Inner::Segment(seg) => seg.reader(),
-            Inner::Kva(kva, _) => {
-                // SAFETY:
-                //  - The memory range points to untyped memory.
-                //  - The KVA is alive during the lifetime `'_`.
-                //  - Using `VmReader` and `VmWriter` is the only way to access the KVA.
-                unsafe { VmReader::from_kernel_space(kva.start() as *const u8, kva.size()) }
-            }
+            Inner::Kva(kva, _) => unsafe {
+                VmReader::from_kernel_space(kva.start() as *const u8, kva.size())
+            },
         }
     }
 
     fn writer(&self) -> VmWriter<'_, Infallible> {
         match &self.inner {
             Inner::Segment(seg) => seg.writer(),
-            Inner::Kva(kva, _) => {
-                // SAFETY:
-                //  - The memory range points to untyped memory.
-                //  - The KVA is alive during the lifetime `'_`.
-                //  - Using `VmReader` and `VmWriter` is the only way to access the KVA.
-                unsafe { VmWriter::from_kernel_space(kva.start() as *mut u8, kva.size()) }
-            }
+            Inner::Kva(kva, _) => unsafe {
+                VmWriter::from_kernel_space(kva.start() as *mut u8, kva.size())
+            },
         }
     }
 }

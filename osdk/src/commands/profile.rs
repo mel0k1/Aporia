@@ -1,21 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! OSDK profile command implementation.
-//!
-//! The profile command is used to collect stack traces when running the target
-//! kernel in QEMU. It attaches to the GDB server initiated with [`super::run`]
-//! and collects the stack trace periodically. The collected data can be
-//! further analyzed using tools like
-//! [flame graph](https://github.com/brendangregg/FlameGraph).
-
-use inferno::flamegraph;
-
-use crate::{
-    cli::{ProfileArgs, ProfileFormat},
-    commands::util::bin_file_name,
-    util::{get_kernel_crate, get_target_directory, new_command_checked_exists},
-};
-use regex::Regex;
 use std::{
     collections::HashMap,
     fs::File,
@@ -23,6 +5,15 @@ use std::{
     path::PathBuf,
     process::Stdio,
     thread, time,
+};
+
+use inferno::flamegraph;
+use regex::Regex;
+
+use crate::{
+    cli::{ProfileArgs, ProfileFormat},
+    commands::util::bin_file_name,
+    util::{get_kernel_crate, get_target_directory, new_command_checked_exists},
 };
 
 pub fn execute_profile_command(_profile: &str, args: &ProfileArgs) {
@@ -68,7 +59,6 @@ fn do_collect_stack_traces(args: &ProfileArgs) {
     let mut profile_buffer = ProfileBuffer::new();
 
     println!("Profiling \"{}\" at \"{}\".", file_path.display(), remote);
-    // Use GDB to halt the remote, get stack traces, and resume
     let mut gdb_process = {
         let file_cmd = format!("file {}", file_path.display());
         let target_cmd = format!("target remote {}", remote);
@@ -140,7 +130,6 @@ fn do_collect_stack_traces(args: &ProfileArgs) {
 
 #[derive(Debug, Default, Deserialize, Serialize)]
 struct Profile {
-    // Index 0: capture; Index 1: CPU ID; Index 2: stack frame
     stack_traces: Vec<HashMap<u32, Vec<String>>>,
 }
 
@@ -150,7 +139,6 @@ impl Profile {
             ProfileFormat::Folded => {
                 let folded = self.fold(cpu_mask);
 
-                // Write the folded traces to the target text writer.
                 for (key, count) in folded {
                     writeln!(&mut target, "{} {}", key, count)
                         .expect("Failed to write folded output");
@@ -164,13 +152,11 @@ impl Profile {
             ProfileFormat::FlameGraph => {
                 let folded = self.fold(cpu_mask);
 
-                // Generate the flame graph folded text lines.
                 let lines = folded
                     .iter()
                     .map(|(key, count)| format!("{} {}", key, count))
                     .collect::<Vec<_>>();
 
-                // Generate the flame graph to the target SVG writer.
                 let mut opt = flamegraph::Options::default();
                 flamegraph::from_lines(&mut opt, lines.iter().map(|s| s.as_str()), target).unwrap();
             }
@@ -220,10 +206,8 @@ impl Profile {
 #[derive(Debug)]
 struct ProfileBuffer {
     cur_profile: Profile,
-    // Pre-compile regex patterns for cleaning the input.
     hex_in_pattern: Regex,
     impl_pattern: Regex,
-    // The state
     cur_cpu: Option<u32>,
 }
 
@@ -238,11 +222,7 @@ impl ProfileBuffer {
     }
 
     fn append_raw_line(&mut self, line: &str) {
-        // Lines starting with '#' are stack frames
         if !line.starts_with('#') {
-            // Otherwise it may initiate a new capture or a new CPU stack trace
-
-            // Check if this is a new CPU trace (starts with `Thread` and contains `CPU#N`)
             if line.ends_with("[running])):") || line.ends_with("[halted ])):") {
                 let cpu_id_idx = line.find("CPU#").unwrap();
                 let cpu_id = line[cpu_id_idx + 4..]
@@ -253,7 +233,6 @@ impl ProfileBuffer {
                     .unwrap();
                 self.cur_cpu = Some(cpu_id);
 
-                // if the new CPU id is already in the stack traces, start a new capture
                 match self.cur_profile.stack_traces.last() {
                     Some(capture) => {
                         if capture.contains_key(&cpu_id) {
@@ -269,26 +248,20 @@ impl ProfileBuffer {
             return;
         }
 
-        // Clean the input line
         let mut processed = line.trim().to_string();
 
-        // Remove everything between angle brackets '<...>'
         processed = Self::remove_generics(&processed);
 
-        // Remove "::impl{}" and hex addresses
         processed = self.impl_pattern.replace_all(&processed, "").to_string();
         processed = self.hex_in_pattern.replace_all(&processed, "").to_string();
 
-        // Remove unnecessary parts like "()" and "(...)"
         processed = processed.replace("(...)", "");
         processed = processed.replace("()", "");
 
-        // Split the line by spaces and expect the second part to be the function name
         let parts: Vec<&str> = processed.split_whitespace().collect();
         if parts.len() > 1 {
             let func_name = parts[1].to_string();
 
-            // Append the function name to the latest stack trace
             let current_capture = self.cur_profile.stack_traces.last_mut().unwrap();
             let cur_cpu = self.cur_cpu.unwrap();
             current_capture.entry(cur_cpu).or_default().push(func_name);

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 #![expect(non_camel_case_types)]
 
 pub(crate) use core::{Clock, timer};
@@ -46,7 +44,7 @@ impl From<Duration> for timespec_t {
     fn from(duration: Duration) -> timespec_t {
         let sec = duration.as_secs() as time_t;
         let nsec = duration.subsec_nanos() as i64;
-        debug_assert!(sec >= 0); // `nsec >= 0` always holds.
+        debug_assert!(sec >= 0);
         timespec_t { sec, nsec }
     }
 }
@@ -59,8 +57,6 @@ impl TryFrom<timespec_t> for Duration {
             return Err(errno!(EINVAL, "timesepc_t cannot be negative"));
         }
         if value.nsec >= NSEC_PER_SEC {
-            // The value of nanoseconds must be strictly less than 10^9,
-            // otherwise the value for seconds should be set.
             return Err(errno!(EINVAL, "nsec is not normalized"));
         }
 
@@ -76,12 +72,6 @@ pub(crate) struct timeval_t {
 }
 
 impl timeval_t {
-    /// Normalizes time by adding carries from microseconds to seconds.
-    ///
-    /// Some Linux system calls do this before checking the validity (e.g., the [select]
-    /// implementation).
-    ///
-    /// [select]: https://elixir.bootlin.com/linux/v6.10.5/source/fs/select.c#L716
     pub(crate) fn normalize(&self) -> Self {
         Self {
             sec: self.sec.wrapping_add(self.usec / USEC_PER_SEC),
@@ -94,7 +84,7 @@ impl From<Duration> for timeval_t {
     fn from(duration: Duration) -> timeval_t {
         let sec = duration.as_secs() as time_t;
         let usec = duration.subsec_micros() as suseconds_t;
-        debug_assert!(sec >= 0); // `usec >= 0` always holds.
+        debug_assert!(sec >= 0);
         timeval_t { sec, usec }
     }
 }
@@ -107,8 +97,6 @@ impl TryFrom<timeval_t> for Duration {
             return Err(errno!(EINVAL, "timeval_t cannot be negative"));
         }
         if timeval.usec >= USEC_PER_SEC {
-            // The value of microseconds must be strictly less than 10^6,
-            // otherwise the value for seconds should be set.
             return Err(errno!(EINVAL, "usec is not normalized"));
         }
 
@@ -119,11 +107,8 @@ impl TryFrom<timeval_t> for Duration {
     }
 }
 
-// The various flags for setting POSIX.1b interval timers:
 pub(crate) const TIMER_ABSTIME: i32 = 0x01;
 
-/// Unix time measures time by the number of seconds that have elapsed since
-/// the Unix epoch, without adjustments made due to leap seconds.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
 pub(crate) struct UnixTime {
@@ -144,7 +129,6 @@ impl From<UnixTime> for Duration {
     }
 }
 
-/// This struct is corresponding to the `itimerval` struct in Linux.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
 pub(crate) struct itimerval_t {
@@ -152,7 +136,6 @@ pub(crate) struct itimerval_t {
     pub it_value: timeval_t,
 }
 
-/// This struct is corresponding to the `itimerspec` struct in Linux.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
 pub(crate) struct itimerspec_t {
@@ -160,7 +143,6 @@ pub(crate) struct itimerspec_t {
     pub it_value: timespec_t,
 }
 
-/// This struct is corresponding to the `timezone` struct in Linux.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
 pub(crate) struct timezone_t {

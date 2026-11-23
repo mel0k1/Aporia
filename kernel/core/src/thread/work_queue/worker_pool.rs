@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 #![expect(dead_code)]
 
 use core::{
@@ -20,14 +18,8 @@ use crate::{
     thread::{AsThread, kernel_thread::ThreadOptions},
 };
 
-/// A pool of workers.
-///
-/// The `WorkerPool` maintains workers created from different CPUs, while clustering workers
-/// from the same CPU into a `LocalWorkerPool` for better management.
 pub(crate) struct WorkerPool {
     local_pools: Vec<Arc<LocalWorkerPool>>,
-    /// Monitor invokes `schedule()` in WorkerScheduler to determine whether there is a need for
-    /// adding or removing workers.
     monitor: Arc<Monitor>,
     priority: WorkPriority,
     cpu_set: CpuSet,
@@ -35,34 +27,18 @@ pub(crate) struct WorkerPool {
     work_queues: SpinLock<Vec<Arc<WorkQueue>>>,
 }
 
-/// A set of workers for a specific CPU.
 pub(crate) struct LocalWorkerPool {
     cpu_id: CpuId,
     idle_wait_queue: WaitQueue,
     parent: Weak<WorkerPool>,
-    /// A liveness check for LocalWorkerPool. The monitor periodically clears heartbeat,
-    /// and when a worker completes an item, it will be set to indicate that there is still
-    /// an active worker. If there is no heartbeats and there are still pending work items,
-    /// it suggests that more workers are needed.
     heartbeat: AtomicBool,
     workers: SpinLock<VecDeque<Arc<Worker>>>,
 }
 
-/// Schedule `Workers` for a `WorkerPool`.
-///
-/// Having an excessive number of Workers in WorkerPool may result in wastage of system
-/// resources, while a shortage of workers may lead to longer response time for workitems.
-/// A well-designed WorkerScheduler must strike a balance between resource utilization and response time.
 pub(crate) trait WorkerScheduler: Sync + Send {
-    /// Schedule workers in a worker pool. This needs to solve two problems: when to increase or decrease
-    /// workers, and how to add or remove workers to keep the number of workers in a reasonable range.
     fn schedule(&self);
 }
 
-/// The `Monitor` is responsible for monitoring the `WorkerPool` for scheduling needs.
-///
-/// Currently, it only performs a liveness check, and attempts to schedule when no workers
-/// are found processing in the pool.
 pub(crate) struct Monitor {
     worker_pool: Weak<WorkerPool>,
     bound_task: Arc<Task>,
@@ -147,8 +123,6 @@ impl WorkerPool {
     }
 
     pub(crate) fn run(&self) {
-        // Keep an initial consumer ready for every supported CPU. Enqueue can
-        // run in interrupt context and cannot create a thread on demand.
         for local_pool in &self.local_pools {
             local_pool.add_worker();
         }
@@ -200,9 +174,7 @@ impl WorkerPool {
         self.local_pool(cpu_id).wake_worker()
     }
 
-    /// Notifies an idle worker that can execute the newly queued work.
     pub(super) fn notify_work(&self, cpu_affinity: &CpuSet) {
-        // Prefer the submitting CPU to retain cache locality.
         let current_cpu = CpuId::current_racy();
         if self.cpu_set.contains(current_cpu)
             && cpu_affinity.contains(current_cpu)

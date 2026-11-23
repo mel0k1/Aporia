@@ -1,14 +1,5 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::ops::Range;
 
-/// Calculates the [difference] of two [`Range`]s, i.e., `a - b`.
-///
-/// This method will return 0, 1, or 2 ranges. All returned ranges are
-/// guaranteed to be non-empty and non-overlapping. The returned ranges
-/// will be sorted in ascending order.
-///
-/// [difference]: https://en.wikipedia.org/wiki/Set_(mathematics)#Set_difference
 pub(crate) fn range_difference<T: Ord + Copy>(
     a: &Range<T>,
     b: &Range<T>,
@@ -24,7 +15,6 @@ pub(crate) fn range_difference<T: Ord + Copy>(
     r.into_iter().filter(|v| !v.is_empty())
 }
 
-/// Calculates the intersection of two [`Range`]s.
 #[cfg(all(target_arch = "x86_64", feature = "cvm_guest"))]
 pub(crate) fn range_intersection<T: Ord + Copy>(a: &Range<T>, b: &Range<T>) -> Option<Range<T>> {
     let start = a.start.max(b.start);

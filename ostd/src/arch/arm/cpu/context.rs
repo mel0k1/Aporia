@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! CPU execution context control.
-
 use alloc::boxed::Box;
 use core::{arch::asm, fmt::Debug};
 
@@ -17,7 +13,6 @@ use crate::{
     user::{ReturnReason, UserContextApi, UserContextApiInternal, UserModeHooks},
 };
 
-/// Userspace CPU context, including general-purpose registers and exception information.
 #[repr(C)]
 #[derive(Clone, Debug, Default)]
 pub struct UserContext {
@@ -25,7 +20,6 @@ pub struct UserContext {
     exception: Option<CpuException>,
 }
 
-/// General registers.
 #[expect(missing_docs)]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -59,58 +53,28 @@ pub struct GeneralRegs {
     pub x27: usize,
     pub x28: usize,
     pub x29: usize,
-    pub __reserved: usize, // for alignment
+    pub __reserved: usize,
     pub x30: usize,
-    // put here deliberately for ease of asm
     pub x0: usize,
-    // x31 means special
 }
 
-/// ARM CPU exceptions.
-///
-/// Every enum variant corresponds to one exception defined by the ARM
-/// architecture.
 #[derive(Clone, Debug)]
 pub enum CpuException {
-    /// Unknown reason.
     Unknown,
-    /// 000001 - Trapped WFI or WFE instruction execution.
     WfiInstruction,
-    /// 000111 - Access to Advanced SIMD or floating-point functionality.
     FpuInstruction,
-    /// 001110 - Illegal Execution state.
     IllegalState,
-    /// 010101 - SVC instruction execution in AArch64 state.
     SvcInstruction,
-    /// 011000 - Trapped MSR, MRS, or System instruction execution.
     SystemInstruction,
-    /// 10000x - Instruction Abort from a lower or the same Execution level.
-    InstructionAbort {
-        /// The fault address that caused the exception.
-        address: usize,
-    },
-    /// 100010 - PC alignment fault.
+    InstructionAbort { address: usize },
     PcAlignmentFault,
-    /// 10010x - Data Abort from a lower or the same Exception level.
-    DataAbort {
-        /// Whether the exception was generated on a write instruction.
-        is_write: bool,
-        /// The fault address that caused the exception.
-        address: usize,
-    },
-    /// 100110 - SP alignment fault.
+    DataAbort { is_write: bool, address: usize },
     SpAlignmentFault,
-    /// 101100 - Trapped floating-point exception taken from AArch64 state.
     FpuException,
-    /// 101111 - SError interrupt.
     SErrorInterrupt,
-    /// 11000x - Breakpoint exception from a lower or the same Exception level.
     Breakpoint,
-    /// 11001x - Software Step exception from a lower or the same Exception level.
     SoftwareStep,
-    /// 11010x - Watchpoint exception from a lower or the same Exception level.
     Watchpoint,
-    /// 111100 - BRK instruction execution in AArch64 state.
     BrkInstruction,
 }
 
@@ -125,33 +89,25 @@ pub(in crate::arch) enum CpuTrap {
 impl CpuTrap {
     pub(in crate::arch) fn new(trap_num: usize) -> Option<Self> {
         match trap_num >> 16 {
-            // 0: Synchronous
             0 => (),
-            // 1: IRQ or vIRQ
             1 => return Some(Self::Interrupt),
-            // 2: FIQ or vFIQ
             2 => return Some(Self::FastInterrupt),
-            // 3: SError or vSError
             3 => return Some(Self::SError),
 
             _ => return None,
         }
 
         let esr_el1: usize;
-        // SAFETY: It is safe to read the Exception Syndrome Register (ESR).
         unsafe { asm!("mrs {}, esr_el1", out(reg) esr_el1) };
 
         fn fault_address() -> usize {
             let far_el1;
-            // SAFETY: It is safe to read the Fault Address Register (FAR).
             unsafe { asm!("mrs {}, far_el1", out(reg) far_el1) };
             far_el1
         }
 
-        // WnR, bit [6]: Write not Read.
         const ESR_WNR: usize = 1 << 6;
 
-        // EC, bits[31:26]: The Exception class field.
         let exception = match esr_el1 >> 26 {
             0b000001 => CpuException::WfiInstruction,
             0b000111 => CpuException::FpuInstruction,
@@ -182,53 +138,32 @@ impl CpuTrap {
 }
 
 impl UserContext {
-    // Methods shared across all architectures (i.e., general registers and exceptions).
-
-    /// Returns a reference to the general registers.
     pub fn general_regs(&self) -> &GeneralRegs {
         &self.user_context.general
     }
 
-    /// Returns a mutable reference to the general registers.
     pub fn general_regs_mut(&mut self) -> &mut GeneralRegs {
         &mut self.user_context.general
     }
 
-    /// Takes the CPU exception out.
     pub fn take_exception(&mut self) -> Option<CpuException> {
         self.exception.take()
     }
 
-    // Architecture-specific methods.
-
-    /// Gets the value of the thread-local storage pointer.
     pub fn tls_pointer(&self) -> usize {
         self.user_context.tpidr
     }
 
-    /// Sets the value of the thread-local storage pointer.
     pub fn set_tls_pointer(&mut self, tls: usize) {
         self.user_context.tpidr = tls;
     }
 
-    /// Gets the value of the process state (PSTATE) register.
     pub fn process_state(&self) -> usize {
         self.user_context.spsr
     }
 
-    /// Sets the value of the process state (PSTATE) register.
-    ///
-    /// We only allow the setting or clearing of arithmetic condition flags and states for Software
-    /// Step and Illegal Execution. Any other bits will be ignored and will remain unchanged.
     pub fn set_process_state(&mut self, pstate: usize) {
-        // Be careful. We can only allow bits to be set that won't affect soundness.
-        const USER_MODIFIABLE_PSTATE: usize =
-            // Condition flags: Negative (N), Zero (Z), Carry (C), Overflow (V).
-            (0b1111 << 28)
-            // Software Step (SS) state.
-            | (1 << 21)
-            // Illegal Execution (IL) state.
-            | (1 << 20);
+        const USER_MODIFIABLE_PSTATE: usize = (0b1111 << 28) | (1 << 21) | (1 << 20);
 
         self.user_context.spsr =
             (self.user_context.spsr & !USER_MODIFIABLE_PSTATE) | (pstate & USER_MODIFIABLE_PSTATE);
@@ -364,20 +299,14 @@ cpu_context_impl_getter_setter!(
     [x30, set_x30]
 );
 
-/// The FPU context of user task.
 #[derive(Clone, Debug)]
 pub struct FpuContext {
     fpsimd: Box<FpSimdContext>,
 }
 
 impl FpuContext {
-    // TODO: This is for Linux compatibility and is Linux-specific.
-    // It should be defined outside of OSTD.
-    //
-    // Reference: <https://elixir.bootlin.com/linux/v7.0/source/arch/arm64/include/uapi/asm/sigcontext.h#L75>
     const FPSIMD_MAGIC: u32 = 0x46508001;
 
-    /// Creates a new FPU context.
     pub fn new() -> Self {
         let mut fpsimd = Box::new(FpSimdContext::default());
 
@@ -387,25 +316,18 @@ impl FpuContext {
         Self { fpsimd }
     }
 
-    /// Saves CPU's current FPU context to this instance.
     pub fn save(&mut self) {
-        // SAFETY: It is safe to save FPU registers.
         unsafe { save_fpsimd_context(self.fpsimd.as_mut()) };
     }
 
-    /// Loads CPU's FPU context from this instance.
     pub fn load(&self) {
-        // SAFETY: It is safe to load FPU registers, as the FPU state does not affect the kernel's
-        // memory safety.
         unsafe { load_fpsimd_context(self.fpsimd.as_ref()) };
     }
 
-    /// Returns the FPU context as a byte slice.
     pub fn as_bytes(&self) -> &[u8] {
         self.fpsimd.as_bytes()
     }
 
-    /// Returns the FPU context as a mutable byte slice.
     pub fn as_bytes_mut(&mut self) -> &mut [u8] {
         self.fpsimd.as_mut_bytes()
     }
@@ -417,15 +339,12 @@ impl Default for FpuContext {
     }
 }
 
-/// Float-point and SIMD context.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
 struct FpSimdContext {
-    // Header.
     magic: u32,
     size: u32,
 
-    // Float-point and SMID registers.
     fpsr: u32,
     fpcr: u32,
     vregs: [u128; 32],

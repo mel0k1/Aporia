@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use aster_bigtcp::time::Duration;
 
 use super::options::CongestionControl;
@@ -22,7 +20,6 @@ pub(super) struct TcpOptionSet {
     receive_inq: bool,
 }
 
-// Reference: <https://elixir.bootlin.com/linux/v6.13/source/include/net/tcp.h>
 pub(super) const DEFAULT_MAXSEG: u32 = 536;
 pub(super) const DEFAULT_KEEP_IDLE: u32 = 7200;
 pub(super) const DEFAULT_KEEP_INTVL: u32 = 75;
@@ -54,16 +51,13 @@ impl Default for TcpOptionSet {
     }
 }
 
-/// Initial RTO value
 const TCP_TIMEOUT_INIT: Duration = Duration::from_secs(1);
 const TCP_RTO_MAX: Duration = Duration::from_secs(120);
 
-/// The number of retransmits.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Retrans(u8);
 
 impl Retrans {
-    /// Converts seconds to retransmits.
     pub(super) const fn from_secs(seconds: u32) -> Self {
         if seconds == 0 {
             return Self(0);
@@ -86,7 +80,6 @@ impl Retrans {
         Self(res)
     }
 
-    /// Converts retransmits to seconds.
     pub(super) const fn to_secs(self) -> u32 {
         let mut retrans = self.0;
 

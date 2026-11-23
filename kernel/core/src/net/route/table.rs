@@ -1,16 +1,6 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::{RouteAddressFamily, RouteEntry, RouteLookupKey, RouteMetric};
 use crate::prelude::*;
 
-/// A table manages multiple routes.
-///
-/// Routes should be organized in a prefix tree and selected by longest-prefix match.
-//
-// FIXME: The Rust ecosystem currently lacks a suitable trie-tree implementation,
-// so entries are stored in a `BTreeMap`.
-// Its key is used only for deduplication.
-// Replace it with a trie tree when a suitable implementation becomes available.
 pub(super) struct RouteTable<A: RouteAddressFamily> {
     entries: BTreeMap<(A::Cidr, RouteMetric), RouteEntry<A>>,
 }

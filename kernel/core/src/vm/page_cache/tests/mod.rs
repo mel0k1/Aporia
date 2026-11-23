@@ -1,8 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Regression tests for the page-cache subsystem in the
-//! concurrency scenarios.
-
 use alloc::vec;
 
 use ostd::{
@@ -16,14 +11,11 @@ use crate::{prelude::*, thread::kernel_thread::ThreadOptions};
 
 mod utils;
 
-/// Creates a page cache with `num_pages` backend pages for test scenarios.
 fn new_backend_page_cache(backend: &Arc<MockPageCacheBackend>, num_pages: usize) -> PageCache {
     let backend_dyn: Arc<dyn PageCacheBackend> = backend.clone();
     PageCache::new_with_backend(num_pages * PAGE_SIZE, Arc::downgrade(&backend_dyn)).unwrap()
 }
 
-/// Creates a locked page cache that models the inode-level lock held by
-/// filesystem callers before touching the page cache.
 fn new_locked_backend_page_cache(
     backend: &Arc<MockPageCacheBackend>,
     num_pages: usize,
@@ -31,12 +23,6 @@ fn new_locked_backend_page_cache(
     Arc::new(RwMutex::new(new_backend_page_cache(backend, num_pages)))
 }
 
-/// Simulates stores through a shared writable VMO mapping.
-///
-/// A store page fault first commits page 0 for shared writes, which marks an
-/// up-to-date backend page dirty. The actual byte copy then writes the
-/// committed frame directly, matching mapped-memory stores without routing
-/// through the page-cache write API.
 fn write_vmo_bytes(vmo: &Vmo, bytes: &[u8]) {
     assert!(!bytes.is_empty());
     assert!(bytes.len() <= PAGE_SIZE);
@@ -49,8 +35,6 @@ fn write_vmo_bytes(vmo: &Vmo, bytes: &[u8]) {
     assert_eq!(writer.write(&mut reader), bytes.len());
 }
 
-/// Serializes a cold read and a later overwrite with the caller-provided
-/// buffered-I/O lock required by the page-cache synchronization model.
 #[ktest]
 fn concurrent_read_and_write() {
     let backend = MockPageCacheBackend::new(1);
@@ -65,8 +49,6 @@ fn concurrent_read_and_write() {
     let writer_started = Arc::new(Mutex::new(false));
     let writer_finished = Arc::new(Mutex::new(false));
 
-    // Start a cold-page read and hold backend completion so the read keeps the
-    // caller-provided buffered-I/O lock while the writer attempts to enter.
     let read_thread = {
         let page_cache = page_cache.clone();
         let observed_read_result = observed_read_result.clone();
@@ -82,10 +64,6 @@ fn concurrent_read_and_write() {
     backend.wait_for_deferred_bios(IoKind::Read, 1);
     assert_eq!(backend.read_count(0), 1);
 
-    // Issue a full-page overwrite against the same range. The page-cache layer
-    // relies on this higher-level lock for buffered read/write ordering, so the
-    // writer must not enter `write_bytes()` until the read-side critical section
-    // has completed.
     let write_thread = {
         let page_cache = page_cache.clone();
         let writer_started = writer_started.clone();
@@ -103,8 +81,6 @@ fn concurrent_read_and_write() {
     wait_until(|| *writer_started.lock());
     assert!(!*writer_finished.lock());
 
-    // Finish the backend read. The serialized reader observes the persisted old
-    // bytes, and the later writer's overwrite becomes visible afterwards.
     assert!(backend.complete_next_deferred_bio(IoKind::Read, true));
     read_thread.join();
     write_thread.join();
@@ -118,8 +94,6 @@ fn concurrent_read_and_write() {
     assert_eq!(read_buffer, new_pattern);
 }
 
-/// Flushes a dirty page while another task re-dirties it, so writeback reaches
-/// the backend and the newest dirty bytes are not silently lost.
 #[ktest]
 fn concurrent_write_and_flush() {
     let backend = MockPageCacheBackend::new(1);
@@ -137,8 +111,6 @@ fn concurrent_write_and_flush() {
     let flush_result = Arc::new(Mutex::new(None::<Result<()>>));
     let writer_finished = Arc::new(Mutex::new(false));
 
-    // Start writeback and pin it in the deferred state so a concurrent writer
-    // can dirty the page again before the first flush completes.
     let flush_thread = {
         let page_cache = page_cache.clone();
         let flush_result = flush_result.clone();
@@ -150,8 +122,6 @@ fn concurrent_write_and_flush() {
 
     backend.wait_for_deferred_bios(IoKind::Write, 1);
 
-    // Re-dirty the same page while the first writeback is in flight. A later
-    // flush must persist this newest version instead of silently dropping it.
     let writer_thread = {
         let vmo = vmo.clone();
         let writer_finished = writer_finished.clone();
@@ -166,8 +136,6 @@ fn concurrent_write_and_flush() {
     writer_thread.join();
     assert!(*writer_finished.lock());
 
-    // Complete the first writeback, then flush again and confirm the backend
-    // eventually stores the latest dirty bytes.
     assert!(backend.complete_next_deferred_bio(IoKind::Write, true));
     flush_thread.join();
     assert!(flush_result.lock().take().unwrap().is_ok());
@@ -182,8 +150,6 @@ fn concurrent_write_and_flush() {
     assert_eq!(backend.persisted_page_bytes(0), latest_dirty_pattern);
 }
 
-/// Re-dirties a page while another task runs `flush_range()` and
-/// `evict_range()`, ensuring the newest dirty page is kept cached.
 #[ktest]
 fn concurrent_write_and_evict() {
     let backend = MockPageCacheBackend::new(1);
@@ -198,9 +164,6 @@ fn concurrent_write_and_evict() {
         .write_bytes(0, &first_dirty_pattern)
         .unwrap();
 
-    // Race a flush+evict sequence against a new writer after writeback has
-    // already started. This checks that a page re-dirtied before eviction
-    // stays cached instead of being silently dropped.
     let flush_and_evict_result = Arc::new(Mutex::new(None::<Result<()>>));
     let flush_and_evict_thread = {
         let page_cache = page_cache.clone();
@@ -217,8 +180,6 @@ fn concurrent_write_and_evict() {
 
     backend.wait_for_deferred_bios(IoKind::Write, 1);
 
-    // Dirty the page again before the first writeback completes. Eviction
-    // should leave this newest dirty page resident in cache.
     let writer_thread = {
         let vmo = vmo.clone();
         let latest_dirty_pattern = latest_dirty_pattern.clone();
@@ -230,8 +191,6 @@ fn concurrent_write_and_evict() {
 
     writer_thread.join();
 
-    // After the first writeback finishes, the flush+evict path should return,
-    // but the re-dirtied page must still be readable from cache.
     assert!(backend.complete_next_deferred_bio(IoKind::Write, true));
     flush_and_evict_thread.join();
     assert!(flush_and_evict_result.lock().take().unwrap().is_ok());
@@ -247,8 +206,6 @@ fn concurrent_write_and_evict() {
     assert_eq!(backend.persisted_page_bytes(0), latest_dirty_pattern);
 }
 
-/// Commits a page while a concurrent truncate shrinks the page cache, ensuring
-/// pages beyond the new size stay inaccessible.
 #[ktest]
 fn concurrent_commit_and_truncate() {
     let backend = MockPageCacheBackend::new(2);
@@ -262,8 +219,6 @@ fn concurrent_commit_and_truncate() {
     let resize_started = Arc::new(Mutex::new(false));
     let resize_finished = Arc::new(Mutex::new(false));
 
-    // Commit page 1 and pause its backend read so truncate can shrink the VMO
-    // while that commit is still waiting for initialization to finish.
     let commit_thread = {
         let vmo = vmo.clone();
         let commit_second_page_result = commit_second_page_result.clone();
@@ -292,8 +247,6 @@ fn concurrent_commit_and_truncate() {
     wait_until(|| *resize_started.lock());
     assert!(!*resize_finished.lock());
 
-    // Let the blocked commit finish, then verify the truncated page is no
-    // longer accessible through subsequent VMO operations.
     assert!(backend.complete_next_deferred_bio(IoKind::Read, true));
     commit_thread.join();
     resize_thread.join();
@@ -315,8 +268,6 @@ fn concurrent_commit_and_truncate() {
     assert_eq!(read_buffer, vec![0; PAGE_SIZE]);
 }
 
-/// Faults the same cold page through `try_commit_page()` and `commit_on()`,
-/// verifying that one backend read initializes the page for all waiters.
 #[ktest]
 fn concurrent_page_faults() {
     let backend = MockPageCacheBackend::new(1);
@@ -325,8 +276,6 @@ fn concurrent_page_faults() {
 
     let page_cache = new_backend_page_cache(&backend, 1);
     let vmo = page_cache.as_vmo().clone();
-    // The first page-fault style probe should report that backend I/O is
-    // needed because the page has not been committed yet.
     assert!(matches!(
         vmo.try_commit_page(0, VmoMapMode::SharedRead),
         Err(VmoCommitError::NeedIo { index: 0 })
@@ -335,8 +284,6 @@ fn concurrent_page_faults() {
     let first_commit_finished = Arc::new(Mutex::new(false));
     let second_commit_finished = Arc::new(Mutex::new(false));
 
-    // Start one blocking commit to issue the backend read. Other faulting
-    // callers for the same page should observe the in-progress initialization.
     let first_thread = {
         let vmo = vmo.clone();
         let first_commit_finished = first_commit_finished.clone();
@@ -353,8 +300,6 @@ fn concurrent_page_faults() {
         other => panic!("unexpected page-fault state: {other:?}"),
     }
 
-    // A second blocking commit should join the same initialization instead of
-    // submitting a duplicate read BIO for the same page.
     let second_thread = {
         let vmo = vmo.clone();
         let second_commit_finished = second_commit_finished.clone();
@@ -369,8 +314,6 @@ fn concurrent_page_faults() {
     assert!(!*first_commit_finished.lock());
     assert!(!*second_commit_finished.lock());
 
-    // Release the single deferred read and check that both waiters complete
-    // and observe the initialized page contents.
     assert!(backend.complete_next_deferred_bio(IoKind::Read, true));
     first_thread.join();
     second_thread.join();
@@ -385,8 +328,6 @@ fn concurrent_page_faults() {
     assert_eq!(read_buffer, vec![0x6b; PAGE_SIZE]);
 }
 
-/// Keeps backend reads failing for one page and checks both the initial
-/// committer and a later waiter return `EIO` instead of livelocking.
 #[ktest]
 fn persistent_backend_errors() {
     let backend = MockPageCacheBackend::new(1);
@@ -397,9 +338,6 @@ fn persistent_backend_errors() {
     let first_error = Arc::new(Mutex::new(None::<Errno>));
     let second_error = Arc::new(Mutex::new(None::<Errno>));
 
-    // Start one commit that blocks on the backend read. A second commit for
-    // the same page then goes through `ensure_init()` and should also return
-    // promptly once initialization fails.
     let first_thread = {
         let vmo = vmo.clone();
         let first_error = first_error.clone();
@@ -428,8 +366,6 @@ fn persistent_backend_errors() {
         .spawn()
     };
 
-    // Fail the first backend read, then fail the retry as well. This checks
-    // that both callers get `EIO` back rather than spinning forever.
     assert!(backend.complete_next_deferred_bio(IoKind::Read, false));
     backend.wait_for_deferred_bios(IoKind::Read, 1);
     assert!(backend.complete_next_deferred_bio(IoKind::Read, false));
@@ -442,8 +378,6 @@ fn persistent_backend_errors() {
     assert_eq!(backend.read_count(0), 2);
 }
 
-/// Delays BIO completion on demand to exercise shared read I/O, writeback
-/// hand-off, and waiting for `is_writing_back` to clear.
 #[ktest]
 fn delayed_io_completion() {
     let backend = MockPageCacheBackend::new(1);
@@ -460,8 +394,6 @@ fn delayed_io_completion() {
     let first_read_result = Arc::new(Mutex::new(None::<Vec<u8>>));
     let second_read_result = Arc::new(Mutex::new(None::<Vec<u8>>));
 
-    // Start two cold-page readers while read completion is delayed. They
-    // should share one backend read and both see the initialized page.
     let first_reader = {
         let page_cache = page_cache.clone();
         let first_read_result = first_read_result.clone();
@@ -493,8 +425,6 @@ fn delayed_io_completion() {
     assert_eq!(&*first_read_result.lock(), &Some(persisted_pattern.clone()));
     assert_eq!(&*second_read_result.lock(), &Some(persisted_pattern));
 
-    // Start one deferred writeback, then dirty the page again before it
-    // completes so a second flush must wait for `is_writing_back` to clear.
     page_cache
         .write()
         .write_bytes(0, &first_dirty_pattern)
@@ -535,8 +465,6 @@ fn delayed_io_completion() {
     assert_eq!(backend.write_count(0), 1);
     assert!(!*second_flush_finished.lock());
 
-    // Complete the first and second writebacks one by one. This exercises the
-    // ownership hand-off in async writeback and the wait-for-writeback path.
     assert!(backend.complete_next_deferred_bio(IoKind::Write, true));
     backend.wait_for_deferred_bios(IoKind::Write, 1);
     assert_eq!(backend.write_count(0), 2);

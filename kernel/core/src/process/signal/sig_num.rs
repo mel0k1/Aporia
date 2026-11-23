@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 #![expect(dead_code)]
 
 use core::sync::atomic::{AtomicU8, Ordering};
@@ -24,7 +22,6 @@ impl TryFrom<u8> for SigNum {
 }
 
 impl SigNum {
-    /// Caller must ensure the sig_num is valid. Otherwise, use try_from will check sig_num and does not panic.
     pub(crate) const fn from_u8(sig_num: u8) -> Self {
         if sig_num > MAX_RT_SIG_NUM || sig_num < MIN_STD_SIG_NUM {
             panic!("invalid signal number")
@@ -82,29 +79,21 @@ impl SigNum {
     }
 }
 
-/// Atomic signal number.
-///
-/// This struct represents a signal number and is different from [SigNum]
-/// in that it allows for an empty signal number.
 pub(crate) struct AtomicSigNum(AtomicU8);
 
 impl AtomicSigNum {
-    /// Creates a new empty atomic signal number
     pub(crate) const fn new_empty() -> Self {
         Self(AtomicU8::new(0))
     }
 
-    /// Creates a new signal number with the specified value
     pub(crate) const fn new(sig_num: SigNum) -> Self {
         Self(AtomicU8::new(sig_num.as_u8()))
     }
 
-    /// Determines whether the signal number is empty
     pub(crate) fn is_empty(&self) -> bool {
         self.0.load(Ordering::Relaxed) == 0
     }
 
-    /// Returns the corresponding [`SigNum`]
     pub(crate) fn as_sig_num(&self) -> Option<SigNum> {
         let sig_num = self.0.load(Ordering::Relaxed);
         if sig_num == 0 {
@@ -114,12 +103,10 @@ impl AtomicSigNum {
         Some(SigNum::from_u8(sig_num))
     }
 
-    /// Sets the new `sig_num`
     pub(crate) fn set(&self, sig_num: SigNum) {
         self.0.store(sig_num.as_u8(), Ordering::Relaxed)
     }
 
-    /// Clears the signal number
     pub(crate) fn clear(&self) {
         self.0.store(0, Ordering::Relaxed)
     }

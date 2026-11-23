@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::ops::Range;
 
 use crate::{
@@ -10,14 +8,11 @@ use crate::{
 
 const PRIVILEGED_PORTS: Range<u16> = 0..1024;
 
-/// Checks if the port is privileged and, if so, whether the thread is allowed to bind to it.
 pub(crate) fn check_port_privilege(port: u16) -> Result<()> {
     if !PRIVILEGED_PORTS.contains(&port) {
         return Ok(());
     }
 
-    // This should be checked under the network namespace's owner user namespace, if we later
-    // support those namespaces.
     let thread = current_thread!();
     let posix_thread = thread.as_posix_thread().unwrap();
     if lsm_hooks::on_capable(lsm_hooks::CapableContext::new(

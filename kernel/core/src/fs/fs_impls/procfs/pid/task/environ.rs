@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::TidDirOps;
 use crate::{
     fs::{
@@ -11,12 +9,10 @@ use crate::{
     thread::Thread,
 };
 
-/// Represents the inode at `/proc/[pid]/task/[tid]/environ` (and also `/proc/[pid]/environ`).
 pub(super) struct EnvironFileOps(TidDirOps);
 
 impl EnvironFileOps {
     pub(super) fn new_inode(dir: &TidDirOps, parent: Weak<dyn Inode>) -> Arc<dyn Inode> {
-        // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/fs/proc/base.c#L3324>
         ProcFile::new(Self(dir.clone()), parent, mkmod!(u+r))
     }
 }
@@ -33,8 +29,6 @@ impl ProcFileOps for EnvironFileOps {
 
         let vmar_guard = process.lock_vmar();
         let Some(init_stack_reader) = vmar_guard.init_stack_reader() else {
-            // According to Linux behavior, return an empty string
-            // if the process is a zombie process.
             return Ok(0);
         };
         init_stack_reader.envp(offset, writer)

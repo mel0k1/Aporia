@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use crate::{
     events::IoEvents,
     net::socket::{
@@ -16,14 +14,6 @@ use crate::{
 
 pub(super) struct InitStream {
     bound_port: Option<BoundPort>,
-    /// Indicates if the last `connect()` is considered to be done.
-    ///
-    /// For vsock, a failed `connect()` attempt is never considered completed, so `is_connect_done`
-    /// remains `false` permanently. As a result, the socket becomes unusable and cannot be
-    /// connected again.
-    ///
-    /// This field is still kept for symmetry with IP sockets, where a second `connect()` is
-    /// allowed, and to leave room for future support for it.
     is_connect_done: bool,
     last_connect_error: Option<Error>,
 }
@@ -62,8 +52,6 @@ impl InitStream {
             check_port_privilege(port)?;
         }
 
-        // Linux does not support `SO_REUSEADDR`/`SO_REUSEPORT` for `AF_VSOCK`. Therefore, port
-        // binding is always exclusive.
         self.bound_port = Some(BoundPort::new_exclusive(addr)?);
         Ok(())
     }
@@ -122,8 +110,6 @@ impl InitStream {
 
     pub(super) fn shutdown(&self, _cmd: SockShutdownCmd) -> Result<()> {
         if !self.is_connect_done {
-            // There is no need to do anything because the socket is permanently unusable. However,
-            // returning `Ok(())` mimics the Linux behavior.
             return Ok(());
         }
 
@@ -150,7 +136,6 @@ impl InitStream {
         if self.last_connect_error.is_some() {
             events |= IoEvents::ERR;
         } else if !self.is_connect_done {
-            // This socket is permanently unusable.
             events = IoEvents::IN | IoEvents::RDHUP | IoEvents::HUP;
         }
         events

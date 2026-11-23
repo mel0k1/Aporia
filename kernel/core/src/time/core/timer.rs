@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::{
     collections::BinaryHeap,
     sync::{Arc, Weak},
@@ -11,21 +9,12 @@ use ostd::sync::{LocalIrqDisabled, SpinLock, SpinLockGuard};
 
 use super::Clock;
 
-/// A timeout, represented in one of the two ways.
 #[derive(Clone, Debug)]
 pub(crate) enum Timeout {
-    /// The timeout is reached _after_ the `Duration` time is elapsed.
     After(Duration),
-    /// The timeout is reached _when_ the clock's time is equal to `Duration`.
     When(Duration),
 }
 
-/// A timer with periodic functionality.
-///
-/// Setting the timer will trigger a callback function upon expiration of
-/// the set time. To enable its periodic functionality, users should set
-/// its `interval` field with [`TimerGuard::set_interval`]. By doing this,
-/// the timer will use the interval time to configure a new timing after expiration.
 pub(crate) struct Timer<F: ?Sized = dyn TimerFn> {
     inner: SpinLock<TimerInner>,
     timer_manager: Arc<TimerManager>,
@@ -34,21 +23,11 @@ pub(crate) struct Timer<F: ?Sized = dyn TimerFn> {
 
 #[derive(Default)]
 struct TimerInner {
-    // A `None` denotes that the timer has been cancelled.
     expired_time: Option<Duration>,
-    // A `Duration::ZERO` denotes that the timer won't repeat.
     interval: Duration,
 }
 
 impl<F: TimerFn> Timer<F> {
-    /// Creates a timer instance from a [`TimerManager`].
-    ///
-    /// This timer will be managed by the [`TimerManager`].
-    ///
-    /// Note that if the callback instructions involves sleep, users should put these instructions
-    /// into something like [`WorkQueue`] to avoid sleeping during system timer interruptions.
-    ///
-    /// [`WorkQueue`]: crate::thread::work_queue::WorkQueue
     fn new(registered_callback: F, timer_manager: Arc<TimerManager>) -> Arc<Self> {
         Arc::new(Self {
             inner: SpinLock::new(TimerInner::default()),
@@ -57,14 +36,12 @@ impl<F: TimerFn> Timer<F> {
         })
     }
 
-    /// Returns a reference to the function that will be called when the timer expires.
     pub(crate) fn func(&self) -> &F {
         &self.registered_callback
     }
 }
 
 impl<F: ?Sized + TimerFn> Timer<F> {
-    /// Locks the timer and returns a [`TimerGuard`] for exclusive access.
     pub(crate) fn lock(self: &Arc<Self>) -> TimerGuard<'_, F> {
         TimerGuard {
             inner: self.inner.disable_irq().lock(),
@@ -72,36 +49,23 @@ impl<F: ?Sized + TimerFn> Timer<F> {
         }
     }
 
-    /// Returns a reference to the [`TimerManager`] which manages
-    /// the current timer.
     pub(crate) fn timer_manager(&self) -> &Arc<TimerManager> {
         &self.timer_manager
     }
 }
 
-/// A guard that provides exclusive access to a `Timer`.
 pub(crate) struct TimerGuard<'a, F: ?Sized = dyn TimerFn> {
     inner: SpinLockGuard<'a, TimerInner, LocalIrqDisabled>,
     timer: &'a Arc<Timer<F>>,
 }
 
 impl<F: TimerFn> TimerGuard<'_, F> {
-    /// Sets the timer with a timeout.
-    ///
-    /// The registered callback function of this timer will be invoked
-    /// when reaching timeout. If the timer has a valid interval, this timer
-    /// will be set again with the interval when reaching timeout.
     pub(crate) fn set_timeout(&mut self, timeout: Timeout) {
         self.set_timeout_impl(timeout, Arc::downgrade(self.timer) as _);
     }
 }
 
 impl TimerGuard<'_> {
-    /// Sets the timer with a timeout.
-    ///
-    /// The registered callback function of this timer will be invoked
-    /// when reaching timeout. If the timer has a valid interval, this timer
-    /// will be set again with the interval when reaching timeout.
     pub(crate) fn set_timeout(&mut self, timeout: Timeout) {
         self.set_timeout_impl(timeout, Arc::downgrade(self.timer));
     }
@@ -128,47 +92,30 @@ impl<F: ?Sized + TimerFn> TimerGuard<'_, F> {
 }
 
 impl<F: ?Sized + TimerFn> TimerGuard<'_, F> {
-    /// Sets the interval time for this timer.
-    ///
-    /// The timer will be reset with the interval time upon expiration.
     pub(crate) fn set_interval(&mut self, interval: Duration) {
         self.inner.interval = interval;
     }
 
-    /// Cancels the timer.
-    ///
-    /// Once cancelled, the timer will not be triggered again.
     pub(crate) fn cancel(&mut self) {
         self.inner.expired_time = None;
     }
 
-    /// Returns the current expired time of this timer.
-    ///
-    /// If the timer has not been set, this method
-    /// will return a [`Duration::ZERO`].
     pub(crate) fn expired_time(&self) -> Duration {
         self.inner.expired_time.unwrap_or(Duration::ZERO)
     }
 
-    /// Returns the remain time to expiration of this timer.
-    ///
-    /// If the timer has not been set, this method
-    /// will return a [`Duration::ZERO`].
     pub(crate) fn remain(&self) -> Duration {
         let now = self.timer.timer_manager.clock.read_time();
         let expired_time = self.expired_time();
         expired_time.saturating_sub(now)
     }
 
-    /// Returns the interval time of the current timer.
     pub(crate) fn interval(&self) -> Duration {
         self.inner.interval
     }
 }
 
-/// A function that will be called when a timer expires.
 pub(crate) trait TimerFn: Send + Sync + Any {
-    /// Calls the function.
     fn call(&self, guard: TimerGuard);
 }
 
@@ -181,19 +128,12 @@ where
     }
 }
 
-/// A manager that can be used to create timers and manage their expiration.
-///
-/// It holds a [`Clock`] and can create [`Timer`]s based on this clock.
-///
-/// These created [`Timer`]s will hold an [`Arc`] pointer to this manager, hence this
-/// manager will be actually dropped after all the created timers have been dropped.
 pub(crate) struct TimerManager {
     clock: Arc<dyn Clock>,
     timer_callbacks: SpinLock<BinaryHeap<TimerCallback>>,
 }
 
 impl TimerManager {
-    /// Creates a `TimerManager` instance from a clock.
     pub(crate) fn new(clock: Arc<dyn Clock>) -> Arc<Self> {
         Arc::new(Self {
             clock,
@@ -201,12 +141,10 @@ impl TimerManager {
         })
     }
 
-    /// Returns the clock associated with this timer manager.
     pub(crate) fn clock(&self) -> &Arc<dyn Clock> {
         &self.clock
     }
 
-    /// Returns whether a given `timeout` is expired.
     pub(crate) fn is_expired_timeout(&self, timeout: &Timeout) -> bool {
         match timeout {
             Timeout::After(duration) => *duration == Duration::ZERO,
@@ -224,9 +162,6 @@ impl TimerManager {
             .push(timer_callback);
     }
 
-    /// Checks and processes the managed timers.
-    ///
-    /// If any of the timers have timed out, call the corresponding callback functions.
     pub(crate) fn process_expired_timers(&self) {
         let callbacks = {
             let mut timeout_list = self.timer_callbacks.disable_irq().lock();
@@ -251,13 +186,11 @@ impl TimerManager {
         }
     }
 
-    /// Creates an [`Timer`], which will be managed by this `TimerManager`.
     pub(crate) fn create_timer<F: TimerFn>(self: &Arc<Self>, function: F) -> Arc<Timer<F>> {
         Timer::new(function, self.clone())
     }
 }
 
-/// A `TimerCallback` can be used to execute a timer callback function.
 struct TimerCallback {
     expired_time: Duration,
     timer: Weak<Timer>,
@@ -272,7 +205,6 @@ impl TimerCallback {
         let mut timer_guard = timer.lock();
 
         if timer_guard.inner.expired_time != Some(self.expired_time) {
-            // The callback is cancelled.
             return;
         }
 
@@ -283,8 +215,6 @@ impl TimerCallback {
             timer_guard.cancel();
         }
 
-        // Pass the `timer_guard` guard to the callback, allowing it to prevent race conditions.
-        // The callback may choose to use the guard or drop it if not needed.
         timer.registered_callback.call(timer_guard);
     }
 }
@@ -305,9 +235,6 @@ impl PartialOrd for TimerCallback {
 
 impl Ord for TimerCallback {
     fn cmp(&self, other: &Self) -> core::cmp::Ordering {
-        // We want `TimerCallback`s to be processed in ascending order of `expired_time`,
-        // and the in-order management of `TimerCallback`s currently relies on a maximum heap,
-        // so we need the reverse instruction here.
         self.expired_time.cmp(&other.expired_time).reverse()
     }
 }

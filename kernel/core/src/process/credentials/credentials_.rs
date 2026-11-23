@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use ostd::sync::{PreemptDisabled, RwLockReadGuard, RwLockWriteGuard};
@@ -15,73 +13,29 @@ use crate::{
 
 #[derive(Debug)]
 pub(super) struct Credentials_ {
-    /// The real user ID.
-    ///
-    /// This is the user to which the process belongs.
     ruid: AtomicUid,
-    /// The effective user ID.
-    ///
-    /// This is used to determine the permissions granted to a process when it tries to perform
-    /// various operations (e.g., system calls).
     euid: AtomicUid,
-    /// The saved-set user ID.
-    ///
-    /// This saves a copy of the effective user ID that were set when the program was executed.
     suid: AtomicUid,
-    /// The filesystem user ID.
-    ///
-    /// This is used to determine permissions for accessing files.
     fsuid: AtomicUid,
 
-    /// The real group ID.
-    ///
-    /// This is the group to which the process belongs.
     rgid: AtomicGid,
-    /// The effective group ID.
-    ///
-    /// This is used to determine the permissions granted to a process when it tries to perform
-    /// various operations (e.g., system calls).
     egid: AtomicGid,
-    /// The saved-set group ID.
-    ///
-    /// This saves a copy of the effective group ID that were set when the program was executed.
     sgid: AtomicGid,
-    /// The filesystem group ID.
-    ///
-    /// This is used to determine permissions for accessing files.
     fsgid: AtomicGid,
 
-    /// A set of additional groups to which a process belongs.
     supplementary_gids: RwLock<BTreeSet<Gid>>,
 
-    // The Linux capabilities. They are not the capability (in `static_cap.rs`) that is enforced on
-    // Rust objects.
-    //
-    /// Capabilities that child processes can inherit.
     inheritable_capset: AtomicCapSet,
-    /// Capabilities that a process can potentially be granted.
-    ///
-    /// It defines the maximum set of privileges that the process could possibly have. Even if the
-    /// process is not currently using these privileges, it has the potential ability to enable
-    /// them.
     permitted_capset: AtomicCapSet,
-    /// Capabilities that a process can actually use.
     effective_capset: AtomicCapSet,
-    /// Capabilities that limit privileges granted during `execve()` and may be added to the
-    /// inheritable set.
     bounding_capset: AtomicCapSet,
-    /// Capabilities that are preserved across non-privileged `execve()` and automatically added to
-    /// the permitted and effective sets for the new program.
     ambient_capset: AtomicCapSet,
 
-    /// Secure bits.
     securebits: AtomicSecureBits,
 
-    /// Whether `execve()` is forbidden from granting new privileges.
     no_new_privs: AtomicBool,
 }
 
-/// Credentials computed for a pending `execve()`.
 #[derive(Clone, Copy, Debug)]
 pub(in crate::process) struct ExecCred {
     setuid: Option<Uid>,
@@ -98,9 +52,6 @@ impl ExecCred {
 }
 
 impl Credentials_ {
-    /// Creates a new `Credentials_`.
-    ///
-    /// The real, effective, saved set, and filesystem IDs will be initialized to the same ID.
     pub(super) fn new(uid: Uid, gid: Gid, capset: CapSet) -> Self {
         let mut supplementary_gids = BTreeSet::new();
         supplementary_gids.insert(gid);
@@ -124,8 +75,6 @@ impl Credentials_ {
             no_new_privs: AtomicBool::new(false),
         }
     }
-
-    //  ******* UID methods *******
 
     pub(super) fn ruid(&self) -> Uid {
         self.ruid.load(Ordering::Relaxed)
@@ -192,7 +141,6 @@ impl Credentials_ {
         }
 
         if fsuid != self.ruid() && fsuid != self.euid() && fsuid != self.suid() {
-            // The new filesystem UID is not one of the associated UIDs.
             return Err(old_fsuid);
         }
 
@@ -209,8 +157,6 @@ impl Credentials_ {
         self.set_resuid_unchecked(None, None, Some(suid));
     }
 
-    // For `setreuid`, the real UID can *NOT* be set to the old saved-set user ID,
-    // For `setresuid`, the real UID can be set to the old saved-set user ID.
     fn check_uid_perm(
         &self,
         ruid: Option<&Uid>,
@@ -286,16 +232,9 @@ impl Credentials_ {
 
         self.set_fsuid_unchecked(new_euid);
 
-        // If the `SECBIT_NO_SETUID_FIXUP` bit is set, do not adjust capabilities.
-        // Reference: The "SECBIT_NO_SETUID_FIXUP" section in
-        // <https://man7.org/linux/man-pages/man7/capabilities.7.html>.
         if self.securebits().no_setuid_fixup() {
             return;
         }
-
-        // Begin to adjust capabilities.
-        // Reference: The "Effect of user ID changes on capabilities" section in
-        // <https://man7.org/linux/man-pages/man7/capabilities.7.html>.
 
         let had_root = old_ruid.is_root() || old_euid.is_root() || old_suid.is_root();
         let all_nonroot = !new_ruid.is_root() && !new_euid.is_root() && !new_suid.is_root();
@@ -321,8 +260,6 @@ impl Credentials_ {
         self.fsuid.store(fsuid, Ordering::Relaxed);
 
         if old_fsuid.is_root() && !fsuid.is_root() {
-            // Reference: The "Effect of user ID changes on capabilities" section in
-            // <https://man7.org/linux/man-pages/man7/capabilities.7.html>.
             let cap_to_remove = CapSet::CHOWN
                 | CapSet::DAC_OVERRIDE
                 | CapSet::FOWNER
@@ -335,8 +272,6 @@ impl Credentials_ {
             self.set_effective_capset(old_cap - cap_to_remove);
         }
     }
-
-    //  ******* GID methods *******
 
     pub(super) fn rgid(&self) -> Gid {
         self.rgid.load(Ordering::Relaxed)
@@ -407,7 +342,6 @@ impl Credentials_ {
         }
 
         if fsgid != self.rgid() && fsgid != self.egid() && fsgid != self.sgid() {
-            // The new filesystem GID is not one of the associated GIDs.
             return Err(old_fsgid);
         }
 
@@ -424,8 +358,6 @@ impl Credentials_ {
         self.set_resgid_unchecked(None, None, Some(sgid));
     }
 
-    // For `setregid`, the real GID can *NOT* be set to the old saved-set GID,
-    // For `setresgid`, the real GID can be set to the old saved-set GID.
     fn check_gid_perm(
         &self,
         rgid: Option<&Gid>,
@@ -493,8 +425,6 @@ impl Credentials_ {
         self.fsgid.store(fsuid, Ordering::Relaxed);
     }
 
-    //  ******* Supplementary Groups methods *******
-
     pub(super) fn groups(&self) -> RwLockReadGuard<'_, BTreeSet<Gid>, PreemptDisabled> {
         self.supplementary_gids.read()
     }
@@ -502,8 +432,6 @@ impl Credentials_ {
     pub(super) fn groups_mut(&self) -> RwLockWriteGuard<'_, BTreeSet<Gid>, PreemptDisabled> {
         self.supplementary_gids.write()
     }
-
-    //  ******* Linux Capabilities methods *******
 
     pub(super) fn inheritable_capset(&self) -> CapSet {
         self.inheritable_capset.load(Ordering::Relaxed)
@@ -612,8 +540,6 @@ impl Credentials_ {
         self.securebits.try_store(stored_bits, Ordering::Relaxed)
     }
 
-    //  ******* Secure Bits methods *******
-
     pub(super) fn securebits(&self) -> SecureBits {
         self.securebits.load(Ordering::Relaxed)
     }
@@ -637,9 +563,6 @@ impl Credentials_ {
         self.no_new_privs.store(true, Ordering::Relaxed);
     }
 
-    //  ******* execve() methods *******
-
-    /// Calculates and validates credentials for `execve()`.
     pub(super) fn prepare_exec_cred(
         &self,
         file_capabilities: Option<FileCapabilities>,
@@ -667,7 +590,6 @@ impl Credentials_ {
         })
     }
 
-    /// Applies previously computed credentials for `execve()`.
     pub(super) fn apply_exec_cred(&self, exec_cred: ExecCred) -> Result<()> {
         if let Some(setuid) = exec_cred.setuid {
             self.set_euid(setuid);
@@ -695,9 +617,6 @@ impl Credentials_ {
         new_euid: Uid,
         new_egid: Gid,
     ) -> Result<(CapSet, CapSet, CapSet)> {
-        // Reference: The "Transformation of capabilities during execve()" section and
-        // the "Capabilities and execution of programs by root" section in
-        // <https://man7.org/linux/man-pages/man7/capabilities.7.html>.
         let has_file_capabilities = file_capabilities.is_some();
 
         let new_ambient = {
@@ -721,9 +640,6 @@ impl Credentials_ {
                 CapSet::empty()
             };
 
-        // When a file has capabilities and setuid changes a non-root user's effective UID to root,
-        // Linux derives the capability sets only from the file's capability xattr; UID 0 does not
-        // additionally grant full capability sets.
         let is_setuid_root = !self.ruid().is_root() && new_euid.is_root();
         if !self.securebits().no_root() && !(has_file_capabilities && is_setuid_root) {
             if self.ruid().is_root() || new_euid.is_root() {
@@ -731,8 +647,6 @@ impl Credentials_ {
                 file_inheritable = CapSet::all();
             }
 
-            // Linux uses UID 0 to enable the effective capability set only when it is the
-            // effective UID.
             if new_euid.is_root() {
                 file_effective = CapSet::all();
             }

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::{SyscallReturn, sched_getattr::read_linux_sched_attr_from_user};
 use crate::{
     prelude::*,
@@ -21,7 +19,6 @@ pub(super) fn sys_sched_setattr(
         return Err(errno!(EINVAL, "invalid user space address"));
     }
     if flags != 0 {
-        // Linux also has no support for any flags yet.
         return Err(errno!(EINVAL, "invalid flags"));
     }
 

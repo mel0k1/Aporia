@@ -1,58 +1,22 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Alignment-aware utilities for MMIO copy and fill operations.
-
 use crate::{
     arch::io::io_mem::{read_once, write_once},
     mm::PodOnce,
 };
 
-/// Iterates over aligned chunk sizes and dispatches to typed MMIO operations.
-///
-/// This macro intentionally keeps the required `unsafe` operation centralized,
-/// so call sites only need to justify one high-level safety argument.
-///
-/// # Arguments
-///
-/// - `$io_addr`: Base I/O address used to derive alignment for each chunk.
-/// - `$count`: Total bytes to process.
-/// - `$max_chunk`: Maximum chunk width in bytes. Must be a power of two in `1..=8`.
-/// - `$op($args...)`: Typed operation called as `$op::<T>($args...)` for each selected chunk,
-///   where `T` is one of `u8`, `u16`, `u32`, or `u64`.
-///
-/// # Safety
-///
-/// - The enclosing function must ensure that each invocation of `$op::<T>(...)`
-///   is valid for every chunk type selected by this macro (`u8`, `u16`, `u32`, `u64`).
-/// - In particular, pointer validity and alignment for the selected chunk sizes
-///   must hold for the full `$count` range.
-/// - For MMIO, the caller must also ensure the target range supports accesses
-///   at all selected widths. Some devices require fixed-width accesses and may
-///   fault or behave unexpectedly when split into smaller operations.
-/// - `$op` must advance any pointer arguments consistently with the returned
-///   byte count so that chunk iteration stays synchronized.
 macro_rules! for_aligned_chunks {
     ($io_addr:expr, $count:expr, $max_chunk:expr, $op:ident ( $($arg:expr),* $(,)? )) => {{
         crate::io::io_mem::util::for_each_chunk_with_max($io_addr, $count, $max_chunk, |chunk_size| {
             match chunk_size {
                 1 => {
-                    // SAFETY: The caller of the enclosing function guarantees pointer validity
-                    // and alignment requirements for this chunk size.
                     unsafe { $op::<u8>($($arg),*) }
                 }
                 2 => {
-                    // SAFETY: The caller of the enclosing function guarantees pointer validity
-                    // and alignment requirements for this chunk size.
                     unsafe { $op::<u16>($($arg),*) }
                 }
                 4 => {
-                    // SAFETY: The caller of the enclosing function guarantees pointer validity
-                    // and alignment requirements for this chunk size.
                     unsafe { $op::<u32>($($arg),*) }
                 }
                 8 => {
-                    // SAFETY: The caller of the enclosing function guarantees pointer validity
-                    // and alignment requirements for this chunk size.
                     unsafe { $op::<u64>($($arg),*) }
                 }
                 _ => unreachable!("unexpected chunk size: {}", chunk_size),
@@ -99,18 +63,11 @@ pub(crate) fn for_each_chunk_with_max(
     copied_total
 }
 
-/// Copies from MMIO to regular memory for a single value of type `T`.
-///
-/// # Safety
-///
-/// - `src_io_ptr` must be valid for MMIO reads of `size_of::<T>()` bytes and properly aligned.
-/// - `dst_ptr` must be valid for writes of `size_of::<T>()` bytes.
 pub(crate) unsafe fn copy_from_mmio_val<T: PodOnce>(
     dst_ptr: &mut *mut u8,
     src_io_ptr: &mut *const u8,
 ) -> usize {
     debug_assert!((*src_io_ptr).addr().is_multiple_of(align_of::<T>()));
-    // SAFETY: The caller guarantees the MMIO and regular memory pointers are valid.
     unsafe {
         let val: T = read_once((*src_io_ptr).cast::<T>());
         let dst = *dst_ptr;
@@ -127,19 +84,11 @@ pub(crate) unsafe fn copy_from_mmio_val<T: PodOnce>(
     size_of::<T>()
 }
 
-/// Copies from regular memory to MMIO for a single value of type `T`.
-///
-/// # Safety
-///
-/// - `src_ptr` must be valid for reads of `size_of::<T>()` bytes.
-/// - `dst_io_ptr` must be valid for MMIO writes of `size_of::<T>()` bytes and
-///   must be aligned to `align_of::<T>()`.
 pub(crate) unsafe fn copy_to_mmio_val<T: PodOnce>(
     src_ptr: &mut *const u8,
     dst_io_ptr: &mut *mut u8,
 ) -> usize {
     debug_assert!((*dst_io_ptr).addr().is_multiple_of(align_of::<T>()));
-    // SAFETY: The caller guarantees the regular memory and MMIO pointers are valid.
     unsafe {
         let src = *src_ptr;
         let align_mask = size_of::<T>() - 1;
@@ -156,16 +105,10 @@ pub(crate) unsafe fn copy_to_mmio_val<T: PodOnce>(
     size_of::<T>()
 }
 
-/// Writes one typed repeated-byte value into MMIO destination.
-///
-/// # Safety
-///
-/// - `dst_io_ptr` must be valid for MMIO writes of `size_of::<T>()` bytes and aligned to `align_of::<T>()`.
 pub(crate) unsafe fn memset_mmio_val<T: PodOnce>(dst_io_ptr: &mut *mut u8, value: u8) -> usize {
     debug_assert!((*dst_io_ptr).addr().is_multiple_of(align_of::<T>()));
 
     let repeated = u64::from_ne_bytes([value; 8]);
-    // SAFETY: The caller guarantees destination pointer is valid and aligned for `T`.
     unsafe {
         match size_of::<T>() {
             1 => write_once((*dst_io_ptr).cast::<u8>(), repeated as u8),

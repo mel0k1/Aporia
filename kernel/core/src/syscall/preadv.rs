@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::SyscallReturn;
 use crate::{
     fs,
@@ -26,9 +24,6 @@ pub(super) fn sys_preadv(
     _offset_high: u64,
     ctx: &Context,
 ) -> Result<SyscallReturn> {
-    // On 64-bit platforms, Linux assumes the `offset_low` contains the full
-    // 64-bit offset.
-    // Reference: <https://elixir.bootlin.com/linux/v6.16.9/source/fs/read_write.c#L1114-L1118>.
     let offset = offset_low.cast_signed();
     let res = do_sys_preadv(
         raw_fd,
@@ -50,9 +45,6 @@ pub(super) fn sys_preadv2(
     flags: u32,
     ctx: &Context,
 ) -> Result<SyscallReturn> {
-    // On 64-bit platforms, Linux assumes the `offset_low` contains the full
-    // 64-bit offset.
-    // Reference: <https://elixir.bootlin.com/linux/v6.16.9/source/fs/read_write.c#L1114-L1118>.
     let offset = offset_low.cast_signed();
     let flags = match RWFFlag::from_bits(flags) {
         Some(flags) => flags,
@@ -89,8 +81,6 @@ fn do_sys_preadv(
     let user_space = ctx.user_space();
     let mut writer_array = VmWriterArray::from_user_io_vecs(&user_space, io_vec_ptr, io_vec_count)?;
 
-    // Probe with a zero-length read so that unsupported files (e.g., pipes)
-    // still return the correct errno even when all buffers are empty.
     if writer_array.writers_mut().is_empty() {
         let mut empty = [0u8; 0];
         let mut writer = VmWriter::from(empty.as_mut_slice()).to_fallible();
@@ -104,12 +94,6 @@ fn do_sys_preadv(
     for writer in writer_array.writers_mut() {
         debug_assert!(writer.has_avail());
 
-        // TODO: According to the man page
-        // at <https://man7.org/linux/man-pages/man2/readv.2.html>,
-        // readv must be atomic,
-        // but the current implementation does not ensure atomicity.
-        // A suitable fix would be to add a `readv` method for the `FileLike` trait,
-        // allowing each subsystem to implement atomicity.
         match file.read_at(cur_offset, writer) {
             Ok(read_len) => {
                 total_len += read_len;
@@ -119,7 +103,6 @@ fn do_sys_preadv(
             Err(err) => return Err(err),
         }
         if writer.has_avail() {
-            // End of file reached or no more data to read
             break;
         }
     }
@@ -156,19 +139,12 @@ fn do_sys_readv(
     for writer in writer_array.writers_mut() {
         debug_assert!(writer.has_avail());
 
-        // TODO: According to the man page
-        // at <https://man7.org/linux/man-pages/man2/readv.2.html>,
-        // readv must be atomic,
-        // but the current implementation does not ensure atomicity.
-        // A suitable fix would be to add a `readv` method for the `FileLike` trait,
-        // allowing each subsystem to implement atomicity.
         match file.read(writer) {
             Ok(read_len) => total_len += read_len,
             Err(_) if total_len > 0 => break,
             Err(err) => return Err(err),
         }
         if writer.has_avail() {
-            // End of file reached or no more data to read
             break;
         }
     }

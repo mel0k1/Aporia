@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::time::Duration;
 
 use ostd::mm::VmIo;
@@ -16,31 +14,14 @@ use crate::{
     util::net::SockType,
 };
 
-/// Create an object by reading its C counterpart from the user space.
-///
-/// Note that the format of a value in the user space may be different from that
-/// in the kernel space. For example, the type of a boolean value in the kernel
-/// is expressed as `bool`, whereas that in the user space is `i32`.
-///
-/// In addition, since the user space is not trusted by the kernel, values read
-/// from the user space must be validated by the kernel.
 pub(crate) trait ReadFromUser: Sized {
-    /// Read a struct from user space by reading its C counterpart.
     fn read_from_user(addr: Vaddr, max_len: u32) -> Result<Self>;
 }
 
-/// Write an object to user space by writing its C counterpart.
-///
-/// Note that the format of a value in the user space may be different from that
-/// in the kernel space. But the format should be consistent with `ReadFromUser`, i.e,
-/// if we call `read_from_user` and `write_from_user` for the same type, the read value
-/// and write value in user space should be of same type.
 pub(crate) trait WriteToUser {
-    // Write a struct to user space by writing its C counterpart.
     fn write_to_user(&self, addr: Vaddr, max_len: u32) -> Result<usize>;
 }
 
-/// This macro is used to implement `ReadFromUser` and `WriteToUser` for u32 and i32.
 macro_rules! impl_read_write_for_32bit_type {
     ($pod_ty: ty) => {
         impl ReadFromUser for $pod_ty {
@@ -215,8 +196,8 @@ fn write_partial_pod<T: Pod>(value: &T, addr: Vaddr, max_len: u32) -> Result<usi
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 struct CLinger {
-    l_onoff: i32,  // linger active
-    l_linger: i32, // how many seconds to linger for
+    l_onoff: i32,
+    l_linger: i32,
 }
 
 impl From<LingerOption> for CLinger {

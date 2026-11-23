@@ -1,10 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! `eventfd()` creates an eventfd object used for event notification.
-//!
-//! For more detailed information about this syscall,
-//! refer to the man 2 eventfd documentation.
-
 use super::SyscallReturn;
 use crate::{
     events::{EventFile, EventFileFlags},

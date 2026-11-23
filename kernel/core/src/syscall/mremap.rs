@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use align_ext::AlignExt;
 
 use super::SyscallReturn;
@@ -45,10 +43,6 @@ fn do_sys_mremap(
         return Err(errno!(EINVAL, "the size overflows"));
     }
 
-    // `MREMAP_DONTUNMAP` keeps the old VMA in the tree as an anonymous
-    // zero-fill-on-demand mapping; we must move pages even when the sizes
-    // are equal.  `MREMAP_MAYMOVE` is required because the mapping cannot
-    // stay at its current address (the physical pages must be relocated).
     if flags.contains(MremapFlags::MREMAP_DONTUNMAP) {
         if !flags.contains(MremapFlags::MREMAP_MAYMOVE) {
             return Err(errno!(
@@ -64,7 +58,6 @@ fn do_sys_mremap(
         }
     }
 
-    // Align `old_size` and `new_size` after checking them.
     let old_size = old_size.align_up(PAGE_SIZE);
     let new_size = new_size.align_up(PAGE_SIZE);
 
@@ -77,14 +70,10 @@ fn do_sys_mremap(
     let user_space = ctx.user_space();
     let vmar = user_space.vmar();
 
-    // When `MREMAP_DONTUNMAP` is set, we must move the mapping rather than
-    // shrinking in place, even though `new_size` == `old_size`.
     if !flags.contains(MremapFlags::MREMAP_FIXED)
         && new_size <= old_size
         && action == RemapOldMappingAction::Unmap
     {
-        // We can shrink a old range which spans multiple mappings. See
-        // <https://github.com/google/gvisor/blob/95d875276806484f974ce9e95556a561331f8e22/test/syscalls/linux/mremap.cc#L100-L117>.
         vmar.resize_mapping(old_addr, old_size, new_size, false)?;
         return Ok(old_addr);
     }
@@ -102,9 +91,6 @@ fn do_sys_mremap(
                 "MREMAP_FIXED specified without also specifying MREMAP_MAYMOVE"
             ));
         }
-        // We can ensure that `new_size > old_size` here. Since we are enlarging
-        // the old mapping, it is necessary to check whether the old range lies
-        // in a single mapping.
         vmar.resize_mapping(old_addr, old_size, new_size, true)?;
         Ok(old_addr)
     }

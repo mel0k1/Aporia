@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::time::Duration;
 
 use aster_virtio::device::socket::{
@@ -44,8 +42,6 @@ impl ConnectionState {
             DEFAULT_RX_BUF_SIZE as u32,
             self.credit.local_fwd_cnt,
         );
-
-        // Lock order: socket state -> device TX
 
         if conn.bound_port.vsock_space().send_packet(&header) {
             self.credit.last_reported_fwd_cnt = self.credit.local_fwd_cnt;

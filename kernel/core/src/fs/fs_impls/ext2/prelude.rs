@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Re-exports used throughout the ext2 module.
-
 pub(super) use core::{
     ops::{Deref, DerefMut, Range},
     time::Duration,

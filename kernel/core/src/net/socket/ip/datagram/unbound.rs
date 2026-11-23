@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use aster_bigtcp::{socket::UdpSocket, wire::IpEndpoint};
 
 use super::{bound::BoundDatagram, observer::DatagramObserver};

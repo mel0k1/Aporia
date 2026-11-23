@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use inherit_methods_macro::inherit_methods;
 
 use crate::{
@@ -14,14 +12,10 @@ use crate::{
     util::ioctl::RawIoctl,
 };
 
-/// The file for a pseudoterminal slave.
 pub(super) struct PtySlaveFile(Arc<PtySlave>);
 
 impl PtySlaveFile {
     pub(super) fn new(slave: Arc<PtySlave>) -> Result<PtySlaveFile> {
-        // Reference: <https://elixir.bootlin.com/linux/v6.17/source/drivers/tty/pty.c#L220>.
-
-        // Hold the lock at first to avoid race condition.
         let mut opened_slaves = slave.driver().opened_slaves().lock();
 
         let master_flags = slave.driver().tty_flags();

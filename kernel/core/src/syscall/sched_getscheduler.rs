@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::{
     SyscallReturn,
     sched_getattr::{LinuxSchedAttr, access_sched_attr_with},

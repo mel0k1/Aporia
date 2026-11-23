@@ -1,34 +1,12 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! This module provides API to represent buffers whose
-//! sizes are block aligned. The advantage of using the
-//! APIs provided this module over Rust std's counterparts
-//! is to ensure the invariance of block-aligned length
-//! at type level, eliminating the need for runtime check.
-//!
-//! There are three main types:
-//! * `Buf`: A owned buffer backed by `Pages`, whose length is
-//!   a multiple of the block size.
-//! * `BufRef`: An immutably-borrowed buffer whose length
-//!   is a multiple of the block size.
-//! * `BufMut`: A mutably-borrowed buffer whose length is
-//!   a multiple of the block size.
-//!
-//! The basic usage is simple: replace the usage of `Box<[u8]>`
-//! with `Buf`, `&[u8]` with `BufRef<[u8]>`,
-//! and `&mut [u8]` with `BufMut<[u8]>`.
-
 use alloc::vec;
 
 use lending_iterator::prelude::*;
 
 use crate::prelude::*;
 
-/// A owned buffer whose length is a multiple of the block size.
 pub struct Buf(Vec<u8>);
 
 impl Buf {
-    /// Allocate specific number of blocks as memory buffer.
     pub fn alloc(num_blocks: usize) -> Result<Self> {
         if num_blocks == 0 {
             return_errno_with_msg!(
@@ -40,48 +18,39 @@ impl Buf {
         Ok(Self(buffer))
     }
 
-    /// Returns the number of blocks of owned buffer.
     pub fn nblocks(&self) -> usize {
         self.0.len() / BLOCK_SIZE
     }
 
-    /// Returns the immutable slice of owned buffer.
     pub fn as_slice(&self) -> &[u8] {
         self.0.as_slice()
     }
 
-    /// Returns the mutable slice of owned buffer.
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         self.0.as_mut_slice()
     }
 
-    /// Converts to immutably-borrowed buffer `BufRef`.
     pub fn as_ref(&self) -> BufRef<'_> {
         BufRef(self.as_slice())
     }
 
-    /// Coverts to mutably-borrowed buffer `BufMut`.
     pub fn as_mut(&mut self) -> BufMut<'_> {
         BufMut(self.as_mut_slice())
     }
 }
 
-/// An immutably-borrowed buffer whose length is a multiple of the block size.
 #[derive(Clone, Copy)]
 pub struct BufRef<'a>(&'a [u8]);
 
 impl BufRef<'_> {
-    /// Returns the immutable slice of borrowed buffer.
     pub fn as_slice(&self) -> &[u8] {
         self.0
     }
 
-    /// Returns the number of blocks of borrowed buffer.
     pub fn nblocks(&self) -> usize {
         self.0.len() / BLOCK_SIZE
     }
 
-    /// Returns an iterator for immutable buffers of `BLOCK_SIZE`.
     pub fn iter(&self) -> BufIter<'_> {
         BufIter {
             buf: BufRef(self.as_slice()),
@@ -109,26 +78,21 @@ impl<'a> TryFrom<&'a [u8]> for BufRef<'a> {
     }
 }
 
-/// A mutably-borrowed buffer whose length is a multiple of the block size.
 pub struct BufMut<'a>(&'a mut [u8]);
 
 impl BufMut<'_> {
-    /// Returns the immutable slice of borrowed buffer.
     pub fn as_slice(&self) -> &[u8] {
         self.0
     }
 
-    /// Returns the mutable slice of borrowed buffer.
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         self.0
     }
 
-    /// Returns the number of blocks of borrowed buffer.
     pub fn nblocks(&self) -> usize {
         self.0.len() / BLOCK_SIZE
     }
 
-    /// Returns an iterator for immutable buffers of `BLOCK_SIZE`.
     pub fn iter(&self) -> BufIter<'_> {
         BufIter {
             buf: BufRef(self.as_slice()),
@@ -136,7 +100,6 @@ impl BufMut<'_> {
         }
     }
 
-    /// Returns an iterator for mutable buffers of `BLOCK_SIZE`.
     pub fn iter_mut(&mut self) -> BufIterMut<'_> {
         BufIterMut {
             buf: BufMut(self.as_mut_slice()),
@@ -164,7 +127,6 @@ impl<'a> TryFrom<&'a mut [u8]> for BufMut<'a> {
     }
 }
 
-/// Iterator for immutable buffers of `BLOCK_SIZE`.
 pub struct BufIter<'a> {
     buf: BufRef<'a>,
     offset: usize,
@@ -184,7 +146,6 @@ impl<'a> Iterator for BufIter<'a> {
     }
 }
 
-/// Iterator for mutable buffers of `BLOCK_SIZE`.
 pub struct BufIterMut<'a> {
     buf: BufMut<'a>,
     offset: usize,

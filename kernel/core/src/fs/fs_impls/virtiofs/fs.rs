@@ -1,9 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Virtio-fs filesystem wiring.
-//!
-//! This module defines the filesystem type and objects for virtio-fs.
-
 use aster_fuse::{
     EntryReply, FUSE_ROOT_ID, Kstatfs, StatfsOperation, ops::lookup::LookupOperation,
 };
@@ -24,13 +18,10 @@ use crate::{
     prelude::*,
 };
 
-/// Filesystem magic reported for virtio-fs in `statfs`.
 const VIRTIOFS_MAGIC: u64 = 0x6573_5546;
 
-/// Block size reported to `statfs` for virtio-fs.
 const BLOCK_SIZE: usize = 4096;
 
-/// The `virtiofs` filesystem type.
 pub(super) struct VirtioFsType {
     cache: FsCache<String>,
 }
@@ -76,7 +67,6 @@ impl FsType for VirtioFsType {
     }
 }
 
-/// A mounted virtio-fs filesystem.
 pub(super) struct VirtioFs {
     sb: SuperBlock,
     root: Arc<VirtioFsInode>,
@@ -96,9 +86,6 @@ impl VirtioFs {
         let container_dev_id = anon_device_id.id();
         let statfs = session.do_fuse_op(FUSE_ROOT_ID, StatfsOperation)?.st();
 
-        // TODO: Update the super block fields based on `statfs` reply.
-        // For now, we set only the fields required by VFS when mounting the filesystem.
-        // No update is made for these fields later.
         let sb = SuperBlock::from((container_dev_id, statfs));
 
         let root_entry = session.do_fuse_op(FUSE_ROOT_ID, LookupOperation::new("."))?;
@@ -127,12 +114,10 @@ impl VirtioFs {
         &self.session
     }
 
-    /// Returns the device ID of this virtio-fs mount.
     pub(super) fn container_device_id(&self) -> DeviceId {
         self.sb.container_dev_id
     }
 
-    /// Reads an inode from a FUSE entry reply via the inode cache.
     pub(super) fn lookup_inode_from_cache(
         self: &Arc<Self>,
         lookup_reply: EntryReply,
@@ -142,12 +127,10 @@ impl VirtioFs {
             .lookup_inode(lookup_reply, request_attr_version, self)
     }
 
-    /// Inserts a newly created inode into the inode cache.
     pub(super) fn insert_inode_to_cache(&self, inode: &Arc<VirtioFsInode>) {
         self.inode_cache.insert_inode(inode);
     }
 
-    /// Removes an inode from the cache if it is still the cached entry.
     pub(super) fn remove_inode_from_cache(
         &self,
         inode: &VirtioFsInode,
@@ -181,7 +164,6 @@ impl FileSystem for VirtioFs {
         Some(&self.tag)
     }
 
-    // TODO: Implement `sync` by issuing `fsync` to open files and syncing the device if supported.
     fn sync(&self) -> Result<()> {
         Ok(())
     }

@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! NVMe PRP (Physical Region Page) setup for contiguous DMA buffers.
-
 use alloc::vec::Vec;
 use core::num::NonZeroUsize;
 
@@ -9,7 +5,6 @@ use ostd::mm::{HasDaddr, PAGE_SIZE, VmIo, dma::DmaCoherent};
 
 use crate::device::NvmeDeviceError;
 
-/// Number of 64-bit PRP entries that fit in one PRP list page.
 const PRP_ENTRIES_PER_PAGE: usize = PAGE_SIZE / size_of::<u64>();
 
 const PAGE_SIZE_U64: u64 = PAGE_SIZE as u64;
@@ -22,7 +17,6 @@ pub(crate) struct PrpPointers {
 }
 
 impl PrpPointers {
-    /// Builds PRP pointers for a physically contiguous `[dma_addr, dma_addr + length)` range.
     pub(crate) fn build_prp(dma_addr: u64, length: NonZeroUsize) -> Result<Self, NvmeDeviceError> {
         let prp1 = dma_addr;
         let remaining = remaining_bytes_after_first_page(dma_addr, length.get());
@@ -68,8 +62,6 @@ impl PrpPointers {
         let mut cur_list_index = 0usize;
 
         while remaining > 0 {
-            // The last entry of a non-last PRP list page must point to the next list
-            // page; the last entry of the last list page may point to a data page.
             if cur_list_index == PRP_ENTRIES_PER_PAGE - 1 && remaining > PAGE_SIZE_U64 {
                 let new_list_page = DmaCoherent::alloc(1, true)
                     .map_err(|_| NvmeDeviceError::DmaAllocationFailed)?;
@@ -98,13 +90,11 @@ impl PrpPointers {
     }
 }
 
-/// Returns how many bytes of `length` lie after the page containing `dma_addr`.
 fn remaining_bytes_after_first_page(dma_addr: u64, length: usize) -> u64 {
     let offset = dma_addr & (PAGE_SIZE_U64 - 1);
     (length as u64).saturating_sub(PAGE_SIZE_U64 - offset)
 }
 
-/// Returns the physical address of the page immediately after the one containing `dma_addr`.
 fn next_page_addr(dma_addr: u64) -> u64 {
     let page_mask = PAGE_SIZE_U64 - 1;
     (dma_addr & !page_mask) + PAGE_SIZE_U64

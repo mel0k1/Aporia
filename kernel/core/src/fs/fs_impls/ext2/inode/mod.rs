@@ -1,73 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Ext2 inode implementation.
-//!
-//! The central type, `Inode`, represents one in-memory ext2 inode and is the
-//! concrete inode object exposed to the VFS adapter.
-//!
-//! # Type aliases
-//!
-//! - `Iblock` — logical block index within a file (0-based).
-//! - `Ext2Bid` — physical block address on the backing device.
-//! - `Ext2Ino` — on-disk inode number (ext2 format is 32-bit; the VFS widens
-//!   to `u64`).
-//!
-//! # Data model
-//!
-//! Inode state is organized as a strict ownership chain:
-//!
-//! ```text
-//! Inode  →  InodeInner  →  InodeDesc  →  RawInode
-//! ```
-//!
-//! - `Inode` — the ref-counted, shareable handle; holds the inode number,
-//!   file type, block-group index, a weak filesystem reference, and an optional
-//!   xattr sidecar.
-//! - `InodeInner` — the `RwMutex`-guarded interior: the dirty descriptor
-//!   and the type-specific inode payload.
-//! - `InodeDesc` — a decoded, Rust-typed mirror of all on-disk inode fields.
-//! - `RawInode` — the 128-byte on-disk layout (`#[repr(C)]`); converted
-//!   to/from `InodeDesc` at I/O boundaries.
-//!
-//! # Submodules
-//!
-//! The inode implementation is split by inode concern:
-//!
-//! | Submodule                  | Responsibility                                            |
-//! |----------------------------|-----------------------------------------------------------|
-//! | `attrs`                    | Metadata: mode, uid, gid, times, xattr                    |
-//! | `block_manager`            | Page-cache backend and block-pointer tree management      |
-//! | `io_range`                 | Block-backed I/O range planning                            |
-//! | `file`                     | Regular-file I/O and allocation                           |
-//! | `dir`                      | Directory entry semantics                                 |
-//! | `symlink`                  | Symlink target storage                                    |
-//! | `sync`                     | Writeback and reclaim                                     |
-//!
-//! # Locking
-//!
-//! Within a single inode, `inner` and `xattr` are never held simultaneously;
-//! `Xattr` manages its own internal lock and is always accessed outside
-//! `inner`. Data-backed inodes additionally nest the block-pointer tree and
-//! its indirect-block cache under `inner` in order:
-//!
-//! ```text
-//! Inode::inner → BlockPtrTree → IndirectBlockManager
-//! ```
-//!
-//! When multiple inodes must be write-locked simultaneously, acquire them
-//! in ascending `ino` order and coalesce duplicates first.
-//!
-//! Data-backed inode operations that allocate or free blocks call into
-//! filesystem-level methods (`Ext2::alloc_blocks`, `Ext2::free_blocks`). The
-//! full cross-layer ordering is:
-//!
-//! ```text
-//! Inode::inner → BlockPtrTree → Ext2::super_block → BlockGroup::metadata
-//! ```
-//!
-//! `BlockGroup::inode_cache` is independent: it is never held while
-//! acquiring `super_block` or `metadata`, nor while holding `Inode::inner`.
-
 #![short_vis_path::add(ext2)]
 
 mod attrs;
@@ -91,45 +21,25 @@ use crate::{
 };
 
 const MAX_LINK_COUNT: u16 = 32000;
-/// Size of the ext2 inode `i_block` byte area used by fast symlinks.
 const MAX_FAST_SYMLINK_LEN: usize = size_of::<u32>() * RAW_BLOCK_PTRS_LEN;
-/// Number of 32-bit entries in the ext2 inode `i_block` array.
 pub(super) const RAW_BLOCK_PTRS_LEN: usize = 15;
-/// Logical block index within a file (0-based).
 pub(super) type Iblock = u32;
-/// Physical block address on the device.
 pub(super) type Ext2Bid = u32;
-/// On-disk inode number (ext2 format is 32-bit; the VFS widens to u64).
 pub(super) type Ext2Ino = u32;
 
-/// Ext2 file permission bits (lower 12 bits of `i_mode`).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct FilePerm(u16);
 
 impl FilePerm {
-    /// Constructs a `FilePerm` from raw permission bits, discarding unknown bits.
     pub(super) fn from_bits_truncate(bits: u16) -> Self {
         Self(bits)
     }
 
-    /// Returns the raw permission bits.
     pub(super) fn bits(self) -> u16 {
         self.0
     }
 }
 
-/// An in-memory ext2 inode.
-///
-/// Each `Inode` corresponds to one on-disk inode identified by a unique
-/// inode number (`ino`). It caches the inode descriptor and the payload needed
-/// by that inode type, then exposes directory, symlink, and regular-file
-/// operations through the VFS `Inode` trait.
-///
-/// An `Inode` owns the cached descriptor and its type-specific payload. Only
-/// data-backed payloads own data pages and block-mapping state; block-group
-/// bitmaps belong to the parent `Ext2` and `BlockGroup`. See the module-level
-/// documentation, especially the `Locking` section, for the full lock ordering
-/// across inode, filesystem, and block-group layers.
 pub(crate) struct Inode {
     ino: Ext2Ino,
     type_: InodeType,
@@ -142,7 +52,6 @@ pub(crate) struct Inode {
 }
 
 impl Inode {
-    /// Creates a new `Inode` and returns it wrapped in `Arc`.
     pub(super) fn new(
         ino: Ext2Ino,
         type_: InodeType,
@@ -176,44 +85,36 @@ impl Inode {
         })
     }
 
-    /// Returns the ext2 inode number.
     pub(super) fn ino(&self) -> Ext2Ino {
         self.ino
     }
 
-    /// Returns the block group index this inode belongs to.
     pub(super) fn block_group_idx(&self) -> usize {
         self.block_group_idx
     }
 
-    /// Returns the hard-link count.
     pub(super) fn link_count(&self) -> u16 {
         self.inner.read().link_count()
     }
 
-    /// Returns a reference to the owning `Ext2` filesystem.
     pub(super) fn fs(&self) -> Result<Arc<Ext2>> {
         self.fs
             .upgrade()
             .ok_or_else(|| errno!(EIO, "filesystem already dropped"))
     }
 
-    /// Returns the logical file size in bytes.
     pub(super) fn file_size(&self) -> usize {
         self.inner.read().file_size()
     }
 
-    /// Returns a reference to the VFS extension slot.
     pub(super) fn extension(&self) -> &Extension {
         &self.extension
     }
 
-    /// Returns a reference to the pipe if this is a named-pipe inode.
     pub(in ext2) fn pipe(&self) -> Option<&Pipe> {
         self.pipe.as_ref()
     }
 
-    /// Returns a clone of the data page cache for this inode if it has one.
     pub(super) fn page_cache(&self) -> Option<Arc<Vmo>> {
         self.inner.read().page_cache_clone()
     }
@@ -230,10 +131,6 @@ impl Drop for Inode {
     }
 }
 
-/// Parsed in-memory mirror of an on-disk inode's metadata fields.
-///
-/// Unlike `RawInode`, fields are decoded into Rust types
-/// (e.g., `Duration` for timestamps, `InodeType` for file type).
 #[derive(Clone, Copy, Debug)]
 pub(super) struct InodeDesc {
     type_: InodeType,
@@ -282,7 +179,6 @@ impl InodeDesc {
         }
     }
 
-    /// Returns the inode type stored in this descriptor.
     pub(super) fn type_(&self) -> InodeType {
         self.type_
     }
@@ -309,7 +205,6 @@ impl TryFrom<&RawInode> for InodeDesc {
             size |= (raw.size_high as u64) << 32;
         }
 
-        // Linux stores the nul byte in symlink, so the maximum size is `BLOCK_SIZE - 1`.
         if type_ == InodeType::SymLink && size >= BLOCK_SIZE as u64 {
             return Err(errno!(EUCLEAN, "corrupted symlink on disk"));
         }
@@ -383,59 +278,54 @@ impl From<&InodeDesc> for RawInode {
     }
 }
 
-/// On-disk inode structure (128 bytes for GOOD_OLD_REV).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(super) struct RawInode {
-    pub mode: u16,                        // i_mode
-    pub uid: u16,                         // i_uid (low 16 bits)
-    pub size_lo: u32,                     // i_size
-    pub atime: u32,                       // i_atime
-    pub ctime: u32,                       // i_ctime
-    pub mtime: u32,                       // i_mtime
-    pub dtime: u32,                       // i_dtime
-    pub gid: u16,                         // i_gid (low 16 bits)
-    pub link_count: u16,                  // i_link_count
-    pub sector_count: u32,                // i_blocks (512-byte sectors)
-    pub flags: u32,                       // i_flags
-    pub osd1: u32,                        // osd1.linux1.l_i_reserved1
-    pub block: [u32; RAW_BLOCK_PTRS_LEN], // i_block
-    pub generation: u32,                  // i_generation
-    pub file_acl: u32,                    // i_file_acl
-    pub size_high: u32,                   // i_dir_acl (size high)
-    pub faddr: u32,                       // i_faddr
-    pub frag: u8,                         // osd2.linux2.l_i_frag
-    pub fsize: u8,                        // osd2.linux2.l_i_fsize
-    pub pad1: u16,                        // osd2.linux2.i_pad1
-    pub uid_high: u16,                    // osd2.linux2.l_i_uid_high
-    pub gid_high: u16,                    // osd2.linux2.l_i_gid_high
-    pub reserved2: u32,                   // osd2.linux2.l_i_reserved2
+    pub mode: u16,
+    pub uid: u16,
+    pub size_lo: u32,
+    pub atime: u32,
+    pub ctime: u32,
+    pub mtime: u32,
+    pub dtime: u32,
+    pub gid: u16,
+    pub link_count: u16,
+    pub sector_count: u32,
+    pub flags: u32,
+    pub osd1: u32,
+    pub block: [u32; RAW_BLOCK_PTRS_LEN],
+    pub generation: u32,
+    pub file_acl: u32,
+    pub size_high: u32,
+    pub faddr: u32,
+    pub frag: u8,
+    pub fsize: u8,
+    pub pad1: u16,
+    pub uid_high: u16,
+    pub gid_high: u16,
+    pub reserved2: u32,
 }
 
 const_assert!(size_of::<RawInode>() == 128);
 
-/// Interior of `Inode` guarded by a single `RwMutex`.
 #[derive(Debug)]
 struct InodeInner {
-    /// Full persistence mirror of the on-disk inode.
     desc: Dirty<InodeDesc>,
-    /// Type-specific payload stored in ext2's overloaded `i_block` area.
     payload: InodePayload,
 }
 
-/// Type-specific in-memory state backed by ext2 inode payload storage.
 #[derive(Debug)]
 enum InodePayload {
-    /// Regular files, directories, and slow symlinks backed by data blocks.
     DataBacked {
         page_cache: PageCache,
         block_manager: Arc<InodeBlockManager>,
     },
-    /// Fast symlink target stored inline in `i_block`.
-    FastSymlink { target: FastSymlinkTarget },
-    /// Character or block device number encoded in `i_block`.
-    Device { device_id: u64 },
-    /// Special inode types that do not carry an ext2 inode payload.
+    FastSymlink {
+        target: FastSymlinkTarget,
+    },
+    Device {
+        device_id: u64,
+    },
     NoPayload,
 }
 
@@ -476,7 +366,6 @@ impl InodeInner {
             return Err(errno!(EINVAL, "inode has no data page cache"));
         };
         page_cache.resize(new_size_bytes, old_size_bytes)?;
-        // Reset the npages to let the `PageCacheBackend` know the size of page cache.
         block_manager.set_npages(new_size_bytes.div_ceil(PAGE_SIZE));
         Ok(())
     }
@@ -621,8 +510,6 @@ impl InodePayload {
             page_count,
         ));
         let page_cache_backend: Weak<dyn PageCacheBackend> = Arc::downgrade(&block_manager) as _;
-        // Keep page-cache capacity aligned with inode size so `npages`/VMO window
-        // and on-disk data extent stay consistent from mount time.
         let page_cache = PageCache::new_with_backend(page_cache_size, page_cache_backend)
             .expect("ext2 inode page cache allocation failed");
 
@@ -678,43 +565,24 @@ impl InodePayload {
 bitflags! {
     #[derive(Clone, Copy, Debug)]
     struct FileFlags: u32 {
-        /// Secure deletion.
         const SECURE_DEL   = 1 << 0;
-        /// Undelete.
         const UNDELETE     = 1 << 1;
-        /// Compresses the file.
         const COMPRESS     = 1 << 2;
-        /// Synchronous updates.
         const SYNC_UPDATE  = 1 << 3;
-        /// Immutable file.
         const IMMUTABLE    = 1 << 4;
-        /// Append only.
         const APPEND_ONLY  = 1 << 5;
-        /// Do not dump file.
         const NO_DUMP      = 1 << 6;
-        /// Does not update `atime`.
         const NO_ATIME     = 1 << 7;
-        /// Dirty.
         const DIRTY        = 1 << 8;
-        /// One or more compressed clusters.
         const COMPRESS_BLK = 1 << 9;
-        /// Does not compress.
         const NO_COMPRESS  = 1 << 10;
-        /// Encrypted file.
         const ENCRYPT      = 1 << 11;
-        /// Hash-indexed directory.
         const INDEX_DIR    = 1 << 12;
-        /// AFS directory.
         const IMAGIC       = 1 << 13;
-        /// Journal file data.
         const JOURNAL_DATA = 1 << 14;
-        /// File tail should not be merged.
         const NO_TAIL      = 1 << 15;
-        /// Dirsync behavior (directories only).
         const DIR_SYNC     = 1 << 16;
-        /// Top of directory hierarchies.
         const TOP_DIR      = 1 << 17;
-        /// Reserved for the ext2 library.
         const RESERVED     = 1 << 31;
     }
 }
@@ -724,7 +592,6 @@ mod test {
     use super::*;
     use crate::fs::fs_impls::ext2::test_utils::{self, RawInodeBuilder};
 
-    /// Reads a `RawInode` directly from the test fixture's disk image.
     pub(super) fn read_raw_inode_from_disk(f: &test_utils::Ext2Fixture, ino: u32) -> RawInode {
         let nr_inodes_per_group = f.sb.nr_inodes_per_group();
         let group_idx = ((ino - 1) / nr_inodes_per_group) as usize;
@@ -740,7 +607,6 @@ mod test {
             .unwrap()
     }
 
-    /// Builds a live in-memory file inode (not on disk) for low-level tests.
     pub(super) fn make_live_file_inode(
         ext2: &Arc<Ext2>,
         ino: u32,

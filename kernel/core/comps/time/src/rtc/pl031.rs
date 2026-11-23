@@ -1,11 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! PL031 RTC.
-//!
-//! This is a driver for ARM PrimeCell Real Time Clock (PL031).
-//!
-//! Reference: <https://developer.arm.com/documentation/ddi0224/b/Functional-Overview/ARM-PrimeCell-Real-Time-Clock--PL031--overview>
-
 use core::time::Duration;
 
 use fdt_util::AcquireIoMems;

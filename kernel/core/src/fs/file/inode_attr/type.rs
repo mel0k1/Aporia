@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use int_to_c_enum::TryFromInt;
 
 use crate::{device::DeviceType, prelude::*};
@@ -34,12 +32,10 @@ impl InodeType {
         *self != InodeType::NamedPipe && *self != Self::Socket
     }
 
-    /// Parse the inode type in the `mode` from syscall, and convert it into `InodeType`.
     pub(crate) fn from_raw_mode(mut mode: u16) -> Result<Self> {
         const TYPE_MASK: u16 = 0o170000;
         mode &= TYPE_MASK;
 
-        // Special case
         if mode == 0 {
             return Ok(Self::File);
         }

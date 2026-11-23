@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::{
     fmt,
     sync::atomic::{AtomicU64, Ordering},

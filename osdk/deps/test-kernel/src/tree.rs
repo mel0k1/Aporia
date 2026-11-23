@@ -1,12 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! The source module tree of ktests.
-//!
-//! In the `KtestTree`, the root is abstract, and the children of the root are the
-//! crates. The leaves are the test functions. Nodes other than the root and the
-//! leaves are modules.
-//!
-
 use alloc::{
     collections::{BTreeMap, btree_map},
     string::{String, ToString},
@@ -70,8 +61,6 @@ impl KtestModule {
 
 #[derive(Debug)]
 pub(super) struct KtestCrate {
-    // Crate behaves just like modules, which can own it's children and tests.
-    // But the iterator it provides will only iterate over the modules not tests.
     root_module: KtestModule,
 }
 
@@ -134,7 +123,6 @@ impl Default for KtestTree {
     }
 }
 
-/// The `KtestTreeIter` will iterate over all crates. Yielding `KtestCrate`s.
 pub(super) struct KtestTreeIter<'a> {
     crate_iter: btree_map::Iter<'a, String, KtestCrate>,
 }
@@ -157,8 +145,6 @@ impl<'a> Iterator for KtestTreeIter<'a> {
 
 type CrateChildrenIter<'a> = btree_map::Iter<'a, String, KtestModule>;
 
-/// The `KtestCrateIter` will iterate over all modules in a crate. Yielding `KtestModule`s.
-/// The iterator will return modules in the depth-first-search order of the module tree.
 pub(super) struct KtestCrateIter<'a> {
     path: Vec<(&'a KtestModule, CrateChildrenIter<'a>)>,
 }
@@ -193,7 +179,6 @@ impl<'a> Iterator for KtestCrateIter<'a> {
     }
 }
 
-/// The `KtestModuleIter` will iterate over all tests in a crate. Yielding `KtestItem`s.
 pub(super) struct KtestModuleIter<'a> {
     test_iter: core::slice::Iter<'a, KtestItem>,
 }

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::{
     slice::Iter,
     sync::atomic::{AtomicU16, Ordering},
@@ -34,7 +32,6 @@ pub(super) enum Status {
     Pending = 1,
     Removed = 2,
 
-    // Errors
     ErrWouldBlock = 4,
     ErrValRange = 5,
 }
@@ -49,7 +46,6 @@ define_atomic_version_of_integer_like_type!(Status, try_from = true, {
     struct AtomicStatus(AtomicU16);
 });
 
-/// A pending semaphore operation.
 pub(super) struct PendingOp {
     sops: Vec<SemBuf>,
     status: Arc<AtomicStatus>,
@@ -71,7 +67,6 @@ impl PendingOp {
                 return Err(errno!(EFBIG, "the semaphore number is out of bounds"));
             }
             if IpcFlags::from_bits_truncate(op.sem_flags as u32).contains(IpcFlags::SEM_UNDO) {
-                // TODO: Add support for the `SEM_UNDO` flag
                 return Err(errno!(EINVAL, "SEM_UNDO is not supported yet"));
             }
         }
@@ -96,10 +91,6 @@ impl PendingOp {
         self.waker.as_ref()
     }
 
-    /// Returns the ID of the semaphore that the operation is blocked on, if there is one.
-    ///
-    /// The caller should provide `sems` whose size matches the number used to construct this
-    /// `PendingOp`. Otherwise, this method may panic.
     pub(super) fn blocker(&self, sems: &[Semaphore]) -> Result<PendingBlocker, Status> {
         for op in self.sops.iter() {
             let sem_num = op.sem_num as usize;
@@ -108,7 +99,6 @@ impl PendingOp {
 
             let flags = IpcFlags::from_bits_truncate(op.sem_flags as u32);
 
-            // Zero condition
             if op.sem_op == 0 && val != 0 {
                 if flags.contains(IpcFlags::IPC_NOWAIT) {
                     return Err(Status::ErrWouldBlock);
@@ -144,12 +134,6 @@ impl Debug for PendingOp {
 #[derive(Debug)]
 pub(crate) struct Semaphore {
     val: i32,
-    /// The PID of the process that last modified the semaphore.
-    ///
-    /// This includes the following cases:
-    /// - through `semop` with a zero or non-zero `sem_op`,
-    /// - through `semctl` with `SETVAL` and `SETALL`, and
-    /// - through `SEM_UNDO` on process exit.
     latest_modified_pid: Pid,
 }
 
@@ -196,7 +180,6 @@ pub(crate) fn sem_op(
 
     let is_alter = check_alter_sop(&sops);
 
-    // TODO: Support permission check
     warn!("Semaphore operation doesn't support permission check now");
 
     enum SemOpResult {
@@ -214,7 +197,6 @@ pub(crate) fn sem_op(
 
         let mut inner = sem_set.inner();
 
-        // Try to perform the operation without blocking
         if let Some(status) = perform_atomic_semop(&mut inner.sems, &mut pending_op) {
             if status != Status::Normal {
                 return Ok(SemOpResult::Completed { status });
@@ -234,12 +216,10 @@ pub(crate) fn sem_op(
             return Ok(SemOpResult::Completed { status });
         }
 
-        // Prepare to wait
         let status = pending_op.status.clone();
         let (waiter, waker) = Waiter::new_pair();
         pending_op.waker = Some(waker);
 
-        // Insert the operation to the pending list
         if is_alter {
             inner.pending_alter.push_back(pending_op);
         } else {
@@ -279,7 +259,6 @@ pub(crate) fn sem_op(
     };
 
     if matches!(status.load(Ordering::Relaxed), Status::Pending) {
-        // Remove and check again to avoid race conditions
         let _ = ipc_ns.with_sem_set(sem_id, PermissionMode::empty(), |sem_set| {
             let mut inner = sem_set.inner();
             let pending_ops = if is_alter {
@@ -287,7 +266,6 @@ pub(crate) fn sem_op(
             } else {
                 &mut inner.pending_const
             };
-            // FIXME: This may be time-consuming
             pending_ops.retain(|op| !Arc::ptr_eq(&op.status, &status));
 
             Ok(())
@@ -297,8 +275,6 @@ pub(crate) fn sem_op(
     map_status_to_result(status.load(Ordering::Relaxed), waiter_result.err())
 }
 
-/// Checks whether there are two operations that will operate on the same semaphore and the first
-/// operation is an alteration operation.
 fn check_dup_sops(sops: &[SemBuf]) -> bool {
     fn check_dup_slow(sops: &[SemBuf]) -> bool {
         for (i, op_i) in sops.iter().enumerate() {
@@ -327,15 +303,10 @@ fn check_dup_sops(sops: &[SemBuf]) -> bool {
     false
 }
 
-/// Checks whether there is an operation that will change the value of a semaphore.
 fn check_alter_sop(sops: &[SemBuf]) -> bool {
     sops.iter().any(|op| op.sem_op != 0)
 }
 
-/// Looks for operations that can be completed after an alteration operation and then completes
-/// them.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.0.9/source/ipc/sem.c#L1029>
 fn do_smart_update(inner: &mut SemSetInner, pending_op: &PendingOp) -> LinkedList<PendingOp> {
     let mut wake_queue = LinkedList::new();
 
@@ -351,12 +322,6 @@ fn do_smart_update(inner: &mut SemSetInner, pending_op: &PendingOp) -> LinkedLis
     wake_queue
 }
 
-/// Looks for alteration operations that can be completed and then completes them.
-///
-/// This method returns whether at least one operation has been completed. The caller should update
-/// the semaphore set's `otime`.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.0.9/source/ipc/sem.c#L949>
 #[must_use]
 pub(super) fn update_pending_alter(
     sems: &mut [Semaphore],
@@ -384,17 +349,12 @@ pub(super) fn update_pending_alter(
         do_smart_wakeup_zero(sems, pending_const, alter_op.front().unwrap(), wake_queue);
         wake_queue.append(&mut alter_op);
 
-        // Retry from the beginning since we've performed some alteration.
         cursor = pending_alter.cursor_front_mut();
     }
 
     has_completed
 }
 
-/// Wakes up pending tasks on constant operations if an alteration operation made those constant
-/// operations possible to complete.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.0.9/source/ipc/sem.c#L893>
 fn do_smart_wakeup_zero(
     sems: &mut [Semaphore],
     pending_const: &mut LinkedList<PendingOp>,
@@ -409,12 +369,6 @@ fn do_smart_wakeup_zero(
     }
 }
 
-/// Wakes up pending tasks on constant operations if they can be completed.
-///
-/// This method returns whether at least one operation has been completed. The caller should update
-/// the semaphore set's `otime`.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.0.9/source/ipc/sem.c#L854>
 #[must_use]
 pub(super) fn wake_const_ops(
     sems: &mut [Semaphore],
@@ -437,13 +391,6 @@ pub(super) fn wake_const_ops(
     has_completed
 }
 
-/// Performs atomic semaphore operations.
-///
-/// 1. Return `Some(Status::Normal)` if all the operations succeed.
-/// 2. Return `None` if the caller needs to wait.
-/// 3. Return `Some(error_status)` if the operations cause an error.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.0.9/source/ipc/sem.c#L719>
 fn perform_atomic_semop(sems: &mut [Semaphore], pending_op: &mut PendingOp) -> Option<Status> {
     match pending_op.blocker(sems) {
         Ok(PendingBlocker::NotBlock) => (),
@@ -451,7 +398,6 @@ fn perform_atomic_semop(sems: &mut [Semaphore], pending_op: &mut PendingOp) -> O
         Err(status) => return Some(status),
     }
 
-    // Success, do operation
     for op in pending_op.sops_iter() {
         let sem = &mut sems[op.sem_num as usize];
         sem.val += i32::from(op.sem_op);

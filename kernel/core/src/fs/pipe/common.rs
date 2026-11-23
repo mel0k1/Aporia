@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::{
     num::Wrapping,
     sync::atomic::{AtomicUsize, Ordering},
@@ -30,10 +28,6 @@ use crate::{
     },
 };
 
-/// A handle for a pipe that implements `PerOpenFileOps`.
-///
-/// Once a handle for a `Pipe` exists, the corresponding pipe object will
-/// not be dropped.
 pub(in crate::fs) struct PipeHandle {
     inner: Arc<PipeObj>,
     access_mode: AccessMode,
@@ -45,14 +39,12 @@ impl PipeHandle {
     }
 
     fn try_read(&self, writer: &mut VmWriter) -> Result<usize> {
-        // `InodeHandle` checks the access mode before calling methods in `PerOpenFileOps`.
         debug_assert!(self.access_mode.is_readable());
 
         self.inner.reader.try_read(writer)
     }
 
     fn try_write(&self, reader: &mut VmReader) -> Result<usize> {
-        // `InodeHandle` checks the access mode before calling methods in `PerOpenFileOps`.
         debug_assert!(self.access_mode.is_writable());
 
         self.inner.writer.try_write(reader)
@@ -105,8 +97,6 @@ impl FileOps for PipeHandle {
         status_flags: StatusFlags,
     ) -> Result<usize> {
         if !writer.has_avail() {
-            // Even the peer endpoint has been closed, reading an empty buffer is
-            // still fine.
             return Ok(0);
         }
 
@@ -124,8 +114,6 @@ impl FileOps for PipeHandle {
         status_flags: StatusFlags,
     ) -> Result<usize> {
         if !reader.has_remain() {
-            // Even the peer endpoint has been closed, writing an empty buffer is
-            // still fine.
             return Ok(0);
         }
 
@@ -161,26 +149,16 @@ impl PerOpenFileOps for PipeHandle {
     }
 
     fn settable_status_flags(&self) -> SettableStatusFlags {
-        // TODO: Support "packet" mode for pipes then `O_DIRECT` can be supported.
         SettableStatusFlags::minimal().with_o_async()
     }
 }
 
-/// A pipe (FIFO) that provides inter-process communication.
-///
-/// Pipes are special files that appear in the filesystem and provide a
-/// communication channel between processes. It can be opened multiple times
-/// for reading, writing, or both.
-///
-/// A `Pipe` will maintain exactly one **pipe object** that provides actual pipe
-/// functionalities when there is at least one handle opened on it.
 pub(in crate::fs) struct Pipe {
     pipe: Mutex<PipeInner>,
     wait_queue: WaitQueue,
 }
 
 impl Pipe {
-    /// Creates a new pipe.
     pub(crate) fn new() -> Self {
         Self {
             pipe: Mutex::new(PipeInner::default()),
@@ -188,17 +166,6 @@ impl Pipe {
         }
     }
 
-    /// Opens the named pipe with the specified access mode and status flags.
-    ///
-    /// Returns a handle that implements `PerOpenFileOps` for performing I/O operations.
-    ///
-    /// The open behavior follows POSIX semantics:
-    /// - Opening for read-only blocks until a writer opens the pipe.
-    /// - Opening for write-only blocks until a reader opens the pipe.
-    /// - Opening for read-write never blocks.
-    ///
-    /// If no handle of this named pipe has existed, the method will create a new pipe object.
-    /// Otherwise, it will return a handle that works on the existing pipe object.
     pub(crate) fn open_named(
         &self,
         access_mode: AccessMode,
@@ -207,7 +174,6 @@ impl Pipe {
         self.open_handle(access_mode, status_flags, true)
     }
 
-    /// Opens the anonymous pipe with the specified access mode and status flags.
     pub(super) fn open_anon(
         &self,
         access_mode: AccessMode,
@@ -216,7 +182,6 @@ impl Pipe {
         self.open_handle(access_mode, status_flags, false)
     }
 
-    /// Opens the pipe and returns a `PipeHandle`.
     fn open_handle(
         &self,
         access_mode: AccessMode,
@@ -241,7 +206,6 @@ impl Pipe {
                 let has_writer = pipe_obj.num_writer.load(Ordering::Relaxed) > 0;
                 let handle = PipeHandle::new(pipe_obj, access_mode);
 
-                // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/fs/pipe.c#L1166-L1175>
                 if is_named_pipe && !status_flags.contains(StatusFlags::O_NONBLOCK) && !has_writer {
                     let old_write_count = pipe.write_count;
                     drop(pipe);
@@ -264,7 +228,6 @@ impl Pipe {
                 let has_reader = pipe_obj.num_reader.load(Ordering::Relaxed) > 0;
                 let handle = PipeHandle::new(pipe_obj, access_mode);
 
-                // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/fs/pipe.c#L1184-L1195>
                 if is_named_pipe && !has_reader {
                     if status_flags.contains(StatusFlags::O_NONBLOCK) {
                         return Err(errno!(ENXIO, "no reader is present"));
@@ -300,18 +263,8 @@ impl Pipe {
 
 pub(in crate::fs) fn check_status_flags(status_flags: StatusFlags) -> Result<()> {
     if status_flags.contains(StatusFlags::O_DIRECT) {
-        // TODO: Support "packet" mode for pipes.
-        //
-        // The `O_DIRECT` flag indicates that the pipe should operate in "packet" mode.
-        // "O_DIRECT .. Older kernels that do not support this flag will indicate this via an
-        // EINVAL error."
-        //
-        // See <https://man7.org/linux/man-pages/man2/pipe.2.html>.
         return Err(errno!(EINVAL, "the `O_DIRECT` flag is not supported"));
     }
-
-    // TODO: Setting most of the other flags will succeed on Linux, but their effects need to be
-    // validated.
 
     Ok(())
 }
@@ -337,9 +290,6 @@ impl PipeObj {
 
 #[derive(Default)]
 struct PipeInner {
-    // Holding a weak reference here ensures that the pipe object (including
-    // the buffer data) will be dropped when no handle is open on the pipe.
-    // This is consistent with Linux behavior.
     pipe_obj: Weak<PipeObj>,
     read_count: Wrapping<usize>,
     write_count: Wrapping<usize>,
@@ -363,14 +313,6 @@ const DEFAULT_PIPE_BUF_SIZE: usize = 65536;
 #[cfg(ktest)]
 const DEFAULT_PIPE_BUF_SIZE: usize = 2;
 
-/// Maximum number of bytes guaranteed to be written to a pipe atomically.
-///
-/// If the number of bytes to be written is less than the threshold, the write must be atomic.
-/// A non-blocking atomic write may fail with `EAGAIN`, even if there is room for a partial write.
-/// In other words, a partial write is not allowed for an atomic write.
-///
-/// For more details, see the description of `PIPE_BUF` in
-/// <https://man7.org/linux/man-pages/man7/pipe.7.html>.
 #[cfg(not(ktest))]
 const PIPE_BUF: usize = 4096;
 #[cfg(ktest)]
@@ -466,7 +408,6 @@ impl PipeWriter {
         let write = || {
             let mut producer = self.producer.lock();
             if reader.remain() <= PIPE_BUF && producer.free_len() < reader.remain() {
-                // No sufficient space for an atomic write
                 return Ok(0);
             }
             producer.write_fallible(reader)

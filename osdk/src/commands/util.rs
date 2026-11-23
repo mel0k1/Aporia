@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use std::process::Command;
 
 use crate::util::{get_kernel_crate, new_command_checked_exists};

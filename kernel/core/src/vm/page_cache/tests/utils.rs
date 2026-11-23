@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Test-only helpers for deterministic page-cache I/O scheduling.
-
 use alloc::{format, vec};
 use core::fmt;
 
@@ -16,10 +12,8 @@ use ostd::mm::VmIo;
 
 use crate::{prelude::*, thread::Thread, vm::page_cache::BlockAsPageCacheBackend};
 
-/// Maximum number of cooperative yields before a test wait times out.
 const MAX_WAIT_YIELDS: usize = 1_000_000;
 
-/// Distinguishes read BIOs from write BIOs in the mock backend.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum IoKind {
     Read,
@@ -43,7 +37,6 @@ impl IoKind {
     }
 }
 
-/// Selects whether a mock BIO completes inline or waits for the test.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum IoCompletion {
     Immediate,
@@ -135,18 +128,12 @@ impl MockBackendState {
     }
 }
 
-/// A mock backend that lets tests observe and manually drive page-cache I/O.
-///
-/// It models a page-addressable backend directly, so tests can coordinate
-/// backend completion order without an extra fake-device wrapper or timer-based
-/// sleeps.
 pub(super) struct MockPageCacheBackend {
     state: SpinLock<MockBackendState>,
     num_pages: usize,
 }
 
 impl MockPageCacheBackend {
-    /// Creates a backend with `num_pages` zero-filled persisted pages.
     pub(super) fn new(num_pages: usize) -> Arc<Self> {
         Arc::new(Self {
             state: SpinLock::new(MockBackendState::new(num_pages)),
@@ -154,15 +141,10 @@ impl MockPageCacheBackend {
         })
     }
 
-    /// Sets how future BIOs of `kind` complete.
     pub(super) fn set_completion(&self, kind: IoKind, completion: IoCompletion) {
         self.state.lock().set_completion(kind, completion);
     }
 
-    /// Waits until the backend has queued `expected_count` deferred BIOs.
-    ///
-    /// Tests use this to freeze the backend at the "BIO submitted but not yet
-    /// completed" point before releasing the next scheduling step.
     pub(super) fn wait_for_deferred_bios(&self, kind: IoKind, expected_count: usize) {
         let failure_message =
             format!("timed out waiting for {expected_count} deferred {kind:?} BIOs");
@@ -172,7 +154,6 @@ impl MockPageCacheBackend {
         );
     }
 
-    /// Completes the next deferred BIO of `kind`.
     pub(super) fn complete_next_deferred_bio(&self, kind: IoKind, success: bool) -> bool {
         let deferred_bio = self.state.lock().deferred_bios_mut(kind).pop_front();
         let Some(deferred_bio) = deferred_bio else {
@@ -183,22 +164,18 @@ impl MockPageCacheBackend {
         true
     }
 
-    /// Returns how many read BIOs were submitted for `page_idx`.
     pub(super) fn read_count(&self, page_idx: usize) -> usize {
         self.state.lock().submission_count(IoKind::Read, page_idx)
     }
 
-    /// Returns how many write BIOs were submitted for `page_idx`.
     pub(super) fn write_count(&self, page_idx: usize) -> usize {
         self.state.lock().submission_count(IoKind::Write, page_idx)
     }
 
-    /// Returns the bytes currently persisted for `page_idx`.
     pub(super) fn persisted_page_bytes(&self, page_idx: usize) -> Vec<u8> {
         self.state.lock().persisted_pages[page_idx].clone()
     }
 
-    /// Preloads the persisted bytes for `page_idx`.
     pub(super) fn set_persisted_page_bytes(&self, page_idx: usize, data: &[u8]) {
         assert_eq!(data.len(), PAGE_SIZE);
         self.state.lock().persisted_pages[page_idx].copy_from_slice(data);
@@ -264,7 +241,6 @@ impl MockPageCacheBackend {
     }
 }
 
-/// Waits until a test predicate becomes true.
 pub(super) fn wait_until(mut condition: impl FnMut() -> bool) {
     wait_until_with_failure_message(&mut condition, "timed out waiting for test condition");
 }

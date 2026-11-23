@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::borrow::Cow;
 use core::time::Duration;
 
@@ -28,12 +26,6 @@ use crate::{
 
 type Ino = u64;
 
-/// A trait that abstracts an inode type backed by a `SysTree` node,
-/// e.g., a `SysFs` inode and a `CgroupFs` inode.
-///
-/// The struct implementing this trait will have a default implementation for
-/// the [`Inode`] trait. Users only need to additionally implement the
-/// [`Inode::fs`] method.
 #[expect(dead_code)]
 pub(in crate::fs) trait SysTreeInodeTy: Send + Sync + 'static {
     fn new_arc(
@@ -82,7 +74,6 @@ pub(in crate::fs) trait SysTreeInodeTy: Send + Sync + 'static {
             last_modify_at: now,
             last_meta_change_at: now,
             type_,
-            // The mode field in metadata will not be used
             mode: mkmod!(a=),
             nr_hard_links: 1,
             uid,
@@ -121,7 +112,7 @@ pub(in crate::fs) trait SysTreeInodeTy: Send + Sync + 'static {
     }
 
     fn new_branch_dir(
-        node_kind: SysTreeNodeKind, // Must be SysTreeNodeKind::Branch
+        node_kind: SysTreeNodeKind,
         mode: Option<InodeMode>,
         parent: Weak<Self>,
         sb: &SuperBlock,
@@ -140,7 +131,7 @@ pub(in crate::fs) trait SysTreeInodeTy: Send + Sync + 'static {
     }
 
     fn new_leaf_dir(
-        node_kind: SysTreeNodeKind, // Must be SysTreeNodeKind::Leaf
+        node_kind: SysTreeNodeKind,
         mode: Option<InodeMode>,
         parent: Weak<Self>,
         sb: &SuperBlock,
@@ -149,7 +140,7 @@ pub(in crate::fs) trait SysTreeInodeTy: Send + Sync + 'static {
         Self: Sized + 'static,
     {
         let ino = ino::from_node_kind(&node_kind);
-        let metadata = Self::new_metadata(ino, InodeType::Dir, sb); // Leaf nodes are represented as Dirs
+        let metadata = Self::new_metadata(ino, InodeType::Dir, sb);
 
         let SysTreeNodeKind::Leaf(leaf_node) = &node_kind else {
             panic!("new_leaf_dir called with non-leaf SysTreeNodeKind");
@@ -165,7 +156,6 @@ pub(in crate::fs) trait SysTreeInodeTy: Send + Sync + 'static {
     {
         let sb = self.fs().sb();
 
-        // Try finding a child node (Branch, Leaf, Symlink) first
         if let Some(child_sysnode) = sysnode.child(name) {
             let child_type = child_sysnode.type_();
             match child_type {
@@ -196,7 +186,6 @@ pub(in crate::fs) trait SysTreeInodeTy: Send + Sync + 'static {
                 }
             }
         } else {
-            // If no child node found, try finding an attribute of the current branch node
             if sysnode.is_attr_absent(name) {
                 return Err(errno!(ENOENT, "attribute is not present"));
             }
@@ -206,7 +195,6 @@ pub(in crate::fs) trait SysTreeInodeTy: Send + Sync + 'static {
 
             let parent_node_arc: Arc<dyn SysNode> = match &self.node_kind() {
                 SysTreeNodeKind::Branch(branch_arc) => branch_arc.clone(),
-                // This case shouldn't happen if lookup_node_or_attr is called correctly
                 _ => {
                     return Err(errno!(
                         EIO,
@@ -224,7 +212,6 @@ pub(in crate::fs) trait SysTreeInodeTy: Send + Sync + 'static {
     where
         Self: Sized + 'static,
     {
-        // This function is called when the current inode is a Leaf directory
         if sysnode.is_attr_absent(name) {
             return Err(errno!(ENOENT, "attribute is not present"));
         }
@@ -234,7 +221,6 @@ pub(in crate::fs) trait SysTreeInodeTy: Send + Sync + 'static {
 
         let leaf_node_arc: Arc<dyn SysNode> = match &self.node_kind() {
             SysTreeNodeKind::Leaf(leaf_arc) => leaf_arc.clone(),
-            // This case shouldn't happen if lookup_attr is called correctly
             _ => {
                 return Err(errno!(EIO, "lookup_attr called on non-leaf inode"));
             }
@@ -287,7 +273,6 @@ pub(in crate::fs) trait SysTreeInodeTy: Send + Sync + 'static {
     }
 }
 
-/// An enum that represent one of the variants of `SysTree` nodes.
 #[derive(Debug)]
 pub(in crate::fs) enum SysTreeNodeKind {
     Branch(Arc<dyn SysBranchNode>),
@@ -332,37 +317,6 @@ impl<KInode: SysTreeInodeTy + Send + Sync + 'static> FileOps for KInode {
     }
 
     default fn readdir_at(&self, offset: usize, visitor: &mut dyn DirentVisitor) -> Result<usize> {
-        // Why interpreting the `offset` argument as an inode number?
-        //
-        // It may take multiple `getdents` system calls
-        // -- and thus multiple calls to this method --
-        // to list a large directory when the syscall is provided a small buffer.
-        // Between these calls,
-        // the directory may have new entries added or existing ones removed
-        // by some concurrent users that are working on the directory.
-        // In such situations,
-        // missing some of the concurrently-added entries is inevitable,
-        // but reporting the same entry multiple times would be
-        // very confusing to the user.
-        //
-        // To address this issue,
-        // the `readdir_at` method reports entries starting from a user-given `offset`
-        // and returns an increment that the next call should be put on the `offset` argument
-        // to avoid getting duplicated entries.
-        //
-        // Different file systems may interpret the meaning of
-        // the `offset` argument differently:
-        // one may take it as a _byte_ offset,
-        // while the other may treat it as an _index_.
-        // This freedom is guaranteed by Linux as documented in
-        // [the man page of getdents](https://man7.org/linux/man-pages/man2/getdents.2.html).
-        //
-        // Our implementation of sysfs interprets the `offset`
-        // as an _inode number_.
-        // By inode numbers, directory entries will have a _stable_ order
-        // across different calls to `readdir_at`.
-        // The `collect_dentries` is responsible for filtering out entries
-        // with inode numbers less than `start_ino`.
         let start_ino = offset as Ino;
         let mut count = 0;
         let mut last_ino = start_ino;
@@ -424,8 +378,6 @@ impl<KInode: SysTreeInodeTy + Send + Sync + 'static> Inode for KInode {
     }
 
     default fn resize(&self, _self_dentry: &VfsDentry, _new_size: usize) -> Result<()> {
-        // The `resize` operation should be ignored by kernelfs inodes,
-        // and should not incur an error.
         Ok(())
     }
 
@@ -553,18 +505,11 @@ impl<KInode: SysTreeInodeTy + Send + Sync + 'static> Inode for KInode {
             return Ok(self.parent().upgrade().unwrap_or_else(|| self.this()));
         }
 
-        // Dispatch based on the concrete type of the directory inode
         match &self.node_kind() {
             SysTreeNodeKind::Branch(branch_node) => {
-                // Current inode is a directory corresponding to a SysBranchNode
                 self.lookup_node_or_attr(name, branch_node.as_ref())
             }
-            SysTreeNodeKind::Leaf(leaf_node) => {
-                // Current inode is a directory corresponding to a SysNode (Leaf)
-                // Leaf directories only contain attributes, not other nodes.
-                self.lookup_attr(name, leaf_node.as_ref())
-            }
-            // Attr and Symlink nodes are not directories
+            SysTreeNodeKind::Leaf(leaf_node) => self.lookup_attr(name, leaf_node.as_ref()),
             SysTreeNodeKind::Attr(_, _) | SysTreeNodeKind::Symlink(_) => Err(errno!(ENOTDIR)),
         }
     }
@@ -610,7 +555,6 @@ impl<KInode: SysTreeInodeTy + Send + Sync + 'static> Inode for KInode {
     }
 }
 
-// Update AttrDentryIter to filter by min_ino
 struct AttrDentryIter<'a, I: Iterator<Item = &'a SysAttr>> {
     attrs_and_node: Option<(I, &'a dyn SysNode)>,
     dir_ino: Ino,
@@ -635,13 +579,12 @@ impl<'a, I: Iterator<Item = &'a SysAttr>> Iterator for AttrDentryIter<'a, I> {
 
         for attr in iter {
             if sys_node.is_attr_absent(attr.name()) {
-                continue; // Skip hidden attributes
+                continue;
             }
 
             let attr_ino = ino::from_dir_ino_and_attr_id(self.dir_ino, attr.id());
 
             if attr_ino >= self.min_ino {
-                // Filter by min_ino
                 return Some(Dentry {
                     ino: attr_ino,
                     name: attr.name().clone(),
@@ -679,10 +622,8 @@ impl Iterator for NodeDentryIter {
             let obj_ino = ino::from_sysnode_id(obj.id());
 
             if obj_ino >= self.min_ino {
-                // Filter by min_ino here
                 let type_ = match obj.type_() {
                     SysNodeType::Branch => InodeType::Dir,
-                    // Leaf nodes are presented as directories containing their attributes
                     SysNodeType::Leaf => InodeType::Dir,
                     SysNodeType::Symlink => InodeType::SymLink,
                 };
@@ -700,7 +641,7 @@ impl Iterator for NodeDentryIter {
 struct ThisAndParentDentryIter<'a, KInode: SysTreeInodeTy> {
     inode: &'a KInode,
     min_ino: Ino,
-    state: u8, // 0 = self, 1 = parent, 2 = done
+    state: u8,
 }
 
 impl<'a, KInode: SysTreeInodeTy> ThisAndParentDentryIter<'a, KInode> {
@@ -752,7 +693,6 @@ impl<KInode: SysTreeInodeTy> Iterator for ThisAndParentDentryIter<'_, KInode> {
     }
 }
 
-/// A directory entry of sysfs.
 pub(in crate::fs) struct Dentry {
     pub ino: Ino,
     pub name: SysStr,
@@ -769,7 +709,6 @@ mod ino {
     }
 
     pub(crate) fn from_dir_ino_and_attr_id(dir_ino: Ino, attr_id: u8) -> Ino {
-        // Attribute IDs start at zero, so offset them past the directory's inode.
         dir_ino + (attr_id as Ino) + 1
     }
 
@@ -779,8 +718,7 @@ mod ino {
             SysTreeNodeKind::Leaf(leaf_node) => from_sysnode_id(leaf_node.id()),
             SysTreeNodeKind::Symlink(symlink_node) => from_sysnode_id(symlink_node.id()),
             SysTreeNodeKind::Attr(attr, node) => {
-                // node here is the parent (Branch or Leaf)
-                let dir_ino = from_sysnode_id(node.id()); // Get parent dir ino
+                let dir_ino = from_sysnode_id(node.id());
                 from_dir_ino_and_attr_id(dir_ino, attr.id())
             }
         }

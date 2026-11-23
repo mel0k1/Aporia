@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use quote::ToTokens;
 use syn::visit_mut::VisitMut;
 
@@ -10,8 +8,6 @@ fn expand(file: &str, pat: &str) {
     let mut file = syn::parse_str(file).unwrap();
     args.visit_file_mut(&mut file);
 
-    // Plain token stream to string will generate tokens with whitespaces around,
-    // causing string search failure. So format tokens pretty as normal code.
     let expansion = prettyplease::unparse(&file);
     assert!(
         expansion.contains(pat),
@@ -49,7 +45,6 @@ fn macro2() {
     let mut file = syn::parse_str("pub(in procfs) macro bar() {}").unwrap();
     args.visit_file_mut(&mut file);
 
-    // prettyplease panics on verbatim tokens, so back to_string.
     let expansion = file.into_token_stream().to_string();
     let pat = "pub (in crate :: fs :: procfs) macro bar";
     assert!(

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use aster_util::printer::VmPrinter;
 
 use crate::{
@@ -12,12 +10,10 @@ use crate::{
     process::rlimit::SYSCTL_NR_OPEN,
 };
 
-/// Represents the inode at `/proc/sys/fs/nr_open`.
 pub(super) struct NrOpenFileOps;
 
 impl NrOpenFileOps {
     pub(super) fn new_inode(parent: Weak<dyn Inode>) -> Arc<dyn Inode> {
-        // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/fs/file_table.c#L130>
         ProcFile::new(Self, parent, mkmod!(a+r, u+w))
     }
 }

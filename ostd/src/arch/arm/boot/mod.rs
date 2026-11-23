@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! The ARM boot module defines the entrypoints of Asterinas.
-
 pub(crate) mod smp;
 
 use core::arch::global_asm;
@@ -19,7 +15,6 @@ use crate::{
 
 global_asm!(include_str!("bsp_boot.S"));
 
-/// The Flattened Device Tree of the platform.
 pub static DEVICE_TREE: Once<Fdt> = Once::new();
 
 fn parse_bootloader_name() -> &'static str {
@@ -35,20 +30,14 @@ fn parse_initramfs() -> Option<&'static [u8]> {
 
     let base_va = paddr_to_vaddr(start);
     let length = end - start;
-    // SAFETY:
-    // 1. The initramfs is safe to read because of the contract with the loader.
-    // 2. We reserve the initramfs region in `parse_memory_regions`, so it will live as an immutable
-    //    reference for `'static`.
     Some(unsafe { core::slice::from_raw_parts(base_va as *const u8, length) })
 }
 
 fn parse_acpi_arg() -> BootloaderAcpiArg {
-    // TDDO: Add ACPI support for ARM, maybe.
     BootloaderAcpiArg::NotProvided
 }
 
 fn parse_framebuffer_info() -> Option<BootloaderFramebufferArg> {
-    // TODO: Parse framebuffer info from device tree.
     None
 }
 
@@ -98,10 +87,8 @@ fn parse_memory_regions(device_tree_paddr: usize) -> MemoryRegionArray {
         }
     }
 
-    // Add the kernel region.
     regions.push(MemoryRegion::kernel()).unwrap();
 
-    // Add the initramfs region.
     if let Some((start, end)) = parse_initramfs_range() {
         regions
             .push(MemoryRegion::new(
@@ -112,7 +99,6 @@ fn parse_memory_regions(device_tree_paddr: usize) -> MemoryRegionArray {
             .unwrap();
     }
 
-    // Add the device tree region.
     regions
         .push(MemoryRegion::new(
             device_tree_paddr,
@@ -131,17 +117,9 @@ fn parse_initramfs_range() -> Option<(usize, usize)> {
     Some((initrd_start, initrd_end))
 }
 
-/// The entry point of the Rust code portion of Asterinas.
-///
-/// # Safety
-///
-/// - This function must be called only once at a proper timing in the BSP's boot assembly code.
-/// - The caller must follow C calling conventions and put the right arguments in registers.
-// SAFETY: The name does not collide with other symbols.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn arm_boot(device_tree_paddr: usize) -> ! {
     let device_tree_ptr = paddr_to_vaddr(device_tree_paddr) as *const u8;
-    // SAFETY: The caller ensures the correctness of `device_tree_ptr`.
     let fdt = unsafe { Fdt::from_ptr(device_tree_ptr).unwrap() };
     DEVICE_TREE.call_once(|| fdt);
 
@@ -156,7 +134,5 @@ unsafe extern "C" fn arm_boot(device_tree_paddr: usize) -> ! {
         memory_regions: parse_memory_regions(device_tree_paddr),
     });
 
-    // SAFETY: The safety is guaranteed by the safety preconditions and the fact that we call it
-    // once after setting up necessary resources.
     unsafe { start_kernel() };
 }

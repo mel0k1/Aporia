@@ -1,6 +1,3 @@
-// Licensed under the Apache License, Version 2.0 or the MIT License.
-// Copyright (C) 2023-2024 Ant Group.
-
 use std::{
     collections::{BTreeMap, HashSet},
     env, fs, io,
@@ -71,15 +68,10 @@ impl Config {
         false
     }
 
-    /// ensure the config to be valid. We will check three things.
-    /// 1. The component ident and library name(The last segment of component path) cannot be duplicate.
-    /// 2. The controlled type in whitelist should be in one of defined components.
-    /// 3. The components in whitelist should be defined.
     pub fn check_config(&self) {
         let mut component_idents = HashSet::new();
         let mut lib_names = HashSet::new();
 
-        // check 1
         for (ident, component_path) in &self.components {
             if component_idents.contains(ident) {
                 panic!("duplicate component ident");
@@ -93,12 +85,10 @@ impl Config {
         }
 
         for (type_, whitelist) in &self.whitelists {
-            // check 2
             let component_ident = type_.iter().nth(0).unwrap();
             if !component_idents.contains(component_ident) {
                 panic!("The controlled type is not in any component.");
             }
-            // check 3
             for (component_name, _) in whitelist.iter() {
                 if !component_idents.contains(component_name) {
                     panic!("The component in whitelist is not defined");
@@ -130,7 +120,6 @@ impl WhiteList {
     }
 }
 
-// rust crate name does not allow '-', so when we store ,all '-' will be replaced with '_'
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Path {
     segments: Vec<String>,
@@ -245,13 +234,7 @@ fn parse_whitelist_item(
     }
 }
 
-/// Search for the configuration file.
-///
-/// # Errors
-///
-/// Returns any unexpected filesystem error encountered when searching for the config file
 pub fn lookup_conf_file() -> io::Result<Option<PathBuf>> {
-    /// Possible filename to search for.
     const CONFIG_FILE_NAMES: [&str; 4] = [
         "Components.toml",
         ".Components.toml",
@@ -259,7 +242,6 @@ pub fn lookup_conf_file() -> io::Result<Option<PathBuf>> {
         ".components.toml",
     ];
 
-    // Start looking for a config file in COMPONENT_CONFIG_DIR.(This should be the directory execute cargo component)
     let current = PathBuf::from(env::var_os("COMPONENT_CONFIG_DIR").unwrap());
     let mut found_config: Option<PathBuf> = None;
 

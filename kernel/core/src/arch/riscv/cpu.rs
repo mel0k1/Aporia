@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::fmt;
 
 use ostd::{
@@ -75,12 +73,6 @@ macro_rules! copy_gp_regs {
     };
 }
 
-/// Represents the context of a signal handler.
-///
-/// This contains the context saved before a signal handler is invoked; it will be restored by
-/// `sys_rt_sigreturn`.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.15.7/source/arch/riscv/include/uapi/asm/sigcontext.h#L30>
 #[repr(C)]
 #[repr(align(16))]
 #[derive(Clone, Copy, Debug, Default, Pod)]
@@ -117,8 +109,6 @@ pub(crate) struct SigContext {
     t4: usize,
     t5: usize,
     t6: usize,
-    // In RISC-V, the signal stack layout places the FPU context directly
-    // after the general-purpose registers.
 }
 
 impl SigContext {
@@ -136,8 +126,6 @@ impl SigContext {
 }
 
 impl TryFrom<&CpuException> for PageFaultInfo {
-    // [`Err`] indicates that the [`CpuException`] is not a page fault, with no
-    // additional error information.
     type Error = ();
 
     fn try_from(value: &CpuException) -> Result<Self, ()> {
@@ -146,8 +134,6 @@ impl TryFrom<&CpuException> for PageFaultInfo {
         let (fault_addr, required_perms) = match value {
             InstructionPageFault(addr) => (addr, VmPerms::EXEC),
             LoadPageFault(addr) => (addr, VmPerms::READ),
-            // On riscv64, writable pages must also be readable.
-            // Reference: <https://riscv.github.io/riscv-isa-manual/snapshot/privileged/#translation>.
             StorePageFault(addr) => (addr, VmPerms::READ | VmPerms::WRITE),
             _ => return Err(()),
         };
@@ -156,18 +142,11 @@ impl TryFrom<&CpuException> for PageFaultInfo {
     }
 }
 
-/// CPU information to be shown in `/proc/cpuinfo`.
-///
-/// Different CPUs may have different information, such as the core ID. Therefore, [`Self::new`]
-/// should be called on every CPU.
-//
-// TODO: Implement CPU information retrieval on RISC-V platforms.
 pub(crate) struct CpuInformation {
     processor: u32,
 }
 
 impl CpuInformation {
-    /// Constructs the information for the current CPU.
     pub(crate) fn new(guard: &DisabledPreemptGuard) -> Self {
         Self {
             processor: guard.current_cpu().into(),

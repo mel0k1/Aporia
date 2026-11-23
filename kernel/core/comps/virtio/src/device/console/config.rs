@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::mem::offset_of;
 
 use aster_util::safe_ptr::SafePtr;
@@ -10,13 +8,8 @@ use crate::transport::{ConfigManager, VirtioTransport};
 bitflags::bitflags! {
     #[derive(Clone, Copy, Debug)]
     pub(super) struct ConsoleFeatures: u64 {
-        /// Configuration cols and rows are valid.
         const VIRTIO_CONSOLE_F_SIZE        = 1 << 0;
-        /// Device has support for multiple ports;
-        /// max_nr_ports is valid and control virtqueues will be used.
         const VIRTIO_CONSOLE_F_MULTIPORT   = 1 << 1;
-        /// Device has support for emergency write.
-        /// Configuration field emerg_wr is valid.
         const VIRTIO_CONSOLE_F_EMERG_WRITE = 1 << 2;
     }
 }
@@ -43,7 +36,6 @@ impl VirtioConsoleConfig {
 impl ConfigManager<VirtioConsoleConfig> {
     pub(super) fn read_config(&self) -> VirtioConsoleConfig {
         let mut console_config = VirtioConsoleConfig::new_zeroed();
-        // Only following fields are defined in legacy interface.
         console_config.cols = self
             .read_once::<u16>(offset_of!(VirtioConsoleConfig, cols))
             .unwrap();
@@ -57,13 +49,6 @@ impl ConfigManager<VirtioConsoleConfig> {
         console_config
     }
 
-    /// Performs an emergency write.
-    ///
-    /// According to the VirtIO spec 5.3.4:
-    ///
-    /// If `VIRTIO_CONSOLE_F_EMERG_WRITE` is supported then the driver can
-    /// use emergency write to output a single character without initializing
-    /// virtio queues, or even acknowledging the feature.
     #[expect(dead_code)]
     pub(super) fn emerg_write(&self, value: u32) {
         if self.is_modern() {

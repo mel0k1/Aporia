@@ -1,11 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! `FUSE_GETATTR` reads attributes for an inode, optionally using an open file
-//! handle carried in [`GetattrReq`].
-//!
-//! The reply body contains [`FuseAttrReply`], which includes the returned
-//! attributes and their cache timeout.
-
 use bitflags::bitflags;
 use ostd::mm::{Infallible, VmReader, VmWriter};
 
@@ -20,7 +12,6 @@ use crate::{
 pub struct GetattrReq {
     getattr_flags: GetattrFlags,
     dummy: u32,
-    /// File handle used when [`GetattrFlags::GETATTR_FH`] is set.
     fh: FuseFileHandle,
 }
 
@@ -34,20 +25,14 @@ impl GetattrReq {
     }
 }
 
-/// Flags for `FUSE_GETATTR` requests.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.18/source/include/uapi/linux/fuse.h#L512-L515>
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub struct GetattrFlags(u32);
 
 bitflags! {
     impl GetattrFlags: u32 {
-        /// The `fh` field is valid and identifies an open file.
         const GETATTR_FH = 1 << 0;
 
-        // This type accepts all bit patterns,
-        // although only some flags are recognized.
         const _          = !0;
     }
 }
@@ -55,16 +40,13 @@ bitflags! {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub struct FuseAttrReply {
-    /// Attribute-cache timeout in seconds.
     attr_valid: u64,
-    /// Nanosecond component of [`FuseAttrReply::attr_valid`].
     attr_valid_nsec: u32,
     dummy: u32,
     attr: Attr,
 }
 
 impl FuseAttrReply {
-    /// Creates a `FuseAttrReply` from the returned attributes and timeout.
     pub const fn new(attr_valid: u64, attr_valid_nsec: u32, attr: Attr) -> Self {
         Self {
             attr_valid,
@@ -74,17 +56,14 @@ impl FuseAttrReply {
         }
     }
 
-    /// Returns the attribute-cache timeout in seconds.
     pub fn attr_valid(&self) -> u64 {
         self.attr_valid
     }
 
-    /// Returns the nanosecond component of the attribute-cache timeout.
     pub fn attr_valid_nsec(&self) -> u32 {
         self.attr_valid_nsec
     }
 
-    /// Returns the returned inode attributes.
     pub fn attr(&self) -> Attr {
         self.attr
     }

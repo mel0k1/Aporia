@@ -1,37 +1,22 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd::mm::VmIo;
 
 use super::SyscallReturn;
 use crate::{fs::vfs::path::MNT_UNIQUE_ID_MIN, prelude::*};
 
-/// Size in bytes of the first published `mnt_id_req` layout; the only
-/// size currently accepted.
 const MNT_ID_REQ_SIZE_VER0: u32 = 24;
 
-/// Sentinel for `mnt_id_req::mnt_id` requesting the namespace root.
 const LSMT_ROOT: u64 = u64::MAX;
 
-/// `flags` bit: return descendants in descending `unique_id` order.
 const LISTMOUNT_REVERSE: u32 = 1 << 0;
 
-/// Upper bound on `nr_mnt_ids`.
-/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/fs/namespace.c#L6036>
 const LISTMOUNT_NR_LIMIT: usize = 1_000_000;
 
-/// Linux's `struct mnt_id_req`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
 struct MntIdReq {
-    /// Caller-side `sizeof(struct mnt_id_req)`.
     size: u32,
-    /// Reserved; must be zero.
     spare: u32,
-    /// Parent mount's `unique_id`, or [`LSMT_ROOT`] for the namespace
-    /// root.
     mnt_id: u64,
-    /// Pagination cursor: only descendants with `unique_id > param`
-    /// (or `<` in reverse) are returned. `0` starts from the beginning.
     param: u64,
 }
 
@@ -60,8 +45,6 @@ pub(super) fn sys_listmount(
 
     let user_space = ctx.user_space();
 
-    // Validate the output buffer up front so an invalid pointer surfaces
-    // as `EFAULT` before any namespace work is done.
     let mut mnt_ids_writer = user_space.writer(mnt_ids_ptr, nr_mnt_ids * size_of::<u64>())?;
 
     let req: MntIdReq = user_space.read_val(req_ptr)?;

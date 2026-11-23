@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use macros::impl_socket_options;
 
 use super::util::{LingerOption, SocketTimeout};
@@ -7,8 +5,6 @@ use crate::{net::socket::unix::CUserCred, prelude::*, process::Gid, util::net::S
 
 pub(in crate::net) mod macros;
 
-/// Socket options. This trait represents all options that can be set or got for a socket, including
-/// socket level options and options for specific socket type like tcp socket.
 pub(crate) trait SocketOption: Any + Send + Sync + Debug {
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;

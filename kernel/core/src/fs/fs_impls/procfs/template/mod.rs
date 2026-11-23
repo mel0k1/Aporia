@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::time::Duration;
 
 pub(super) use self::{
@@ -29,11 +27,6 @@ mod dir;
 mod file;
 mod sym;
 
-/// Shared procfs inode state.
-///
-/// FIXME: Procfs permissions should be checked during each operation, not by relying on mutable
-/// inode ownership. See Linux comment:
-/// <https://elixir.bootlin.com/linux/v6.13/source/fs/proc/base.c#L107>.
 struct Common {
     metadata: RwLock<Metadata>,
     extension: Extension,
@@ -60,11 +53,6 @@ impl Common {
 
         let credentials = owner_thread.as_posix_thread().unwrap().credentials();
         let mut metadata = self.metadata.write();
-        // Cache the dynamic owner into the metadata so that if the thread
-        // later exits, subsequent calls fall back to the last known owner
-        // instead of the root user. This is a best-effort attempt to align
-        // with Linux behavior. See:
-        // <https://github.com/asterinas/asterinas/pull/3164#discussion_r3212307770>.
         metadata.uid = credentials.euid();
         metadata.gid = credentials.egid();
         *metadata

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::SyscallReturn;
 use crate::{
     fs::{
@@ -93,7 +91,6 @@ fn to_optional_id<T>(id: i32, f: impl Fn(u32) -> T) -> Result<Option<T>> {
     let id = if id >= 0 {
         Some(f(id as u32))
     } else if id == -1 {
-        // If the owner or group is specified as -1, then that ID is not changed.
         None
     } else {
         return Err(errno!(EINVAL));

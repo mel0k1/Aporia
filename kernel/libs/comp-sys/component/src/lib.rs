@@ -1,8 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Component system
-//!
-
 #![no_std]
 #![deny(unsafe_code)]
 
@@ -18,24 +13,8 @@ use alloc::{
 
 pub use component_macro::*;
 pub use inventory::submit;
-// This crate intentionally uses the `log` crate directly (not `ostd::log`)
-// because it is a standalone framework crate that does not depend on OSTD.
-// Messages are forwarded to the OSTD logger via the `LogCrateBridge`.
 use log::{debug, error, info};
 
-/// The initialization stages of the component system.
-///
-/// - `Bootstrap`: The earliest stage, called after OSTD initialization is
-///   complete but before kernel subsystem initialization begins. This stage
-///   runs on the BSP (Bootstrap Processor) only, before SMP (Symmetric
-///   Multi-Processing) is enabled. Components in this stage can initialize
-///   core kernel services that other components depend on.
-/// - `Kthread`: The kernel thread stage, initialized after SMP is enabled
-///   and the first kernel thread is spawned. This stage runs in the context
-///   of the first kernel thread on the BSP.
-/// - `Process`: The process stage, initialized after the first user process
-///   is created. This stage runs in the context of the first user process,
-///   and prepares the system for user-space execution.
 #[derive(Debug, Eq, PartialEq)]
 pub enum InitStage {
     Bootstrap,
@@ -134,18 +113,6 @@ pub enum ComponentSystemInitError {
     NotIncludeAllComponent(String),
 }
 
-/// Initializes the component system for a specific stage.
-///
-/// It collects all functions marked with the `init_component` macro, filters them
-/// according to the given stage, and invokes them in the correct order while honoring
-/// dependencies and priorities between crates.
-///
-/// The collection of ComponentInfo usually generate by `parse_metadata` macro.
-///
-/// ```rust
-///     component::init_all(component::InitStage::Bootstrap, component::parse_metadata!());
-/// ```
-///
 pub fn init_all(
     stage: InitStage,
     components: Vec<ComponentInfo>,
@@ -164,7 +131,6 @@ fn parse_input(components: Vec<ComponentInfo>) -> BTreeMap<String, ComponentInfo
     out
 }
 
-/// Match the ComponentInfo with ComponentRegistry. The key is the relative path of one component
 fn match_and_call(
     stage: InitStage,
     mut components: BTreeMap<String, ComponentInfo>,
@@ -175,13 +141,8 @@ fn match_and_call(
             continue;
         }
 
-        // relative/path/to/comps/pci/src/lib.rs
         let mut str: String = registry.path.to_owned();
         str = str.replace('\\', "/");
-        // relative/path/to/comps/pci
-        // There are two cases, one in the test folder and one in the src folder.
-        // There may be multiple directories within the folder.
-        // There we assume it will not have such directories: 'comp1/src/comp2/src/lib.rs' so that we can split by tests or src string
         if str.contains("src/") {
             str = str
                 .trim_end_matches(str.get(str.find("src/").unwrap()..str.len()).unwrap())

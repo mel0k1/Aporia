@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use std::{
     fs::remove_dir_all,
     path::{Path, PathBuf},
@@ -59,14 +57,12 @@ fn create_two_crates_in_workspace() {
     }
 
     create_workspace(WORKSPACE_NAME, &[LIB_NAME]);
-    // Create lib crate
     let mut command = cargo_osdk(["new", LIB_NAME]);
     command.current_dir(WORKSPACE_NAME);
     let output = command.output().unwrap();
     assert_success(&output);
 
     add_member_to_workspace(WORKSPACE_NAME, KERNEL_NAME);
-    // Create kernel crate
     let mut command = cargo_osdk(["new", "--kernel", KERNEL_NAME]);
     command.current_dir(WORKSPACE_NAME);
     let output = command.output().unwrap();

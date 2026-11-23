@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::num::NonZeroU8;
 
 use int_to_c_enum::TryFromInt;
@@ -12,10 +10,6 @@ use crate::{
     prelude::*,
 };
 
-/// Socket options for IP socket.
-///
-/// The raw definitions can be found at:
-/// <https://elixir.bootlin.com/linux/v6.0.19/source/include/uapi/linux/in.h#L94>.
 #[expect(non_camel_case_types)]
 #[expect(clippy::upper_case_acronyms)]
 #[repr(i32)]
@@ -141,7 +135,6 @@ impl ReadIpOption for IpTtl {
     }
 }
 
-// Reference: <https://elixir.bootlin.com/linux/v7.2.5/source/net/ipv4/ip_sockglue.c#L927-L936>.
 fn read_ip_int(addr: Vaddr, max_len: u32) -> Result<i32> {
     if max_len >= size_of::<i32>() as u32 {
         Ok(current_userspace!().read_val::<i32>(addr)?)

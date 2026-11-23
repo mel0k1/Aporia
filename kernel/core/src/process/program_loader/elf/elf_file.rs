@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::ops::Range;
 
 use xmas_elf::{
@@ -13,7 +11,6 @@ use crate::{
     vm::{perms::VmPerms, vmar::VMAR_CAP_ADDR},
 };
 
-/// A wrapper for the [`xmas_elf`] ELF parser.
 pub(crate) struct ElfHeaders {
     elf_header: ElfHeader,
     loadable_phdrs: Vec<LoadablePhdr>,
@@ -22,22 +19,14 @@ pub(crate) struct ElfHeaders {
 }
 
 impl ElfHeaders {
-    /// The minimized length of a valid ELF header.
-    ///
-    /// [`Self::parse`] will fail with [`ENOEXEC`] if the slice is shorter than this constant. This
-    /// can also be checked manually if a different error code is expected.
-    ///
-    /// [`ENOEXEC`]: Errno::ENOEXEC
     pub(super) const LEN: usize = size_of::<HeaderPt1>() + size_of::<HeaderPt2_64>();
 
     pub(crate) fn parse(input: &[u8]) -> Result<Self> {
-        // Parse the ELF header.
         let header = header::parse_header(input)
             .map_err(|_| errno!(ENOEXEC, "the ELF header is invalid"))?;
         let elf_header = ElfHeader::parse(header)?;
         check_elf_header(&elf_header)?;
 
-        // Validate the placement of the ELF program headers.
         let ph_count = elf_header.pt2.ph_count;
         let ph_entry_size = elf_header.pt2.ph_entry_size;
         let ph_offset = elf_header.pt2.ph_offset;
@@ -50,16 +39,12 @@ impl ElfHeaders {
         if ph_offset >= input.len() as u64
             || (input.len() as u64 - ph_offset) / (ph_entry_size as u64) < (ph_count as u64)
         {
-            // TODO: Currently, the program headers must follow the ELF header immediately (they
-            // must reside in `input`, the first page of the ELF file). This requirement may be
-            // relaxed in the future.
             return Err(errno!(
                 ENOEXEC,
                 "the placement of ELF program headers is not supported"
             ));
         }
 
-        // Parse the ELF program headers.
         let mut loadable_phdrs = Vec::with_capacity(ph_count as usize);
         let mut max_load_align = PAGE_SIZE;
         let mut interp_phdr = None;
@@ -75,14 +60,11 @@ impl ElfHeaders {
             match ph64.get_type() {
                 Ok(program::Type::Load) => {
                     loadable_phdrs.push(LoadablePhdr::parse(&ph64)?);
-                    // Like Linux, we ignore any invalid alignment requirements that are not a
-                    // power of two.
                     if ph64.align.is_power_of_two() {
                         max_load_align = max_load_align.max(ph64.align as usize);
                     }
                 }
                 Ok(program::Type::Interp) if interp_phdr.is_none() => {
-                    // Like Linux, we only handle the first interpreter program header.
                     interp_phdr = Some(InterpPhdr::parse(&ph64)?);
                 }
                 _ => (),
@@ -100,46 +82,34 @@ impl ElfHeaders {
         })
     }
 
-    /// Returns whether the ELF is a shared object.
     pub(super) fn is_shared_object(&self) -> bool {
         self.elf_header.pt2.type_.as_type() == header::Type::SharedObject
     }
 
-    /// Returns the address of the entry point.
     pub(super) fn entry_point(&self) -> Vaddr {
         self.elf_header.pt2.entry_point as Vaddr
     }
 
-    /// Returns the number of the program headers.
     pub(super) fn ph_count(&self) -> u16 {
         self.elf_header.pt2.ph_count
     }
 
-    /// Returns the size of a program header.
     pub(super) fn ph_ent(&self) -> u16 {
         self.elf_header.pt2.ph_entry_size
     }
 
-    /// Returns a reference to the loadable program headers.
-    ///
-    /// It is guaranteed that there is at least one loadable program header.
     pub(super) fn loadable_phdrs(&self) -> &[LoadablePhdr] {
         self.loadable_phdrs.as_slice()
     }
 
-    /// Returns the maximum alignment of the loadable program headers.
-    ///
-    /// It is guaranteed that the alignment is a power of two and is at least [`PAGE_SIZE`].
     pub(super) fn max_load_align(&self) -> usize {
         self.max_load_align
     }
 
-    /// Returns a reference to the interpreter program header.
     pub(super) fn interp_phdr(&self) -> Option<&InterpPhdr> {
         self.interp_phdr.as_ref()
     }
 
-    /// Finds the virtual address of the program headers.
     pub(super) fn find_vaddr_of_phdrs(&self) -> Result<Vaddr> {
         let ph_offset = self.elf_header.pt2.ph_offset as usize;
         for loadable_phdrs in self.loadable_phdrs.iter() {
@@ -154,7 +124,6 @@ impl ElfHeaders {
         ))
     }
 
-    /// Calculates the virtual address bounds of all segments as a range.
     pub(super) fn calc_total_vaddr_bounds(&self) -> Range<Vaddr> {
         self.loadable_phdrs
             .iter()
@@ -164,7 +133,6 @@ impl ElfHeaders {
             .unwrap()
     }
 
-    /// Finds the last loadable segment and returns its virtual address bounds.
     pub(super) fn find_last_vaddr_bound(&self) -> Option<Range<Vaddr>> {
         self.loadable_phdrs
             .iter()
@@ -248,7 +216,6 @@ fn check_elf_header(elf_header: &ElfHeader) -> Result<()> {
     const EXPECTED_ELF_MACHINE: header::Machine = header::Machine::X86_64;
     #[cfg(target_arch = "riscv64")]
     const EXPECTED_ELF_MACHINE: header::Machine = header::Machine::RISC_V;
-    // Reference: <https://loongson.github.io/LoongArch-Documentation/LoongArch-ELF-ABI-EN.html#_e_machine_identifies_the_machine>
     #[cfg(target_arch = "loongarch64")]
     const EXPECTED_ELF_MACHINE: header::Machine = header::Machine::Other(258);
     #[cfg(target_arch = "aarch64")]
@@ -261,8 +228,6 @@ fn check_elf_header(elf_header: &ElfHeader) -> Result<()> {
     if elf_header.pt1.data() != header::Data::LittleEndian {
         return Err(errno!(ENOEXEC, "the ELF file is not in little endian"));
     }
-
-    // TODO: Should we check `pt1.os_abi()` or `pt1.version()`?
 
     if elf_header.pt2.machine.as_machine() != EXPECTED_ELF_MACHINE {
         return Err(errno!(
@@ -279,7 +244,6 @@ fn check_elf_header(elf_header: &ElfHeader) -> Result<()> {
     Ok(())
 }
 
-/// A ELF program header of the type [`program::Type::Load`].
 pub(super) struct LoadablePhdr {
     virt_range: Range<Vaddr>,
     file_range: Range<usize>,
@@ -327,22 +291,14 @@ impl LoadablePhdr {
         })
     }
 
-    /// Returns the virtual address range.
-    ///
-    /// The range is guaranteed to be below [`VMAR_CAP_ADDR`] and non-empty.
     pub(super) fn virt_range(&self) -> &Range<Vaddr> {
         &self.virt_range
     }
 
-    /// Returns the file offset range.
-    ///
-    /// The range is guaranteed to be below [`i64::MAX`]. It will also be shorter than the virtual
-    /// address range ([`Self::virt_range`]) and have the same offset within a page as that range.
     pub(super) fn file_range(&self) -> &Range<usize> {
         &self.file_range
     }
 
-    /// Returns the permission to map the virtual memory.
     pub(super) fn vm_perms(&self) -> VmPerms {
         self.vm_perms
     }
@@ -362,7 +318,6 @@ fn parse_segment_perm(flags: program::Flags) -> VmPerms {
     vm_perm
 }
 
-/// A ELF program header of the type [`program::Type::Interp`].
 pub(super) struct InterpPhdr {
     file_offset: usize,
     file_size: u16,
@@ -392,9 +347,7 @@ impl InterpPhdr {
         })
     }
 
-    /// Reads the LDSO path from the ELF file.
     pub(super) fn read_ldso_path(&self, elf_file: &Arc<dyn FileLike>) -> Result<CString> {
-        // Note that `self.file_size` is at most `PATH_SIZE`.
         let file_size = self.file_size as usize;
         let mut buffer = vec![0; file_size];
         if elf_file.read_bytes_at(self.file_offset, &mut buffer)? != file_size {

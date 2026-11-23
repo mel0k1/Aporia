@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::sync::Arc;
 use core::time::Duration;
 
@@ -10,23 +8,19 @@ use spin::Once;
 
 use crate::time::{self, Clock, timer::TimerManager};
 
-/// A clock that reads the jiffies and turns the counter into a `Duration`.
 pub(crate) struct JiffiesClock {
     _private: (),
 }
 
-/// A clock that provides the current real time.
 pub(crate) struct RealTimeClock {
     _private: (),
 }
 
 impl RealTimeClock {
-    /// Gets the singleton of this clock.
     pub(crate) fn get() -> &'static Arc<RealTimeClock> {
         CLOCK_REALTIME_INSTANCE.get().unwrap()
     }
 
-    /// Gets the CPU-local system-wide [`TimerManager`] singleton of this clock.
     pub(crate) fn timer_manager() -> &'static Arc<TimerManager> {
         let preempt_guard = disable_preempt();
         CLOCK_REALTIME_MANAGER
@@ -36,19 +30,15 @@ impl RealTimeClock {
     }
 }
 
-/// A clock that measures time in a way that is monotonically increasing
-/// since the system was booted.
 pub(crate) struct MonotonicClock {
     _private: (),
 }
 
 impl MonotonicClock {
-    /// Gets the singleton of this clock.
     pub(crate) fn get() -> &'static Arc<MonotonicClock> {
         CLOCK_MONOTONIC_INSTANCE.get().unwrap()
     }
 
-    /// Gets the CPU-local system-wide [`TimerManager`] singleton of this clock.
     pub(crate) fn timer_manager() -> &'static Arc<TimerManager> {
         let preempt_guard = disable_preempt();
         CLOCK_MONOTONIC_MANAGER
@@ -58,25 +48,15 @@ impl MonotonicClock {
     }
 }
 
-/// A coarse-grained version of the real-time clock.
-///
-/// This clock will maintain a record to [`RealTimeClock`]. This record
-/// will be updated during each system timer interruption. Reading this clock
-/// will directly reads the value of the record instead of calculating the time
-/// based on the clocksource. Therefore, it is faster but less accurate.
-///
-/// Usually, it will not be used to create a timer.
 pub(crate) struct RealTimeCoarseClock {
     _private: (),
 }
 
 impl RealTimeCoarseClock {
-    /// Gets the singleton of this clock.
     pub(crate) fn get() -> &'static Arc<RealTimeCoarseClock> {
         CLOCK_REALTIME_COARSE_INSTANCE.get().unwrap()
     }
 
-    /// Returns a reference to the current value of this clock.
     fn current_ref() -> &'static Once<SpinLock<Duration>> {
         static CURRENT: Once<SpinLock<Duration>> = Once::new();
 
@@ -84,53 +64,35 @@ impl RealTimeCoarseClock {
     }
 }
 
-/// A coarse-grained version of the monotonic clock.
-///
-/// This clock is based on [`RealTimeCoarseClock`].
-///
-/// Usually, it will not be used to create a timer.
 pub(crate) struct MonotonicCoarseClock {
     _private: (),
 }
 
 impl MonotonicCoarseClock {
-    /// Gets the singleton of this clock.
     pub(crate) fn get() -> &'static Arc<MonotonicCoarseClock> {
         CLOCK_MONOTONIC_COARSE_INSTANCE.get().unwrap()
     }
 }
 
-/// A clock that provides raw monotonic time that is not influenced by NTP corrections.
-///
-/// Note: Currently, we have not implement NTP corrections, so we treat this clock as the
-/// [`MonotonicClock`].
 pub(crate) struct MonotonicRawClock {
     _private: (),
 }
 
 impl MonotonicRawClock {
-    /// Gets the singleton of this clock.
     pub(crate) fn get() -> &'static Arc<MonotonicRawClock> {
         CLOCK_MONOTONIC_RAW_INSTANCE.get().unwrap()
     }
 }
 
-/// A clock that measures the time elapsed since the system was booted, including time when the
-/// system was suspended.
-///
-/// Note: Currently, the system will not be suspended, so we treat this clock as the
-/// [`MonotonicClock`].
 pub(crate) struct BootTimeClock {
     _private: (),
 }
 
 impl BootTimeClock {
-    /// Gets the singleton of this clock.
     pub(crate) fn get() -> &'static Arc<BootTimeClock> {
         CLOCK_BOOTTIME_INSTANCE.get().unwrap()
     }
 
-    /// Gets the CPU-local system-wide [`TimerManager`] singleton of this clock.
     pub(crate) fn timer_manager() -> &'static Arc<TimerManager> {
         let preempt_guard = disable_preempt();
         CLOCK_BOOTTIME_MANAGER
@@ -182,7 +144,6 @@ impl Clock for BootTimeClock {
     }
 }
 
-/// Defines the system-wide clocks.
 macro_rules! define_system_clocks {
     ($($clock_id:ident => $clock_type:ident,)*) => {
         $(
@@ -206,7 +167,6 @@ macro_rules! define_system_clocks {
     }
 }
 
-/// Defines the timer managers of some system-wide clocks.
 macro_rules! define_timer_managers {
     ($($clock_id:ident,)*) => {
         $(
@@ -250,17 +210,14 @@ define_system_clocks! {
 
 define_timer_managers![CLOCK_REALTIME, CLOCK_MONOTONIC, CLOCK_BOOTTIME,];
 
-/// Initializes the system-wide clocks.
 fn init_system_wide_clocks() {
     _init_system_wide_clocks();
 }
 
-/// Initializes the system-wide CPU-local [`TimerManager`]s.
 fn init_system_wide_timer_managers() {
     _init_system_wide_timer_managers();
 }
 
-/// The system-wide [`TimerManager`] for the [`JiffiesClock`].
 pub(crate) static JIFFIES_TIMER_MANAGER: Once<Arc<TimerManager>> = Once::new();
 
 fn init_jiffies_clock_manager() {
@@ -296,9 +253,6 @@ pub(super) fn init() {
     init_coarse_clock();
 }
 
-/// Initializes `CLOCK_REALTIME_MANAGER` for process-related kernel tests.
-//
-// TODO: Enhance `ktest` to allow the registration of initialization functions.
 #[cfg(ktest)]
 pub(crate) fn init_for_ktest() {
     for cpu in ostd::cpu::all_cpus() {

@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Ramfs based on PageCache
-
 pub(crate) use fs::RamFs;
 use fs::RamFsType;
 pub(super) use fs::RamInode;

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd::sync::{WaitQueue, Waiter};
 
 use super::sig_mask::SigMask;
@@ -16,26 +14,7 @@ use crate::{
     },
 };
 
-/// `Pause` is an extension trait to make [`Waiter`] and [`WaitQueue`] signal aware.
-///
-/// The original methods of `Waiter` and `WaitQueue` only allow a thread
-/// to wait (via `wait`) until it is woken up (via `wake_up`, `wake_one`, or `wake_all`)
-/// or a condition is met (via `wait_until`).
-/// The `WaitTimeout` extension trait grants the extra ability
-/// to wait until a timeout (via `wait_until_or_timeout`).
-/// On top of `WaitTimeout`, this `Pause` trait provides the `pause`-family methods,
-/// which are similar to the `wait`-family methods except that the methods also return
-/// when the waiting thread is interrupted by a POSIX signal.
-/// When this happens, the `pause`-family methods return `Err(EINTR)`.
 pub(crate) trait Pause: WaitTimeout {
-    /// Pauses until the condition is met or a signal interrupts.
-    ///
-    /// # Errors
-    ///
-    /// This method will return an error with [`EINTR`] if a signal is received before the
-    /// condition is met.
-    ///
-    /// [`EINTR`]: crate::error::Errno::EINTR
     #[track_caller]
     fn pause_until<F, R>(&self, cond: F) -> Result<R>
     where
@@ -44,19 +23,6 @@ pub(crate) trait Pause: WaitTimeout {
         self.pause_until_or_timeout_impl(cond, None, PauseReason::Sleep)
     }
 
-    /// Pauses until the condition is met or a signal interrupts.
-    ///
-    /// This pause happens due to the reason specified. If the reason is `PauseReason::Sleep`,
-    /// the caller should use `pause_until` straightforwardly.
-    ///
-    /// If the reason is `PauseReason::StopByPtrace`, it can only be interrupted by `SIGKILL`.
-    ///
-    /// # Errors
-    ///
-    /// This method will return an error with [`EINTR`] if a signal is received before the
-    /// condition is met.
-    ///
-    /// [`EINTR`]: crate::error::Errno::EINTR
     #[track_caller]
     fn pause_until_by<F, R>(&self, cond: F, reason: PauseReason) -> Result<R>
     where
@@ -65,16 +31,6 @@ pub(crate) trait Pause: WaitTimeout {
         self.pause_until_or_timeout_impl(cond, None, reason)
     }
 
-    /// Pauses until the condition is met, the timeout is reached, or a signal interrupts.
-    ///
-    /// # Errors
-    ///
-    /// Before the condition is met, this method will return an error with
-    ///  - [`EINTR`] if a signal is received;
-    ///  - [`ETIME`] if the timeout is reached.
-    ///
-    /// [`ETIME`]: crate::error::Errno::ETIME
-    /// [`EINTR`]: crate::error::Errno::EINTR
     #[track_caller]
     fn pause_until_or_timeout<'a, F, T, R>(&self, mut cond: F, timeout: T) -> Result<R>
     where
@@ -90,16 +46,6 @@ pub(crate) trait Pause: WaitTimeout {
         self.pause_until_or_timeout_impl(cond, timeout_inner, PauseReason::Sleep)
     }
 
-    /// Pauses until the condition is met, the timeout is reached, or a signal interrupts.
-    ///
-    /// # Errors
-    ///
-    /// Before the condition is met, this method will return an error with
-    ///  - [`EINTR`] if a signal is received;
-    ///  - [`ETIME`] if the timeout is reached.
-    ///
-    /// [`ETIME`]: crate::error::Errno::ETIME
-    /// [`EINTR`]: crate::error::Errno::EINTR
     #[doc(hidden)]
     #[track_caller]
     fn pause_until_or_timeout_impl<F, R>(
@@ -111,16 +57,6 @@ pub(crate) trait Pause: WaitTimeout {
     where
         F: FnMut() -> Option<R>;
 
-    /// Pauses until the thread is woken up, the timeout is reached, or a signal interrupts.
-    ///
-    /// # Errors
-    ///
-    /// This method will return an error with
-    ///  - [`EINTR`] if a signal is received;
-    ///  - [`ETIME`] if the timeout is reached.
-    ///
-    /// [`ETIME`]: crate::error::Errno::ETIME
-    /// [`EINTR`]: crate::error::Errno::EINTR
     #[track_caller]
     fn pause_timeout(&self, timeout: &TimeoutExt<'_>) -> Result<()>;
 }
@@ -135,9 +71,6 @@ impl Pause for Waiter {
     where
         F: FnMut() -> Option<R>,
     {
-        // No fast paths for `Waiter`. If the caller wants a fast path, it should do so _before_
-        // the waiter is created.
-
         let Some(posix_thread) = self
             .task()
             .as_thread()
@@ -183,7 +116,6 @@ impl Pause for Waiter {
 
         if let Some(posix_thread) = posix_thread_opt {
             posix_thread.set_signalled_waker(self.waker(), PauseReason::Sleep);
-            // Check `has_pending` after `set_signalled_waker` to avoid race conditions.
             if posix_thread.has_pending() {
                 posix_thread.clear_signalled_waker();
                 return Err(errno!(
@@ -204,7 +136,6 @@ impl Pause for Waiter {
             if timer_guard.remain().is_zero() {
                 return Err(errno!(ETIME, "the time limit is reached"));
             }
-            // If the timeout is not expired, cancel the timer manually.
             timer_guard.cancel();
         }
 
@@ -232,7 +163,6 @@ impl Pause for WaitQueue {
     where
         F: FnMut() -> Option<R>,
     {
-        // Fast path:
         if let Some(res) = cond() {
             return Ok(res);
         }
@@ -250,7 +180,6 @@ impl Pause for WaitQueue {
     }
 }
 
-/// The reason why a process is paused by a `pause`-family method.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum PauseReason {
     Sleep,
@@ -258,20 +187,16 @@ pub(crate) enum PauseReason {
     StopByPtrace,
 }
 
-/// Executes a closure after temporarily adjusting the signal mask of the current POSIX thread.
 pub(crate) fn with_sigmask_changed<R>(
     ctx: &Context,
     mask_op: impl FnOnce(SigMask) -> SigMask,
     operate: impl FnOnce() -> R,
 ) -> R {
-    // Save the original signal mask and apply the mask updates.
     let old_mask = ctx.posix_thread.sig_mask();
     ctx.set_sig_mask(mask_op(old_mask));
 
-    // Perform the operation.
     let res = operate();
 
-    // Restore the original signal mask.
     ctx.set_sig_mask(old_mask);
 
     res

@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! This module contains subcommands of cargo-osdk.
-
 mod build;
 mod debug;
 mod new;
@@ -14,16 +10,11 @@ pub use self::{
     build::execute_build_command, debug::execute_debug_command, new::execute_new_command,
     profile::execute_profile_command, run::execute_run_command, test::execute_test_command,
 };
-
 use crate::{arch::get_default_arch, error_msg};
 
-/// Execute the forwarded cargo command with arguments.
-///
-/// The `cfg_ktest` parameter controls whether `cfg(ktest)` is enabled.
 pub fn execute_forwarded_command(subcommand: &str, args: &Vec<String>, cfg_ktest: bool) {
     let mut cargo = util::cargo();
     cargo.arg(subcommand);
-    // `cargo-udeps` doesn't accept `-Z` arguments.
     if subcommand != "udeps" {
         cargo.args(util::COMMON_CARGO_ARGS);
     }
@@ -42,8 +33,6 @@ pub fn execute_forwarded_command(subcommand: &str, args: &Vec<String>, cfg_ktest
 
     cargo.env("RUSTFLAGS", rustflags);
 
-    // When generating documentation via `cargo doc`, the `--check-cfg cfg(ktest)` flag
-    // must be specified in both `RUSTFLAGS` and `RUSTDOCFLAGS`.
     if subcommand == "doc" {
         let env_rustdocflags = std::env::var("RUSTDOCFLAGS").unwrap_or_default();
         let rustdocflags = env_rustdocflags + " --check-cfg cfg(ktest)";

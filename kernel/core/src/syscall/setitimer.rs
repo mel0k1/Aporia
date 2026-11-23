@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::time::Duration;
 
 use ostd::mm::VmIo;
@@ -10,7 +8,6 @@ use crate::{
     time::{itimerval_t, timer::Timeout, timeval_t},
 };
 
-/// `ItimerType` is used to differ the target timer for some timer-related syscalls.
 #[expect(non_camel_case_types)]
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, PartialEq, TryFromInt)]
@@ -52,7 +49,6 @@ pub(super) fn sys_setitimer(
 
     timer_guard.set_interval(interval);
     if expire_time == Duration::ZERO {
-        // Clear previous timer
         timer_guard.cancel();
     } else {
         timer_guard.set_timeout(Timeout::After(expire_time));

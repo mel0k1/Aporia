@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 pub mod file;
 mod fs_impls;
 pub(crate) mod initramfs;
@@ -56,7 +54,6 @@ pub(crate) fn init_in_first_process(ctx: &Context) {
             .unwrap();
     }
 
-    // Initialize the file table for the first process.
     let tty_path = FsPath::try_from("/dev/console").unwrap();
     let stdin = {
         let open_args = OpenArgs::from_modes(AccessMode::O_RDONLY, mkmod!(u+r));

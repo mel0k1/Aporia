@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::{
     boxed::Box,
     collections::BTreeMap,
@@ -12,20 +10,11 @@ use ostd::mm::PAGE_SIZE;
 
 use crate::gem::object::DrmGemObject;
 
-/// A userspace-visible byte offset in the fake GEM mmap-offset space.
 pub(super) type DrmMmapOffset = u64;
 
-// The fake mmap-offset address space mirrors Linux's DRM VMA manager.
-// It starts above offsets that may represent positions in a real file,
-// and reserves a larger, architecture-dependent range for GEM object mappings.
-//
-// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/drm/drm_vma_manager.h#L32-L42>.
 const DRM_MMAP_OFFSET_START_PAGE: u64 = ((u32::MAX as u64) / PAGE_SIZE as u64) + 1;
 const DRM_MMAP_OFFSET_PAGE_COUNT: u64 = ((u32::MAX as u64) / PAGE_SIZE as u64) * 256;
 
-/// The device-wide mmap-offset namespace for GEM objects.
-///
-/// The offsets are handle-like tokens rather than positions in a real file.
 #[derive(Debug)]
 pub(crate) struct DrmGemMmapOffsetSpace {
     free_ranges: BTreeMap<u64, u64>,
@@ -46,7 +35,6 @@ impl Default for DrmGemMmapOffsetSpace {
 }
 
 impl DrmGemMmapOffsetSpace {
-    /// Returns an object's mmap offset, allocating its range if necessary.
     pub(crate) fn get_or_allocate_offset(&mut self, gem_object: &Arc<DrmGemObject>) -> Result<u64> {
         if let Some(offset) = gem_object.mmap_offset() {
             return Ok(offset);
@@ -55,7 +43,6 @@ impl DrmGemMmapOffsetSpace {
         self.reclaim_dead_ranges();
 
         let size = gem_object.size();
-        // All supported targets have pointer widths no greater than 64 bits.
         let page_count = (size / PAGE_SIZE) as u64;
 
         let (best_start, best_len) = self
@@ -85,18 +72,12 @@ impl DrmGemMmapOffsetSpace {
         Ok(offset)
     }
 
-    /// Resolves a range in the fake mmap-offset space and creates its mapped object.
-    ///
-    /// This validates the range and the client's access before delegating to the
-    /// owning GEM object.
     pub(crate) fn create_mapped_object(
         &self,
         client_id: u64,
         offset: usize,
         size: usize,
     ) -> Result<Box<dyn MappedObject>> {
-        // All supported targets have pointer widths no greater than 64 bits,
-        // so converting page counts from `usize` to `u64` is lossless.
         let start_page = (offset / PAGE_SIZE) as u64;
         let page_count = (size / PAGE_SIZE) as u64;
         if page_count == 0 {
@@ -171,7 +152,6 @@ impl DrmGemMmapOffsetSpace {
     }
 }
 
-/// An allocation whose start page is the corresponding `allocated_ranges` key.
 #[derive(Debug)]
 struct DrmMmapOffsetAllocation {
     page_count: u64,

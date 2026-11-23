@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use lending_iterator::LendingIterator;
 
 use super::{CpioDecoder, FileType, error::*};
@@ -23,7 +21,6 @@ fn decoder() {
     let manifest_path = std::env::var("CARGO_MANIFEST_DIR").unwrap();
     let manifest_path = std::path::Path::new(manifest_path.as_str());
 
-    // Prepare the cpio buffer
     let buffer = {
         let mut find_process = Command::new("find")
             .arg(manifest_path.as_os_str())
@@ -43,7 +40,6 @@ fn decoder() {
     };
 
     let mut decoder = CpioDecoder::new(buffer.as_slice());
-    // 1st entry must be the root entry
     {
         let entry = decoder.next().unwrap().unwrap();
         assert_eq!(entry.name(), manifest_path.as_os_str());
@@ -51,7 +47,6 @@ fn decoder() {
         assert!(entry.metadata().ino() > 0);
     }
 
-    // Other entries
     while let Some(decode_result) = decoder.next() {
         let mut entry = decode_result.unwrap();
         assert!(entry.metadata().ino() > 0);

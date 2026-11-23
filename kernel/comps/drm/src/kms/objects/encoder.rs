@@ -1,17 +1,9 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::sync::Weak;
 
 use ostd::sync::Mutex;
 
 use crate::kms::objects::{KmsObjectId, KmsObjectIndex, KmsObjectMask, crtc::DrmCrtc};
 
-/// A hardware or virtual block that converts a CRTC's pixel stream for output.
-///
-/// An encoder records which CRTCs can feed it and which peer encoders may clone the same output.
-///
-/// Its current CRTC is mutable routing state,
-/// while the compatibility masks use per-type object indices to describe the device's fixed KMS topology.
 #[derive(Debug)]
 pub struct DrmEncoder {
     id: KmsObjectId,
@@ -59,19 +51,13 @@ impl DrmEncoder {
     }
 }
 
-/// Immutable configuration of a DRM encoder.
 #[derive(Debug)]
 pub(super) struct DrmEncoderConfig {
     pub type_: DrmEncoderType,
-    /// Each bit represents a CRTC's per-type registration index.
     pub possible_crtcs: KmsObjectMask,
-    /// Each bit represents an encoder's per-type registration index.
     pub possible_clones: KmsObjectMask,
 }
 
-/// `macro DRM_MODE_ENCODER_X` in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm_mode.h#L365-L373>.
 #[repr(u32)]
 #[derive(Clone, Copy, Debug)]
 pub enum DrmEncoderType {

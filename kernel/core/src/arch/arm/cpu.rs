@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::fmt;
 
 use ostd::{
@@ -75,12 +73,6 @@ macro_rules! copy_gp_regs {
     };
 }
 
-/// Represents the context of a signal handler.
-///
-/// This contains the context saved before a signal handler is invoked; it will be restored by
-/// `sys_rt_sigreturn`.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.15.7/source/arch/arm64/include/uapi/asm/sigcontext.h#L28>
 #[repr(C)]
 #[repr(align(16))]
 #[derive(Clone, Copy, Debug, Default, Pod)]
@@ -91,8 +83,6 @@ pub(crate) struct SigContext {
     pc: u64,
     pstate: u64,
     _pad: u64,
-    // In ARM, the signal stack layout places the FPU context directly
-    // after the general-purpose registers.
 }
 
 impl SigContext {
@@ -126,8 +116,6 @@ impl SigContext {
 }
 
 impl TryFrom<&CpuException> for PageFaultInfo {
-    // [`Err`] indicates that the [`CpuException`] is not a page fault, with no
-    // additional error information.
     type Error = ();
 
     fn try_from(value: &CpuException) -> Result<Self, ()> {
@@ -147,18 +135,11 @@ impl TryFrom<&CpuException> for PageFaultInfo {
     }
 }
 
-/// CPU information to be shown in `/proc/cpuinfo`.
-///
-/// Different CPUs may have different information, such as the core ID. Therefore, [`Self::new`]
-/// should be called on every CPU.
-//
-// TODO: Implement CPU information retrieval on ARM platforms.
 pub(crate) struct CpuInformation {
     processor: u32,
 }
 
 impl CpuInformation {
-    /// Constructs the information for the current CPU.
     pub(crate) fn new(guard: &DisabledPreemptGuard) -> Self {
         Self {
             processor: guard.current_cpu().into(),

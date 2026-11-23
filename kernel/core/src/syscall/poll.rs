@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::{cell::Cell, mem::offset_of, time::Duration};
 
 use ostd::mm::VmIo;
@@ -60,7 +58,6 @@ pub(super) fn do_sys_poll(
             read_addr += size_of::<c_pollfd>();
 
             let poll_fd = PollFd::from(c_poll_fd);
-            // Always clear the `revents` field first.
             poll_fd.revents().set(IoEvents::empty());
             poll_fds.push(poll_fd);
         }
@@ -75,13 +72,10 @@ pub(super) fn do_sys_poll(
 
     let result = do_poll(&poll_fds, timeout.as_ref(), ctx);
 
-    // Write back -- even when `do_poll` returns an error
-    // because the `revents` field may contain garbage and must be cleared.
     let mut write_addr = fds;
     for pollfd in poll_fds {
         let revents = pollfd.revents().get().bits() as i16;
 
-        // Update the `revents` field only. Keep all other fields unchanged.
         user_space.write_val(write_addr + offset_of!(c_pollfd, revents), &revents)?;
         write_addr += size_of::<c_pollfd>();
     }
@@ -112,8 +106,6 @@ pub(super) fn do_poll(
     loop {
         match poller.wait() {
             Ok(()) => (),
-            // We should return zero if the timeout expires
-            // before any file descriptors are ready.
             Err(err) if err.error() == Errno::ETIME => return Ok(0),
             Err(err) => return Err(err),
         };
@@ -136,7 +128,6 @@ enum CowFiles<'a> {
 }
 
 impl<'a> PollFiles<'a> {
-    /// Creates `PollFiles` by holding the file table reference.
     fn new_borrowed(poll_fds: &'a [PollFd], file_table: &'a FileTable) -> Self {
         Self {
             poll_fds,
@@ -144,7 +135,6 @@ impl<'a> PollFiles<'a> {
         }
     }
 
-    /// Creates `PollFiles` by cloning all files that we're going to poll.
     fn new_owned(poll_fds: &'a [PollFd], file_table: &FileTable) -> Self {
         let files = poll_fds
             .iter()
@@ -167,7 +157,6 @@ enum PollerResult {
 }
 
 impl PollFiles<'_> {
-    /// Registers the files with a poller, or exits early if some events are detected.
     fn register_poller(&self, timeout: Option<&Duration>) -> PollerResult {
         let mut poller = Poller::new(timeout);
 
@@ -189,12 +178,10 @@ impl PollFiles<'_> {
         PollerResult::Registered(poller)
     }
 
-    /// Counts the number of the ready files.
     fn count_events(&self) -> usize {
         self.count_events_from(0)
     }
 
-    /// Counts the number of the ready files from the given index.
     fn count_events_from(&self, start: usize) -> usize {
         let mut counter = 0;
 
@@ -229,7 +216,6 @@ impl PollFiles<'_> {
     }
 }
 
-// https://github.com/torvalds/linux/blob/master/include/uapi/asm-generic/poll.h
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 struct c_pollfd {
@@ -267,7 +253,6 @@ impl PollFd {
         &self.revents
     }
 
-    /// Returns the desired `revents` value if the file does not exist.
     pub(self) fn revents_for_missing_file(&self) -> IoEvents {
         if self.fd.is_some() {
             IoEvents::NVAL

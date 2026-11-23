@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use std::{fs, path::PathBuf, process, str::FromStr};
 
 use crate::{
@@ -13,9 +11,6 @@ use crate::{
 pub fn execute_new_command(args: &NewArgs) {
     cargo_new_lib(&args.crate_name);
 
-    // Extract the actual crate name from the path if a full path was provided.
-    // `cargo new` accepts both "my-crate" and "/path/to/my-crate", and in the
-    // latter case, it uses the last path component as the crate name.
     let crate_name = PathBuf::from(&args.crate_name)
         .file_name()
         .and_then(|name| name.to_str())
@@ -30,13 +25,8 @@ pub fn execute_new_command(args: &NewArgs) {
     add_rust_toolchain(&cargo_metadata);
 }
 
-/// OSDK assumes that the toolchain used by the kernel should be same same as the toolchain
-/// specified in the asterinas workspace.
 fn aster_rust_toolchain() -> String {
-    // Here we can't just include it in the repository root because that can't be
-    // read when publishing. Please ensure update both files when updating the toolchain.
     let template = include_str!("./rust-toolchain.toml.template");
-    // Delete first two lines of comments.
     template.lines().skip(2).collect::<Vec<_>>().join("\n")
 }
 
@@ -57,7 +47,6 @@ fn add_manifest_dependencies(cargo_metadata: &serde_json::Value, crate_name: &st
     fs::write(manifest_path, content).unwrap();
 }
 
-// Add `target/osdk/base` and `target/osdk/test-base` to `exclude` array of the workspace manifest
 fn exclude_osdk_base(metadata: &serde_json::Value) {
     let osdk_run_base_path = "target/osdk/base";
     let osdk_test_base_path = "target/osdk/test-base";
@@ -108,11 +97,9 @@ fn create_osdk_manifest(cargo_metadata: &serde_json::Value, type_: &ProjectType)
     };
 
     if osdk_manifest_path.is_file() {
-        // If the OSDK.toml of workspace exists, just return.
         return;
     }
 
-    // Create `OSDK.toml` for the workspace
     let contents = match type_ {
         ProjectType::Kernel => {
             include_str!("kernel.OSDK.toml.template")
@@ -126,10 +113,6 @@ fn create_osdk_manifest(cargo_metadata: &serde_json::Value, type_: &ProjectType)
     };
 
     if is_in_virtual_workspace(cargo_metadata) {
-        // If the project is created in a workspace,
-        // the project type should be neither a project nor a library.
-        // FIXME: This is only a temporary fix to remove the project type,
-        // we may decide the actual type in the future.
         let contents = contents.lines().skip(2).collect::<Vec<_>>().join("\n");
         fs::write(osdk_manifest_path, contents).unwrap();
         return;
@@ -138,7 +121,6 @@ fn create_osdk_manifest(cargo_metadata: &serde_json::Value, type_: &ProjectType)
     fs::write(osdk_manifest_path, contents).unwrap();
 }
 
-/// Write the default content of `src/lib.rs`, with contents in provided template.
 fn write_src_template(cargo_metadata: &serde_json::Value, crate_name: &str, type_: &ProjectType) {
     let src_path = get_src_path(cargo_metadata, crate_name);
     let contents = match type_ {
@@ -155,7 +137,6 @@ fn write_src_template(cargo_metadata: &serde_json::Value, crate_name: &str, type
     fs::write(src_path, contents).unwrap();
 }
 
-/// Add the rust-toolchain.toml file in workspace root
 fn add_rust_toolchain(cargo_metadata: &serde_json::Value) {
     let workspace_root = get_workspace_root(cargo_metadata);
 

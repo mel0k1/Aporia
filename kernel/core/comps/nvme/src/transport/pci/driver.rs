@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::sync::Arc;
 
 use aster_device::{
@@ -36,7 +34,6 @@ impl Driver<PciBus> for NvmePciDriver {
     }
 
     fn on_release(&self, _device: &Arc<PciDevice>) {
-        // FIXME: Stop I/O and unregister NVMe devices before releasing controller resources.
         panic!("nvme driver removal is not supported");
     }
 

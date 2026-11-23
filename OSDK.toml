@@ -1,7 +1,4 @@
-# The OSDK manifest at the Asterinas root virtual workspace
-# provides default OSDK settings for all packages.
 
-# The common options for build, run and test
 [boot]
 method = "grub-rescue-iso"
 
@@ -12,7 +9,6 @@ boot_protocol = "multiboot2"
 args = "$(./tools/qemu_args.sh normal)"
 log_file = "qemu-serial.log"
 
-# Special options for running
 [run.boot]
 kcmd_args = [
     "SHELL=/bin/sh",
@@ -23,11 +19,9 @@ kcmd_args = [
 ]
 init_args = ["sh", "-l"]
 
-# Special options for testing
 [test.qemu]
 args = "$(./tools/qemu_args.sh test)"
 
-# Other Schemes
 
 [scheme."microvm"]
 boot.method = "vmm-direct"

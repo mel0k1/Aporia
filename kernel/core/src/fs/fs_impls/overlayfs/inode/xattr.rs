@@ -1,17 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Private xattr manipulation
-//!
-//! Overlayfs keeps its bookkeeping in xattrs that sit beside the user's own: [`OverlayXattrType`]
-//! names each private record, and [`OverlayInode`] carries the xattr entries the VFS calls.
-//!
-//! Every non-private name passes through to the real object unchanged; a name inside the private
-//! namespace gains one escape infix, and this mount's own records stay out of presented lists.
-//!
-//! Copy-up writes the source's xattrs onto the promoted object verbatim, under the same filter.
-//!
-//! Decoding and meaning live with each record's semantic owner.
-
 #![short_vis_path::add(overlayfs)]
 
 use super::{OverlayInode, copyup::workdir::WorkdirTemp};
@@ -29,26 +15,18 @@ use crate::{
     prelude::*,
 };
 
-/// The infix the passthrough path inserts after the selected prefix.
 const ESCAPE_INFIX: &str = "overlay.";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-/// The kinds of overlay-owned record that a mount stores on upper objects as private xattrs.
 pub(in overlayfs) enum OverlayXattrType {
-    /// The origin record: the lower inode this upper inode was copied up from.
     Origin,
-    /// The opaque record: the lower entries of this directory are hidden.
     Opaque,
-    /// The whiteout record: the lower entry of this name is masked.
     Whiteout,
-    /// The impure record: this upper directory may hold origin-adjusted (copy-up) entries.
     Impure,
-    /// The uuid record: the identifier of the mount instance that wrote this inode.
     Uuid,
 }
 
 impl OverlayXattrType {
-    /// Builds the xattr name for this record under the mount's selected namespace.
     fn construct_xattr_name(&self, namespace: XattrNamespace) -> XattrName<'static> {
         let full_name: &'static str = match (namespace, self) {
             (XattrNamespace::Trusted, Self::Origin) => "trusted.overlay.origin",
@@ -67,10 +45,6 @@ impl OverlayXattrType {
             .unwrap_or_else(|| unreachable!("the overlay record literals carry a known namespace"))
     }
 
-    /// Returns the value a write stores when the write site supplies none.
-    ///
-    /// The whiteout, opaque, and impure markers write `y`; origin and uuid always take the caller's
-    /// value instead.
     fn default_value(&self) -> Option<&'static [u8]> {
         match self {
             Self::Opaque | Self::Whiteout | Self::Impure => Some(b"y"),
@@ -78,8 +52,6 @@ impl OverlayXattrType {
         }
     }
 
-    /// Writes this record on `real_dentry` under `namespace`, replacing any value already stored
-    /// there; a `value` of `None` stores the record's own default instead.
     pub(in overlayfs) fn set_value_on(
         &self,
         real_dentry: &Dentry,
@@ -99,7 +71,6 @@ impl OverlayXattrType {
         )
     }
 
-    /// Reads this record's value into `value`; an absent record or a short buffer is an error.
     pub(in overlayfs) fn get_value_from(
         &self,
         real_dentry: &Dentry,
@@ -111,9 +82,6 @@ impl OverlayXattrType {
         real_dentry.inode().get_xattr(name, &mut value_writer)
     }
 
-    /// Returns whether `value` counts as positive for this record.
-    ///
-    /// Only opaque and impure compare the bytes; a whiteout is positive by carrying any value at all.
     fn is_value_positive(&self, value: &[u8]) -> bool {
         match self {
             Self::Opaque | Self::Impure => value == self.default_value().unwrap_or_default(),
@@ -121,10 +89,6 @@ impl OverlayXattrType {
         }
     }
 
-    /// Reports whether this record is present on `real_dentry` in the form this type treats as positive.
-    ///
-    /// The probe reads one byte, so both a longer value and a zero-length value count as present:
-    /// the answer is about the record's existence, not about its bytes.
     pub(super) fn is_positive_on(
         &self,
         real_dentry: &Dentry,
@@ -149,7 +113,6 @@ impl OverlayXattrType {
         }
     }
 
-    /// Removes this record, reporting `ENODATA` if the record is not there.
     pub(super) fn remove_from(
         &self,
         real_dentry: &Dentry,
@@ -167,7 +130,6 @@ impl OverlayInode {
         value_writer: &mut VmWriter,
     ) -> Result<usize> {
         let used_name = self.xattr_name_for_real(&name)?;
-        // The `EINVAL` arm is unreachable: the infix is inserted inside the selected namespace.
         let used = XattrName::try_from_full_name(&used_name)
             .ok_or_else(|| errno!(EINVAL, "invalid escaped overlay xattr name"))?;
         self.real_object()
@@ -199,10 +161,6 @@ impl OverlayInode {
         upper.real_inode().remove_xattr(upper.dentry(), used)
     }
 
-    /// Presents the real list.
-    ///
-    /// This mount's own records are hidden, one escape infix is stripped. A name this mount escaped
-    /// reads as the caller's name, while nested infixes survive.
     pub(super) fn list_xattr_impl(
         &self,
         namespace: XattrNamespace,
@@ -217,7 +175,6 @@ impl OverlayInode {
             if name_bytes.is_empty() {
                 continue;
             }
-            // A name that is not UTF-8 is passed through unchanged.
             let presented = match core::str::from_utf8(name_bytes) {
                 Ok(name) => match self.xattr_name_for_vfs(name) {
                     Some(presented_name) => presented_name.into_bytes(),
@@ -226,12 +183,10 @@ impl OverlayInode {
                 Err(_) => name_bytes.to_vec(),
             };
             let entry_len = presented.len() + 1;
-            // A zero-length buffer is the size probe: entries are counted, not written.
             if list_writer.avail() == 0 {
                 bytes_written += entry_len;
                 continue;
             }
-            // An entry that does not fit fails the call; earlier entries stay and none is split.
             if entry_len > list_writer.avail() {
                 return Err(errno!(
                     ERANGE,
@@ -245,7 +200,6 @@ impl OverlayInode {
         Ok(bytes_written)
     }
 
-    /// Copies `source`'s non-private xattrs onto `temp`; `tolerate_errors` skips a failing xattr.
     pub(super) fn copy_eligible_xattrs(
         &self,
         source: &RealObject,
@@ -277,8 +231,6 @@ impl OverlayInode {
                 let Ok(full_name) = core::str::from_utf8(full_name) else {
                     continue;
                 };
-                // This mount's own records never cross copy-up; an escaped record of another
-                // overlay is not ours, so it is copied under its own name.
                 if self.is_private_xattr_name(full_name) {
                     continue;
                 }
@@ -327,7 +279,6 @@ impl OverlayInode {
         Ok(())
     }
 
-    /// Returns the private-namespace prefix this mount's own records take.
     fn private_xattr_prefix(&self) -> &'static str {
         const TRUSTED_OVERLAY_PREFIX: &str = "trusted.overlay.";
         const USER_OVERLAY_PREFIX: &str = "user.overlay.";
@@ -338,10 +289,6 @@ impl OverlayInode {
         }
     }
 
-    /// Returns whether `name` is one of this mount's own records rather than a passthrough name.
-    ///
-    /// A record of an overlay stacked below carries the escape infix right after the prefix, so it
-    /// is not this mount's own.
     fn is_private_xattr_name(&self, name: &str) -> bool {
         let Some(suffix) = name.strip_prefix(self.private_xattr_prefix()) else {
             return false;
@@ -349,10 +296,6 @@ impl OverlayInode {
         !suffix.starts_with(ESCAPE_INFIX)
     }
 
-    /// Returns the real name a VFS-facing name maps to, escaping a name inside this mount's namespace.
-    ///
-    /// The escape infix is inserted right after the prefix, so a stacked mount's record of the same
-    /// name stays a different real name from this mount's own record.
     fn xattr_name_for_real(&self, name: &XattrName) -> Result<String> {
         let selected_prefix = self.private_xattr_prefix();
         let full_name = name.full_name();
@@ -370,16 +313,12 @@ impl OverlayInode {
         Ok(used_name)
     }
 
-    /// Returns the VFS-facing name for a real name, or `None` when the name is this mount's own record.
-    ///
-    /// The escape infix this mount inserted is removed, so the caller sees the name it used.
     fn xattr_name_for_vfs(&self, name: &str) -> Option<String> {
         let selected_prefix = self.private_xattr_prefix();
         let Some(suffix) = name.strip_prefix(selected_prefix) else {
             return Some(String::from(name));
         };
         let Some(stripped_suffix) = suffix.strip_prefix(ESCAPE_INFIX) else {
-            // Inside the namespace with no infix: this mount's own record, hidden from the list.
             return None;
         };
         let mut presented_name = String::from(selected_prefix);
@@ -387,7 +326,6 @@ impl OverlayInode {
         Some(presented_name)
     }
 
-    /// Returns the source's raw xattr name list for one namespace.
     fn probe_source_xattr_names(
         &self,
         source: &Arc<dyn Inode>,
@@ -406,7 +344,6 @@ impl OverlayInode {
         Ok(names)
     }
 
-    /// Returns one value of the source by name, re-parsed into a name the real layer accepts.
     fn probe_source_xattr_value(
         &self,
         source: &Arc<dyn Inode>,
@@ -425,8 +362,6 @@ impl OverlayInode {
     }
 }
 
-/// Reports one xattr the copy-up left behind: a `security` namespace skip warns, and any other
-/// namespace stays at debug.
 fn report_xattr_skip(namespace: XattrNamespace, message: core::fmt::Arguments<'_>) {
     if namespace == XattrNamespace::Security {
         warn!("{message}");

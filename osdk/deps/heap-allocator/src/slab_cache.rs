@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! The slab cache that is composed of slabs.
-
 use core::alloc::AllocError;
 
 use ostd::mm::{
@@ -13,14 +9,6 @@ use ostd::mm::{
 const EXPECTED_EMPTY_SLABS: usize = 4;
 const MAX_EMPTY_SLABS: usize = 16;
 
-/// A slab cache.
-///
-/// A slab cache contains 3 parts:
-///  - a list of empty slabs;
-///  - a list of partially allocated slabs;
-///  - and a list of full slabs.
-///
-/// So the cache is partially sorted, to allow caching and reusing memory.
 pub(crate) struct SlabCache<const SLOT_SIZE: usize> {
     empty: LinkedList<SlabMeta<SLOT_SIZE>>,
     partial: LinkedList<SlabMeta<SLOT_SIZE>>,
@@ -28,7 +16,6 @@ pub(crate) struct SlabCache<const SLOT_SIZE: usize> {
 }
 
 impl<const SLOT_SIZE: usize> SlabCache<SLOT_SIZE> {
-    /// Creates a new slab cache.
     pub(crate) const fn new() -> Self {
         Self {
             empty: LinkedList::new(),
@@ -37,12 +24,7 @@ impl<const SLOT_SIZE: usize> SlabCache<SLOT_SIZE> {
         }
     }
 
-    /// Allocates a slot from the cache.
-    ///
-    /// The caller must provide which cache is it because we don't know from
-    /// `&mut self`. The information is used for deallocation.
     pub(crate) fn alloc(&mut self) -> Result<HeapSlot, AllocError> {
-        // Try to allocate from the partial slabs first.
         if !self.partial.is_empty() {
             let mut cursor = self.partial.cursor_back_mut();
             let current = cursor.current_meta().unwrap();
@@ -53,7 +35,6 @@ impl<const SLOT_SIZE: usize> SlabCache<SLOT_SIZE> {
             return Ok(allocated);
         }
 
-        // If no partial slab is available, try to get an empty slab.
         if !self.empty.is_empty() {
             let mut slab = self.empty.pop_front().unwrap();
             let allocated = slab.meta_mut().alloc().unwrap();
@@ -61,7 +42,6 @@ impl<const SLOT_SIZE: usize> SlabCache<SLOT_SIZE> {
             return Ok(allocated);
         }
 
-        // If no empty slab is available, allocate new slabs.
         let Some(mut allocated_empty) = Self::alloc_slab() else {
             log::error!("Failed to allocate a new slab");
             return Err(AllocError);
@@ -69,7 +49,6 @@ impl<const SLOT_SIZE: usize> SlabCache<SLOT_SIZE> {
         let allocated = allocated_empty.meta_mut().alloc().unwrap();
         self.add_slab(allocated_empty);
 
-        // Allocate more empty slabs and push them into the cache.
         for _ in 0..EXPECTED_EMPTY_SLABS {
             if let Some(allocated_empty) = Self::alloc_slab() {
                 self.empty.push_front(allocated_empty);
@@ -81,9 +60,6 @@ impl<const SLOT_SIZE: usize> SlabCache<SLOT_SIZE> {
         Ok(allocated)
     }
 
-    /// Deallocates a slot into the cache.
-    ///
-    /// The slot must be allocated from the cache.
     pub(crate) fn dealloc(&mut self, slot: HeapSlot) -> Result<(), AllocError> {
         let which = which_slab(&slot).ok_or_else(|| {
             log::error!("Can't find the slab for the slot");
@@ -107,7 +83,6 @@ impl<const SLOT_SIZE: usize> SlabCache<SLOT_SIZE> {
 
         self.add_slab(slab);
 
-        // If the slab cache has too many empty slabs, free some of them.
         if self.empty.size() > MAX_EMPTY_SLABS {
             while self.empty.size() > EXPECTED_EMPTY_SLABS {
                 self.empty.pop_front();
@@ -118,7 +93,6 @@ impl<const SLOT_SIZE: usize> SlabCache<SLOT_SIZE> {
         Ok(())
     }
 
-    /// Allocates a new slab and accounts for the page it consumes.
     fn alloc_slab() -> Option<Slab<SLOT_SIZE>> {
         let slab = Slab::new().ok()?;
         crate::TOTAL_SLAB_ALLOCATED.add(PAGE_SIZE);
@@ -137,8 +111,6 @@ impl<const SLOT_SIZE: usize> SlabCache<SLOT_SIZE> {
 }
 
 impl<const SLOT_SIZE: usize> Drop for SlabCache<SLOT_SIZE> {
-    /// Releases all remaining slabs back to the frame allocator and accounts
-    /// for the freed pages.
     fn drop(&mut self) {
         for list in [&mut self.empty, &mut self.partial, &mut self.full] {
             while list.pop_front().is_some() {
@@ -148,12 +120,6 @@ impl<const SLOT_SIZE: usize> Drop for SlabCache<SLOT_SIZE> {
     }
 }
 
-/// Gets which slab the slot belongs to.
-///
-/// If the slot size is larger than [`PAGE_SIZE`], it is not from a slab
-/// and this function will return `None`.
-///
-/// `SLOT_SIZE` can be larger than `slot.size()` but not smaller.
 fn which_slab(slot: &HeapSlot) -> Option<Paddr> {
     if slot.size() > PAGE_SIZE {
         return None;

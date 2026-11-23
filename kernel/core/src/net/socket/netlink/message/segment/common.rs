@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 #![short_vis_path::add(netlink)]
 
 use align_ext::AlignExt;
@@ -64,8 +62,6 @@ impl<Body: SegmentBody, Attr: Attribute> SegmentCommon<Body, Attr> {
     ) -> Result<ContinueRead<Self>> {
         let segment = Self::read_payload(header, reader, strict_check)?;
 
-        // Message padding is outside the payload;
-        // even invalid messages must leave the reader at the next header.
         let len = header.len as usize;
         reader.skip_some(len.align_up(NLMSG_ALIGN) - len);
 

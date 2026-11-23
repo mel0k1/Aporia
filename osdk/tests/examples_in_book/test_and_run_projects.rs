@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use std::{fs, path::PathBuf};
 
 use crate::util::{cargo_osdk, edit_config_files};
@@ -19,7 +17,6 @@ fn create_and_run_kernel() {
     command.current_dir(work_dir);
     command.ok().unwrap();
 
-    // Makes the kernel depend on local OSTD
     edit_config_files(&os_dir);
 
     let mut command = cargo_osdk(["build"]);

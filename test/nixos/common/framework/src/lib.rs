@@ -1,26 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! An imperative testing framework for NixOS-based tests.
-//!
-//! # Core Concepts
-//!
-//! ## Test Registration
-//!
-//! Use the `#[nixos_test]` attribute to register test cases. The framework
-//! automatically discovers and runs all registered tests.
-//!
-//! ## Session Interaction
-//!
-//! Tests are implemented by interacting with a [`Session`] object. The [`Session`] type
-//! provides methods for executing commands and verifying output. It supports nested execution
-//! contexts (containers, SSH, etc.) with automatic cleanup.
-//!
-//! See the [template crate](https://github.com/asterinas/asterinas/tree/main/test/nixos/common/template)
-//! for a usage example.
-//!
-//! See the [project README](https://github.com/asterinas/asterinas/tree/main/test/nixos)
-//! for complete documentation on creating and running test suites.
-
 #![deny(unsafe_code)]
 
 use std::{env, fmt, time::Duration};
@@ -33,27 +10,26 @@ pub use session::{BackgroundProcess, CommandCheck, Session, SessionDesc};
 
 mod session;
 
-/// An error returned by the NixOS test framework.
 #[derive(Debug)]
 pub enum Error {
-    /// The PTY/process produced an underlying rexpect failure.
     Pty(rexpect::error::Error),
-    /// The command output reached the prompt but did not contain the expected substring.
-    UnexpectedOutput { expected: String, got: String },
-    /// The framing marker was missing or unparsable.
-    Protocol { reason: String, got: String },
-    /// A command exited with a non-zero status.
-    NonZeroExit { exit_status: i32, output: String },
-    /// Polling for an expected state timed out.
+    UnexpectedOutput {
+        expected: String,
+        got: String,
+    },
+    Protocol {
+        reason: String,
+        got: String,
+    },
+    NonZeroExit {
+        exit_status: i32,
+        output: String,
+    },
     Timeout {
         expected: String,
         got: String,
         timeout: Duration,
     },
-    /// An error collection that aggregates multiple errors.
-    ///
-    /// For each collected error, it keeps a name (in `String`)
-    /// and a detailed error info (in `Error`).
     Aggregated {
         summary: String,
         collections: Vec<(String, Error)>,
@@ -138,7 +114,6 @@ impl From<rexpect::error::Error> for Error {
     }
 }
 
-/// A test case definition.
 pub struct TestCase {
     pub name: &'static str,
     pub test_fn: fn(&mut Session) -> Result<(), Error>,
@@ -146,7 +121,6 @@ pub struct TestCase {
 
 inventory::collect!(TestCase);
 
-/// Generates the main function that runs all test cases.
 #[macro_export]
 macro_rules! nixos_test_main {
     () => {
@@ -160,24 +134,20 @@ macro_rules! nixos_test_main {
 pub fn __nixos_test_main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
 
-    // Check for --help flag
     if args.iter().any(|i| i == "--help") || args.iter().any(|i| i == "-h") {
         print_help();
         return Ok(());
     }
 
-    // Parse --qemu-cmd argument
     let qemu_cmd = parse_arg(&args, "--qemu-cmd").ok_or("Missing --qemu-cmd argument")?;
 
-    // Parse optional --test argument
     let test_filter = parse_arg(&args, "--test");
 
-    // Parse timeout from NIXOS_TEST_TIMEOUT environment variable
     let timeout_ms = env::var("NIXOS_TEST_TIMEOUT")
         .ok()
         .map(|v| parse_timeout(&v))
         .transpose()?
-        .unwrap_or(600_000); // Default: 10 minutes
+        .unwrap_or(600_000);
 
     let all_test_cases: Vec<&TestCase> = inventory::iter::<TestCase>().collect();
 
@@ -185,7 +155,6 @@ pub fn __nixos_test_main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("No test cases found".into());
     }
 
-    // Filter test cases if --test is specified
     let test_cases: Vec<&TestCase> = if let Some(ref filter) = test_filter {
         let filtered: Vec<&TestCase> = all_test_cases
             .into_iter()
@@ -219,9 +188,6 @@ pub fn __nixos_test_main() -> Result<(), Box<dyn std::error::Error>> {
 
     let desc = SessionDesc::new(init_prompt, "", "poweroff");
     let mut session = Session::new(desc, session);
-    // `emacs` and `vi` are the two line-editing modes of Bash. Turn both off,
-    // because the line editor wraps a long echoed command line at the terminal width
-    // and `Session` would then fail to match it against the command it sent.
     session.run_cmd("set +o emacs +o vi")?;
 
     let mut passed = 0;
@@ -288,12 +254,6 @@ pub(crate) fn clean_output(output: &str) -> String {
     String::from_utf8_lossy(&strip_ansi_escapes::strip(output)).to_string()
 }
 
-/// Parses timeout string with units into milliseconds.
-///
-/// Supports formats:
-/// - `<number>ms` - milliseconds
-/// - `<number>s` - seconds
-/// - `<number>min` - minutes
 fn parse_timeout(timeout_str: &str) -> Result<u64, Box<dyn std::error::Error>> {
     let timeout_str = timeout_str.trim();
 
@@ -318,7 +278,6 @@ fn parse_timeout(timeout_str: &str) -> Result<u64, Box<dyn std::error::Error>> {
     .into())
 }
 
-/// Parse command line argument in the form --flag <value>
 fn parse_arg(args: &[String], flag: &str) -> Option<String> {
     for i in 0..args.len() {
         if args[i] == flag {

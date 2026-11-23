@@ -1,27 +1,14 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use aster_bigtcp::wire::{Ipv4Address, Ipv6Address, PortNum};
 
 use super::family::CSocketAddrFamily;
 use crate::prelude::*;
 
-/// IPv4 socket address.
-///
-/// See <https://www.man7.org/linux/man-pages/man7/ip.7.html>.
-///
-/// The pad bytes (namely `sin_zero`) do not appear in the man pages, but are actually required by
-/// the Linux implementation. See
-/// <https://elixir.bootlin.com/linux/v6.10.2/source/include/uapi/linux/in.h#L256>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(super) struct CSocketAddrInet {
-    /// Address family (AF_INET).
     sin_family: u16,
-    /// Port number.
     sin_port: CPortNum,
-    /// IPv4 address.
     sin_addr: CInetAddr,
-    /// Pad bytes to 16-byte `struct sockaddr`.
     sin_zero: [u8; 8],
 }
 
@@ -43,7 +30,6 @@ impl From<CSocketAddrInet> for (Ipv4Address, PortNum) {
     }
 }
 
-/// IPv4 4-byte address.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 struct CInetAddr {
@@ -64,7 +50,6 @@ impl From<CInetAddr> for Ipv4Address {
     }
 }
 
-/// TCP/UDP port number.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 struct CPortNum {
@@ -85,23 +70,13 @@ impl From<CPortNum> for PortNum {
     }
 }
 
-/// IPv6 socket address.
-///
-/// See <https://www.man7.org/linux/man-pages/man7/ipv6.7.html>.
-///
-/// This corresponds to `struct sockaddr_in6` in Linux.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(super) struct CSocketAddrInet6 {
-    /// Address family (AF_INET6).
     sin6_family: u16,
-    /// Port number.
     sin6_port: CPortNum,
-    /// Flow information.
     sin6_flowinfo: u32,
-    /// IPv6 address.
     sin6_addr: CInet6Addr,
-    /// Scope ID.
     sin6_scope_id: u32,
 }
 
@@ -124,7 +99,6 @@ impl From<CSocketAddrInet6> for (Ipv6Address, PortNum) {
     }
 }
 
-/// IPv6 16-byte address.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 struct CInet6Addr {

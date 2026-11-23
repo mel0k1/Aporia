@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 #![short_vis_path::add(vsock)]
 
 use crate::{
@@ -7,18 +5,13 @@ use crate::{
     prelude::*,
 };
 
-/// An outcome of a connect attempt.
 pub(in vsock) enum ConnectResult {
-    /// Indicates that the handshake is still in progress.
     Connecting(Connection),
-    /// Indicates that the handshake has completed successfully.
     Connected(Connection),
-    /// Indicates that the handshake failed and returns the reusable bound port.
     Failed(BoundPort, Error),
 }
 
 impl Connection {
-    /// Returns whether the connect attempt has finished with a result.
     pub(in vsock) fn has_connect_result(&self) -> bool {
         let state = self.inner.state.lock();
         match state.phase {
@@ -28,7 +21,6 @@ impl Connection {
         }
     }
 
-    /// Consumes the connection and returns the result of the connect attempt.
     pub(in vsock) fn finish_connect(mut self) -> ConnectResult {
         let mut state = self.inner.state.lock();
         match state.phase {

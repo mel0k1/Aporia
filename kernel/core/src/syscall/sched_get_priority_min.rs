@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::{SyscallReturn, sched_get_priority_max::sched_priority_range};
 use crate::{prelude::*, sched::LinuxSchedPolicy};
 

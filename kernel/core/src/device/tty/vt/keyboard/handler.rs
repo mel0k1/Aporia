@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::sync::Arc;
 
 use aster_framebuffer::mode::{KeyboardMode, KeyboardModeFlags};
@@ -51,12 +49,8 @@ impl InputHandlerClass for VtKeyboardHandlerClass {
     }
 }
 
-/// The state of modifier keys (Shift, Ctrl, Alt).
-///
-/// It is shared across all virtual terminals.
 static MODIFIER_KEYS_STATE: ModifierKeysState = ModifierKeysState::new();
 
-/// A virtual terminal keyboard handler that handles input from a specific device.
 #[derive(Debug)]
 struct VtKeyboardHandler;
 
@@ -68,8 +62,6 @@ impl VtKeyboardHandler {
             key_status
         );
 
-        // Lock order: console keyboard -> console backend
-
         let vtm = VT_MANAGER.get().expect("`VT_MANAGER` is not initialized");
         let vt = vtm.active_vt();
         let vt_console = vt.driver().vt_console();
@@ -80,36 +72,20 @@ impl VtKeyboardHandler {
             self.handle_medium_mode(keycode, key_status, vt);
         }
 
-        // Modifier keys are handled based on the keycode instead of the keymap.
-        //
-        // This is important because the keymap lookup depends on the current
-        // modifier state. If a modifier is released while multiple modifiers
-        // are active (e.g. Shift+Alt), the keymap may not contain an entry for
-        // that modifier combination. In that case the lookup would return
-        // `KeySym::NoOp`, and the release event would be ignored, causing the
-        // modifier state to become stuck.
-        //
-        // By detecting modifiers directly from the keycode, we ensure that
-        // modifier press/release events are always processed correctly,
-        // regardless of the current modifier combination.
         let key_sym = if let Some(modifier) = self.keycode_to_modifier_key(keycode) {
             KeySym::Modifier(modifier)
         } else {
             get_keysym(MODIFIER_KEYS_STATE.flags(), keycode)
         };
 
-        // In Medium Raw, Raw, or Off mode, ignore non-modifier keys
         if (keyboard_mode == KeyboardMode::MediumRaw
             || keyboard_mode == KeyboardMode::Raw
             || keyboard_mode == KeyboardMode::Off)
             && !matches!(key_sym, KeySym::Modifier(_))
         {
-            // FIXME: For now, we don't support SAK (secure attention key).
-            // SAK is allowed even in Raw mode.
             return;
         }
 
-        // Ignore key release events except for modifier keys
         if key_status == KeyStatus::Released && !matches!(key_sym, KeySym::Modifier(_)) {
             return;
         }
@@ -150,12 +126,9 @@ impl VtKeyboardHandler {
                 }
             }
             KeySym::AltNumpad(_) => {
-                // TODO: Implement Alt+Numpad input
                 ostd::warn!("Alt+Numpad input is not implemented yet");
             }
-            KeySym::NoOp => {
-                // Do nothing
-            }
+            KeySym::NoOp => {}
         }
     }
 
@@ -168,9 +141,6 @@ impl VtKeyboardHandler {
         }
     }
 
-    /// Handles key events in Medium Raw mode.
-    ///
-    /// Reference: <https://elixir.bootlin.com/linux/v6.13/source/drivers/tty/vt/keyboard.c#L1436-L1454>
     fn handle_medium_mode(&self, keycode: KeyCode, key_status: KeyStatus, vt: &Tty<VtDriver>) {
         const UP_FLAG: u8 = 0x80;
 
@@ -259,22 +229,22 @@ impl VtKeyboardHandler {
 
         if application_mode && !shift_down {
             let _ = match numpad_key {
-                NumpadKey::Num0 => vt.push_input(b"\x1bOp"),     // p
-                NumpadKey::Num1 => vt.push_input(b"\x1bOq"),     // q
-                NumpadKey::Num2 => vt.push_input(b"\x1bOr"),     // r
-                NumpadKey::Num3 => vt.push_input(b"\x1bOs"),     // s
-                NumpadKey::Num4 => vt.push_input(b"\x1bOt"),     // t
-                NumpadKey::Num5 => vt.push_input(b"\x1bOu"),     // u
-                NumpadKey::Num6 => vt.push_input(b"\x1bOv"),     // v
-                NumpadKey::Num7 => vt.push_input(b"\x1bOw"),     // w
-                NumpadKey::Num8 => vt.push_input(b"\x1bOx"),     // x
-                NumpadKey::Num9 => vt.push_input(b"\x1bOy"),     // y
-                NumpadKey::Plus => vt.push_input(b"\x1bOl"),     // l
-                NumpadKey::Minus => vt.push_input(b"\x1bOS"),    // S
-                NumpadKey::Asterisk => vt.push_input(b"\x1bOR"), // R
-                NumpadKey::Slash => vt.push_input(b"\x1bOQ"),    // Q
-                NumpadKey::Enter => vt.push_input(b"\x1bOM"),    // M
-                NumpadKey::Dot => vt.push_input(b"\x1bOn"),      // n
+                NumpadKey::Num0 => vt.push_input(b"\x1bOp"),
+                NumpadKey::Num1 => vt.push_input(b"\x1bOq"),
+                NumpadKey::Num2 => vt.push_input(b"\x1bOr"),
+                NumpadKey::Num3 => vt.push_input(b"\x1bOs"),
+                NumpadKey::Num4 => vt.push_input(b"\x1bOt"),
+                NumpadKey::Num5 => vt.push_input(b"\x1bOu"),
+                NumpadKey::Num6 => vt.push_input(b"\x1bOv"),
+                NumpadKey::Num7 => vt.push_input(b"\x1bOw"),
+                NumpadKey::Num8 => vt.push_input(b"\x1bOx"),
+                NumpadKey::Num9 => vt.push_input(b"\x1bOy"),
+                NumpadKey::Plus => vt.push_input(b"\x1bOl"),
+                NumpadKey::Minus => vt.push_input(b"\x1bOS"),
+                NumpadKey::Asterisk => vt.push_input(b"\x1bOR"),
+                NumpadKey::Slash => vt.push_input(b"\x1bOQ"),
+                NumpadKey::Enter => vt.push_input(b"\x1bOM"),
+                NumpadKey::Dot => vt.push_input(b"\x1bOn"),
             };
             return;
         }
@@ -382,8 +352,6 @@ impl VtKeyboardHandler {
                 vt_keyboard.toggle_lock_keys(LockKeyFlags::NUM_LOCK);
             }
             SpecialHandler::ToggleScrollLock => {
-                // TODO: Scroll Lock will affect the scrolling behavior of the console.
-                // For now, we just toggle the state.
                 vt_keyboard.toggle_lock_keys(LockKeyFlags::SCROLL_LOCK);
             }
             SpecialHandler::Enter => {
@@ -407,9 +375,6 @@ impl VtKeyboardHandler {
         }
     }
 
-    /// Adds the character to the input buffer of the virtual terminal.
-    ///
-    /// Reference: <https://elixir.bootlin.com/linux/v6.13/source/drivers/tty/vt/keyboard.c#L675>.
     fn push_input(&self, ch: char, vt: &Tty<VtDriver>, vt_keyboard: &VtKeyboard) {
         let keyboard_mode = vt_keyboard.mode();
 
@@ -430,9 +395,7 @@ impl InputHandler for VtKeyboardHandler {
                 InputEvent::Key(keycode, key_status) => {
                     self.handle_key_event(*keycode, *key_status)
                 }
-                InputEvent::Sync(_) => {
-                    // Nothing to do
-                }
+                InputEvent::Sync(_) => {}
                 _ => {
                     ostd::warn!(
                         "Virtual terminal keyboard handler received unsupported event: {:?}",

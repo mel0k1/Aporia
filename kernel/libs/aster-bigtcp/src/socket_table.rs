@@ -1,8 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! This module defines the socket table, which manages all TCP and UDP sockets,
-//! for efficiently inserting, looking up, and removing sockets.
-
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use core::net::Ipv4Addr;
 
@@ -18,11 +13,6 @@ use crate::{
 
 pub type SocketHash = u32;
 
-/// A unique key for identifying a `TcpListener`.
-///
-/// Note that two `TcpListener`s cannot listen on the same address
-/// even if both sockets set SO_REUSEADDR to true,
-/// so there cannot be multiple listeners with the same `ListenerKey`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ListenerKey {
     addr: IpAddress,
@@ -32,8 +22,6 @@ pub(crate) struct ListenerKey {
 
 impl ListenerKey {
     pub(crate) const fn new(addr: IpAddress, port: PortNum) -> Self {
-        // FIXME: If the socket is listening on an unspecified address (0.0.0.0),
-        // Linux will get the hash value by port only.
         let hash = hash_addr_port(addr, port);
         Self { addr, port, hash }
     }
@@ -53,7 +41,6 @@ impl From<IpListenEndpoint> for ListenerKey {
     }
 }
 
-/// A unique key for identifying a `TcpConnection`.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct ConnectionKey {
     local_addr: IpAddress,
@@ -95,10 +82,8 @@ impl From<(IpEndpoint, IpEndpoint)> for ConnectionKey {
     }
 }
 
-// FIXME: The following two constants should be randomly-generated at runtime
 const HASH_SECRET: u32 = 0xdeadbeef;
 
-// FIXME: This constant should be a per-net-namespace value
 const NET_HASHMIX: u32 = 0xbeefdead;
 
 const fn hash_local_remote(
@@ -151,31 +136,12 @@ const fn hash_addr_port(addr: IpAddress, port: PortNum) -> SocketHash {
     }
 }
 
-/// The socket table manages TCP and UDP sockets.
-///
-/// Unlike the Linux inet hashtable, which is shared across a single network namespace,
-/// this table is currently limited to a single interface.
-///
-// TODO: Modify the table to be shared across a single network namespace
-// to support INADDR_ANY (0.0.0.0).
 pub(crate) struct SocketTable<E: Ext> {
-    // TODO: Linux has two hashtables for listeners:
-    // the first is hashed by local address and port,
-    // the second is hashed by local port only.
-    // The second table is the only place where sockets listening on INADDR_ANY (0.0.0.0) can exist.
-    // Since we do not yet support INADDR_ANY, we only have the first table here.
     listener_buckets: Box<[ListenerHashBucket<E>]>,
     connection_buckets: Box<[ConnectionHashBucket<E>]>,
-    // Linux does not include UDP sockets in the inet hashtable.
-    // Here we include UDP sockets in the socket table for simplicity.
-    // Note that multiple UDP sockets can be bound to the same address,
-    // so we cannot use (addr, port) as a _unique_ key for UDP sockets.
     udp_sockets: Vec<Arc<UdpSocketBg<E>>>,
 }
 
-// On Linux, the number of buckets is determined at runtime based on the available memory.
-// For simplicity, we use fixed values here.
-// The bucket count should be a power of 2 to ensure efficient modulo calculations.
 const LISTENER_BUCKET_COUNT: u32 = 64;
 const LISTENER_BUCKET_MASK: u32 = LISTENER_BUCKET_COUNT - 1;
 const CONNECTION_BUCKET_COUNT: u32 = 8192;
@@ -203,10 +169,6 @@ impl<E: Ext> SocketTable<E> {
         }
     }
 
-    /// Inserts a TCP listener into the table.
-    ///
-    /// If a socket with the same [`ListenerKey`] has already been inserted,
-    /// this method will return an error and the listener will not be inserted.
     pub(crate) fn insert_listener(
         &mut self,
         listener: Arc<TcpListenerBg<E>>,

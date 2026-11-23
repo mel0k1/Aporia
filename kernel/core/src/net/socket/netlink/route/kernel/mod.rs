@@ -1,8 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! This module defines the kernel socket,
-//! which is responsible for handling requests from user space.
-
 use core::marker::PhantomData;
 
 use super::message::{RtnlMessage, RtnlSegment};
@@ -56,22 +51,12 @@ impl NetlinkRouteKernelSocket {
         let mut response_segments = match response_segments {
             Ok(segments) => segments,
             Err(error) => {
-                // TODO: Deal with the `NetlinkMessageCommonFlags::ACK` flag.
-                // Should we return `ErrorSegment` if ACK flag does not exist?
-                // Reference: <https://docs.kernel.org/userspace-api/netlink/intro.html#netlink-message-types>.
                 let err_segment = ErrorSegment::new_from_request(request_header, Some(error));
                 self.report_error(err_segment, dst_port);
                 return;
             }
         };
 
-        // Modern Linux may place the `NLMSG_DONE` segment
-        // in the same message as the preceding segments,
-        // depending on the message type.
-        // Legacy Linux generally delivered the `NLMSG_DONE` segment
-        // in a separate message.
-        // We follow the legacy Linux behavior here because it is simpler.
-        // Reference: <https://elixir.bootlin.com/linux/v7.1/source/net/core/rtnetlink.c#L6870>.
         let done_segments = if matches!(response_segments.last(), Some(RtnlSegment::Done(_))) {
             response_segments.split_off(response_segments.len() - 1)
         } else {
@@ -90,10 +75,6 @@ impl NetlinkRouteKernelSocket {
         }
     }
 
-    // FIXME: This method only accepts `ErrorSegment`,
-    // but some errors should be reported using `DoneSegment` with a negative errno.
-    // For example, Linux reports validation failures in strict dump requests this way.
-    // Adjust this API and its callers to support both response types.
     pub(super) fn report_error(&self, err_segment: ErrorSegment, dst_port: PortNum) {
         let response = RtnlMessage::new(vec![RtnlSegment::Error(err_segment)]);
 
@@ -103,7 +84,6 @@ impl NetlinkRouteKernelSocket {
     }
 }
 
-/// FIXME: NETLINK_ROUTE_KERNEL should be a per-network namespace socket
 static NETLINK_ROUTE_KERNEL: NetlinkRouteKernelSocket = NetlinkRouteKernelSocket::new();
 
 pub(super) fn get_netlink_route_kernel() -> &'static NetlinkRouteKernelSocket {

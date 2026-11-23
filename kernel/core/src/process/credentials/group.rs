@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use atomic_integer_wrapper::define_atomic_version_of_integer_like_type;
@@ -12,19 +10,11 @@ pub(crate) struct Gid(u32);
 
 const ROOT_GID: u32 = 0;
 
-/// The default overflow GID, which is the `nogroup` group (`65534`).
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.15/source/include/linux/highuid.h#L42>.
 const DEFAULT_OVERFLOW_GID: u32 = 65534;
 
-/// The overflow GID, typically used to indicate that group mappings between namespaces fail.
-/// The value can be configured via `/proc/sys/kernel/overflowgid`.
 static OVERFLOW_GID: AtomicU32 = AtomicU32::new(DEFAULT_OVERFLOW_GID);
 
 impl Gid {
-    /// The invalid GID, typically used to indicate that no valid GID is found when returning to user space.
-    ///
-    /// Reference: <https://elixir.bootlin.com/linux/v6.15/source/include/linux/uidgid.h#L51>.
     pub(crate) const INVALID: Gid = Gid(u32::MAX);
 
     pub(crate) const fn new(gid: u32) -> Self {

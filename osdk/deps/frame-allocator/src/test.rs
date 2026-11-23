@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Providing test utilities and high-level test cases for the frame allocator.
-
 use core::alloc::Layout;
 
 use ostd::{
@@ -62,13 +58,9 @@ fn assert_allocation_well_formed(layout: Layout) {
 fn split_allocations() {
     let instance = FrameAllocator;
 
-    // Allocate 16 frames.
     let layout = Layout::from_size_align(PAGE_SIZE * 16, PAGE_SIZE).unwrap();
     let allocated = instance.alloc(layout).unwrap();
 
-    // Deallocate 16 frames.
-    // |-|--|----|--------|-|
-    //  1 2   4      8     1
     instance.dealloc(allocated, PAGE_SIZE);
     instance.dealloc(allocated + PAGE_SIZE, PAGE_SIZE * 2);
     instance.dealloc(allocated + PAGE_SIZE * 3, PAGE_SIZE * 4);
@@ -76,18 +68,12 @@ fn split_allocations() {
     instance.dealloc(allocated + PAGE_SIZE * 15, PAGE_SIZE);
 }
 
-/// A mocked memory region for testing.
-///
-/// All the frames in the returned memory region will be marked as used.
-/// When the region is dropped, all the frames will be returned to the global
-/// frame allocator. If any frame is not unused by that time, the drop will panic.
 pub(crate) struct MockMemoryRegion {
     addr: Paddr,
     size: usize,
 }
 
 impl MockMemoryRegion {
-    /// Gets a memory region for testing.
     pub(crate) fn alloc(size: usize) -> Self {
         let seg = FrameAllocOptions::new()
             .alloc_segment(size / PAGE_SIZE)
@@ -99,7 +85,6 @@ impl MockMemoryRegion {
         Self { addr, size }
     }
 
-    /// Gets the start address of the memory region.
     pub(crate) fn paddr(&self) -> Paddr {
         self.addr
     }

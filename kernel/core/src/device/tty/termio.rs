@@ -1,46 +1,33 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::ops::Deref;
 
 use crate::prelude::*;
 
-/// A control character; the `cc_t` type in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.0.9/source/include/uapi/asm-generic/termbits-common.h#L5>.
 type CCtrlChar = u8;
 
-/// A terminal speed; the `speed_t` type in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.0.9/source/include/uapi/asm-generic/termbits-common.h#L6>.
 type CSpeed = u32;
 
-/// The input flags; `c_iflags` bits in Linux.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(crate) struct CInputFlags(u32);
 
 bitflags! {
     impl CInputFlags: u32 {
-        // https://elixir.bootlin.com/linux/v6.0.9/source/include/uapi/asm-generic/termbits-common.h
-        const IGNBRK  = 0x001; /* Ignore break condition */
-        const BRKINT  = 0x002; /* Signal interrupt on break */
-        const IGNPAR  = 0x004; /* Ignore characters with parity errors */
-        const PARMRK  = 0x008; /* Mark parity and framing errors */
-        const INPCK   = 0x010; /* Enable input parity check */
-        const ISTRIP  = 0x020; /* Strip 8th bit off characters */
-        const INLCR   = 0x040; /* Map NL to CR on input */
-        const IGNCR   = 0x080; /* Ignore CR */
-        const ICRNL   = 0x100; /* Map CR to NL on input */
-        const IXANY   = 0x800; /* Any character will restart after stop */
-        // https://elixir.bootlin.com/linux/v6.0.9/source/include/uapi/asm-generic/termbits.h
+        const IGNBRK  = 0x001;
+        const BRKINT  = 0x002;
+        const IGNPAR  = 0x004;
+        const PARMRK  = 0x008;
+        const INPCK   = 0x010;
+        const ISTRIP  = 0x020;
+        const INLCR   = 0x040;
+        const IGNCR   = 0x080;
+        const ICRNL   = 0x100;
+        const IXANY   = 0x800;
         const IUCLC   = 0x0200;
         const IXON    = 0x0400;
         const IXOFF   = 0x1000;
         const IMAXBEL = 0x2000;
         const IUTF8   = 0x4000;
 
-        // This type accepts all bit patterns,
-        // although only some flags are recognized.
         const _       = !0;
     }
 }
@@ -51,15 +38,13 @@ impl Default for CInputFlags {
     }
 }
 
-/// The output flags; `c_oflags` bits in Linux.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(super) struct COutputFlags(u32);
 
 bitflags! {
     impl COutputFlags: u32 {
-        // https://elixir.bootlin.com/linux/v6.0.9/source/include/uapi/asm-generic/termbits-common.h#L21
-        const OPOST  = 1 << 0; /* Perform output processing */
+        const OPOST  = 1 << 0;
         const OLCUC  = 1 << 1;
         const ONLCR  = 1 << 2;
         const OCRNL  = 1 << 3;
@@ -68,8 +53,6 @@ bitflags! {
         const OFILL  = 1 << 6;
         const OFDEL  = 1 << 7;
 
-        // This type accepts all bit patterns,
-        // although only some flags are recognized.
         const _      = !0;
     }
 }
@@ -80,7 +63,6 @@ impl Default for COutputFlags {
     }
 }
 
-/// The control flags; `c_cflags` bits in Linux.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(super) struct CCtrlFlags(u32);
@@ -136,23 +118,19 @@ impl CCtrlFlags {
     }
 }
 
-/// The size part of the control flags ([`CCtrlFlags`]).
 #[repr(u32)]
 #[derive(Clone, Copy, TryFromInt)]
 pub(super) enum CCtrlSize {
-    // https://elixir.bootlin.com/linux/v6.0.9/source/include/uapi/asm-generic/termbits.h#L97
     CS5 = 0x00000000,
     CS6 = 0x00000010,
     CS7 = 0x00000020,
     CS8 = 0x00000030,
 }
 
-/// The baud part of the control flags ([`CCtrlFlags`]).
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, TryFromInt)]
 pub(super) enum CCtrlBaud {
-    // https://elixir.bootlin.com/linux/v6.0.9/source/include/uapi/asm-generic/termbits-common.h#L30
-    B0 = 0x00000000, /* hang up */
+    B0 = 0x00000000,
     B50 = 0x00000001,
     B75 = 0x00000002,
     B110 = 0x00000003,
@@ -168,7 +146,6 @@ pub(super) enum CCtrlBaud {
     B9600 = 0x0000000d,
     B19200 = 0x0000000e,
     B38400 = 0x0000000f,
-    // https://elixir.bootlin.com/linux/v6.0.9/source/include/uapi/asm-generic/termbits.h#L108
     BOther = 0x00001000,
     B57600 = 0x00001001,
     B115200 = 0x00001002,
@@ -226,14 +203,12 @@ impl CCtrlBaud {
     }
 }
 
-/// The local flags; `c_lflags` bits in Linux.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(crate) struct CLocalFlags(u32);
 
 bitflags! {
     impl CLocalFlags: u32 {
-        // https://elixir.bootlin.com/linux/v6.0.9/source/include/uapi/asm-generic/termbits.h#L127
         const ISIG    = 0x00001;
         const ICANON  = 0x00002;
         const XCASE   = 0x00004;
@@ -251,8 +226,6 @@ bitflags! {
         const IEXTEN  = 0x08000;
         const EXTPROC = 0x10000;
 
-        // This type accepts all bit patterns,
-        // although only some flags are recognized.
         const _       = !0;
     }
 }
@@ -270,12 +243,10 @@ impl Default for CLocalFlags {
     }
 }
 
-/// An index for a control character ([`CCtrlChar`]).
 #[expect(clippy::upper_case_acronyms)]
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, TryFromInt)]
 pub(crate) enum CCtrlCharId {
-    // https://elixir.bootlin.com/linux/v6.0.9/source/include/uapi/asm-generic/termbits.h#L42
     VINTR = 0,
     VQUIT = 1,
     VERASE = 2,
@@ -296,7 +267,6 @@ pub(crate) enum CCtrlCharId {
 }
 
 impl CCtrlCharId {
-    // The special char is from gvisor
     pub(super) const fn default_char(&self) -> u8 {
         const fn control_character(c: char) -> u8 {
             debug_assert!(c as u8 >= b'A');
@@ -325,9 +295,6 @@ impl CCtrlCharId {
     }
 }
 
-/// The termios; `struct termios` in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.0.9/source/include/uapi/asm-generic/termbits.h#L30>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(crate) struct CTermios {
@@ -371,9 +338,6 @@ impl Default for CTermios {
 }
 
 impl CTermios {
-    /// The number of the control characters.
-    ///
-    /// Reference: <https://elixir.bootlin.com/linux/v6.0.9/source/include/uapi/asm-generic/termbits.h#L9>.
     const NUM_CTRL_CHARS: usize = 19;
 
     pub(crate) fn special_char(&self, id: CCtrlCharId) -> CCtrlChar {
@@ -384,26 +348,19 @@ impl CTermios {
         &mut self.c_cc[id as usize]
     }
 
-    /// Returns whether the terminal is in the canonical mode.
-    ///
-    /// The canonical mode means that the input characters will be handled by lines, not by single
-    /// characters.
     pub(super) fn is_canonical_mode(&self) -> bool {
         self.c_lflags.contains(CLocalFlags::ICANON)
     }
 
-    /// Returns the input flags.
     pub(crate) fn input_flags(&self) -> &CInputFlags {
         &self.c_iflags
     }
 
-    /// Returns the local flags.
     pub(crate) fn local_flags(&self) -> &CLocalFlags {
         &self.c_lflags
     }
 }
 
-/// The speeds stored outside legacy `struct termios`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(crate) struct CTermiosSpeeds {
@@ -431,9 +388,6 @@ impl CTermiosSpeeds {
     }
 }
 
-/// The extended termios; `struct termios2` in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.0.9/source/include/uapi/asm-generic/termbits.h#L19>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
 pub(crate) struct CTermios2 {
@@ -459,9 +413,6 @@ impl Deref for CTermios2 {
     }
 }
 
-/// A window size; `struct winsize` in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.0.9/source/include/uapi/asm-generic/termios.h#L15>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
 pub(crate) struct CWinSize {
@@ -471,9 +422,6 @@ pub(crate) struct CWinSize {
     ws_ypixel: u16,
 }
 
-/// A font operation; `struct console_font_op` in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.15/source/include/uapi/linux/kd.h#L159>.
 #[padding_struct]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
@@ -487,17 +435,14 @@ pub(crate) struct CFontOp {
 }
 
 impl CFontOp {
-    // https://elixir.bootlin.com/linux/v6.15/source/include/uapi/linux/kd.h#L177
     pub(super) const OP_SET: u32 = 0;
     pub(super) const OP_GET: u32 = 1;
     pub(super) const OP_SET_DEFAULT: u32 = 2;
     pub(super) const OP_SET_TALL: u32 = 4;
 
-    // https://elixir.bootlin.com/linux/v6.15/source/drivers/tty/vt/vt.c#L4711
     pub(super) const MAX_WIDTH: u32 = 64;
     pub(super) const MAX_HEIGHT: u32 = 128;
     pub(super) const MAX_CHARCOUNT: u32 = 512;
 
-    // https://elixir.bootlin.com/linux/v6.15/source/drivers/tty/vt/vt.c#L4721
     pub(super) const NONTALL_VPITCH: u32 = 32;
 }

@@ -1,9 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Misc devices.
-//!
-//! Character device with major number 10.
-
 use device_id::MajorId;
 use spin::Once;
 

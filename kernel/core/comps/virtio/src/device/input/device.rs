@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::{
     boxed::Box,
     string::{String, ToString},
@@ -32,35 +30,20 @@ use crate::{
 };
 
 bitflags! {
-    /// The properties of input device.
-    ///
-    /// Ref: Linux input-event-codes.h
     #[derive(Clone, Copy, Debug)]
     struct InputProp: u8 {
-        /// Needs a pointer
         const POINTER        = 1 << 0;
-        /// Direct input devices
         const DIRECT         = 1 << 1;
-        /// Has button(s) under pad
         const BUTTONPAD      = 1 << 2;
-        /// Touch rectangle only
         const SEMI_MT        = 1 << 3;
-        /// Softbuttons at top of pad
         const TOPBUTTONPAD   = 1 << 4;
-        /// Is a pointing stick
         const POINTING_STICK = 1 << 5;
-        /// Has accelerometer
         const ACCELEROMETER  = 1 << 6;
     }
 }
 
 const QUEUE_SIZE: u16 = 64;
 
-/// Virtual human interface devices such as keyboards, mice and tablets.
-///
-/// An instance of the virtio device represents one such input device.
-/// Device behavior mirrors that of the evdev layer in Linux,
-/// making pass-through implementations on top of evdev easy.
 pub struct InputDevice {
     config: SafePtr<VirtioInputConfig, IoMem>,
     event_queue: SpinLock<VirtQueue>,
@@ -75,8 +58,6 @@ pub struct InputDevice {
 }
 
 impl InputDevice {
-    /// Create a new VirtIO-Input driver.
-    /// msix_vector_left should at least have one element or n elements where n is the virtqueue amount
     pub(crate) fn init(mut device_transport: DeviceTransport) -> Result<(), VirtioDeviceError> {
         let mut event_queue = VirtQueue::new(QUEUE_EVENT, QUEUE_SIZE, device_transport.as_mut())?;
         let status_queue = VirtQueue::new(QUEUE_STATUS, QUEUE_SIZE, device_transport.as_mut())?;
@@ -95,27 +76,17 @@ impl InputDevice {
                 status_queue,
                 event_table,
                 transport: SpinLock::new(device_transport),
-                // Default name, will be updated with actual device name from config.
                 device_name: "virtio_input".to_string(),
-                // Physical path for virtio devices.
                 device_phys: "virtio/input0".to_string(),
-                // Unique identifier (empty for virtio devices).
                 device_uniq: "".to_string(),
-                // Device ID with virtio-specific values.
-                // BUS_VIRTUAL (0x06): Virtual bus type
-                // vendor (0x0001): Generic vendor ID for standard keyboards
-                // product (0x0001): Generic product ID for standard keyboards
-                // version (0x0001): Version 1.0
                 device_id: InputId::new(InputId::BUS_VIRTUAL, 0x0001, 0x0001, 0x0001),
                 capability: InputCapability::new(),
             };
 
-            // Query and update device name from config.
             let name = device.query_config_id_name();
             info!("input device name: {}", name);
             device.device_name = name;
 
-            // Query and set device capabilities.
             device.query_and_set_capabilities();
 
             Arc::new(device)
@@ -135,12 +106,10 @@ impl InputDevice {
         transport.register_cfg_callback(Box::new(config_space_change))?;
         drop(transport);
 
-        // Register with the input subsystem.
         let registered_device = aster_input::register_device(device.clone());
 
         let mut transport = device.transport.lock();
         let handle_input = {
-            // FIXME: This callback captures a strong `Arc`, creating a reference cycle.
             let device = device.clone();
             move |_: &TrapFrame| device.handle_irq(&registered_device)
         };
@@ -158,19 +127,14 @@ impl InputDevice {
         Ok(())
     }
 
-    /// Pop the pending event.
     fn pop_pending_events(&self, handle_event: &impl Fn(&EventBuf) -> bool) {
         let mut event_queue = self.event_queue.disable_irq().lock();
 
-        // one interrupt may contain several input events, so it should loop
         while let Ok((token, _)) = event_queue.pop_used_with_min_bytes(EVENT_SIZE) {
             debug_assert!(token < QUEUE_SIZE);
             let ptr = self.event_table.get(token as usize);
             let res = handle_event(&ptr);
             let new_token = event_queue.add_output_bufs(&[&ptr]).unwrap();
-            // This only works because nothing happen between `pop_used` and `add` that affects
-            // the list of free descriptors in the queue, so `add` reuses the descriptor which
-            // was just freed by `pop_used`.
             assert_eq!(new_token, token);
 
             if !res {
@@ -183,7 +147,6 @@ impl InputDevice {
         let size = self.select_config(InputConfigSelect::IdName, 0);
 
         let out = {
-            // TODO: Add a general API to read this byte-by-byte.
             let mut out = Vec::with_capacity(size);
             let mut data_ptr = field_ptr!(&self.config, VirtioInputConfig, data).cast::<u8>();
             for _ in 0..size {
@@ -207,7 +170,6 @@ impl InputDevice {
         InputProp::from_bits(data_ptr.cast::<u8>().read_once().unwrap())
     }
 
-    /// Query a specific piece of information by `select` and `subsel`, return the result size.
     fn select_config(&self, select: InputConfigSelect, subsel: u8) -> usize {
         field_ptr!(&self.config, VirtioInputConfig, select)
             .write_once(&(select as u8))
@@ -224,25 +186,20 @@ impl InputDevice {
         self.pop_pending_events(&|event: &EventBuf| Self::handle_event(event, registered_device));
     }
 
-    /// Handles an event and returns whether there may be more event to handle.
     fn handle_event(event: &EventBuf, registered_device: &RegisteredInputDevice) -> bool {
         let virtio_event: VirtioInputEvent = event.read().unwrap();
 
         match virtio_event.event_type {
-            // EV_SYN events
             0 => match virtio_event.code {
                 0 => {
-                    // SYN_REPORT: end of event sequence, send `SynEvent::Report`
                     let syn_event = InputEvent::from_sync_event(SynEvent::Report);
                     registered_device.submit_events(&[syn_event]);
                     return false;
                 }
                 _ => {
-                    // Other sync events (SYN_DROPPED, SYN_CONFIG, etc.)
                     return true;
                 }
             },
-            // Keyboard events (EV_KEY)
             1 => {
                 let key_status = match virtio_event.value {
                     1 => KeyStatus::Pressed,
@@ -257,7 +214,6 @@ impl InputDevice {
                     debug!("unmapped key code {}, dropped", virtio_event.code);
                 }
             }
-            // Relative movement events (EV_REL)
             2 => {
                 if let Some(rel_code) = map_to_rel_code(virtio_event.code) {
                     let rel_value = virtio_event.value as i32;
@@ -271,7 +227,6 @@ impl InputDevice {
                 }
             }
 
-            // Other event types
             _ => {
                 debug!(
                     "unsupported event type {}, skipping",
@@ -284,14 +239,12 @@ impl InputDevice {
         true
     }
 
-    /// Negotiates features for the device specified bits 0~23.
     pub(crate) fn negotiate_features(features: u64) -> u64 {
         assert_eq!(features, 0);
         0
     }
 }
 
-/// Maps a VirtIO key code to a [`KeyCode`].
 fn map_to_key_code(virtio_code: u16) -> Option<KeyCode> {
     Some(match virtio_code {
         1 => KeyCode::Esc,
@@ -403,7 +356,6 @@ fn map_to_key_code(virtio_code: u16) -> Option<KeyCode> {
     })
 }
 
-/// Maps a VirtIO relative axis code to a [`RelCode`].
 fn map_to_rel_code(virtio_code: u16) -> Option<RelCode> {
     Some(match virtio_code {
         0x00 => RelCode::X,
@@ -446,9 +398,7 @@ impl InputDeviceTrait for InputDevice {
 }
 
 impl InputDevice {
-    /// Queries device capabilities from VirtIO config space and sets them in `self`.
     fn query_and_set_capabilities(&mut self) {
-        // Query supported event types.
         let ev_key = self.query_ev_bits(EventTypes::KEY.as_index());
         let ev_rel = self.query_ev_bits(EventTypes::REL.as_index());
 
@@ -462,7 +412,6 @@ impl InputDevice {
             capability.set_supported_event_type(EventTypes::REL);
         }
 
-        // Set key capabilities.
         if let Some(key_bits) = &ev_key {
             for bit in 0..key_bits.len() * 8 {
                 if key_bits[bit / 8] & (1 << (bit % 8)) != 0
@@ -473,7 +422,6 @@ impl InputDevice {
             }
         }
 
-        // Set relative axis capabilities.
         if let Some(rel_bits) = &ev_rel {
             for bit in 0..rel_bits.len() * 8 {
                 if rel_bits[bit / 8] & (1 << (bit % 8)) != 0
@@ -491,7 +439,6 @@ impl InputDevice {
         );
     }
 
-    /// Queries event bits for a specific event type.
     fn query_ev_bits(&self, event_type: u16) -> Option<Vec<u8>> {
         let size = self.select_config(InputConfigSelect::EvBits, event_type as u8);
         if size == 0 {
@@ -509,8 +456,6 @@ impl InputDevice {
     }
 }
 
-/// A event table consists of many event buffers,
-/// each of which is large enough to contain a `VirtioInputEvent`.
 #[derive(Debug)]
 struct EventTable {
     stream: DmaStream,

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::{arch::asm, ops::Range};
 
 pub(crate) use util::{
@@ -29,52 +27,32 @@ impl PagingConstsTrait for PagingConsts {
 }
 
 bitflags::bitflags! {
-    /// Possible flags for a page table entry.
     #[derive(Clone, Copy, Debug)]
     pub(crate) struct PteFlags: usize {
-        /// Specifies whether the mapped frame or page table is valid.
         const VALID           = 1 << 0;
-        /// Specifies whether the mapping does not point to a huge frame; this bit must also be set
-        /// for all the valid last-level entries.
         const NON_HUGE        = 1 << 1;
-        /// Controls whether accesses from userspace (i.e. EL0) are permitted.
         const USER            = 1 << 6;
-        /// Controls whether writes to the mapped frames are disallowed.
         const NO_WRITE        = 1 << 7;
-        /// Whether the memory area represented by this entry is accessed.
         const ACCESSED        = 1 << 10;
-        /// Indicates that the mapping isn't present in all address spaces, so it is flushed from
-        /// the TLB on an address space switch.
         const NON_GLOBAL      = 1 << 11;
 
-        /// Whether the memory area represented by this entry is modified.
         const DIRTY           = 1 << 51;
-        /// Forbid execute codes on the page from kernel space (i.e. EL1).
         const NO_EXECUTE_KERN = 1 << 53;
-        /// Forbid execute codes on the page from userspace (i.e. EL0).
         const NO_EXECUTE_USER = 1 << 54;
 
-        /// Ignored by the hardware. Free to use.
         const HIGH_IGN1       = 1 << 55;
-        /// Ignored by the hardware. Free to use.
         const HIGH_IGN2       = 1 << 56;
 
-        // Be careful that the following fields contain multiple bits!
-        //
-        /// Bit 2-4: Device memory, nGnRnE.
         const ATTR_DEVICE     = 1 << 2;
-        /// Bit 8-9: Inner shareability (effective only for Normal memory).
         const SH_INNER        = 3 << 8;
     }
 }
 
 const SHARED_ASID: usize = 0;
 
-/// The bit offset of the ASID field in TTBR registers and TLBI operands.
 const ASID_SHIFT: u32 = 48;
 
 pub(crate) fn tlb_flush_addr(vaddr: Vaddr) {
-    // SAFETY: This invalidates the TLB, which doesn't affect the memory safety.
     unsafe {
         asm!(
             "dsb nshst",
@@ -87,7 +65,6 @@ pub(crate) fn tlb_flush_addr(vaddr: Vaddr) {
 }
 
 pub(crate) fn tlb_flush_addr_range(range: &Range<Vaddr>) {
-    // SAFETY: This invalidates the TLB, which doesn't affect the memory safety.
     unsafe {
         asm!("dsb nshst");
         for vaddr in range.clone().step_by(PAGE_SIZE) {
@@ -98,21 +75,16 @@ pub(crate) fn tlb_flush_addr_range(range: &Range<Vaddr>) {
 }
 
 fn vaddr_to_vpn(vaddr: Vaddr) -> usize {
-    // Bits 43-0: Bits[55:12] of the virtual address to match.
     (vaddr >> 12) & ((1 << 44) - 1)
 }
 
 pub(crate) fn tlb_flush_all_excluding_global() {
-    // We use `SHARED_ASID` all the time, so all non-global pages are associated with it.
-    //
-    // SAFETY: This invalidates the TLB, which doesn't affect the memory safety.
     unsafe {
         asm!("dsb nshst", "tlbi aside1, {asid}", "dsb nsh", "isb", asid = in(reg) SHARED_ASID << ASID_SHIFT)
     };
 }
 
 pub(crate) fn tlb_flush_all_including_global() {
-    // SAFETY: This invalidates the TLB, which doesn't affect the memory safety.
     unsafe { asm!("dsb nshst", "tlbi vmalle1", "dsb nsh", "isb") };
 }
 
@@ -120,12 +92,6 @@ pub(crate) fn can_sync_dma() -> bool {
     true
 }
 
-/// # Safety
-///
-/// The caller must ensure that
-///  - the virtual address range and DMA direction correspond correctly to a
-///    DMA region;
-///  - `can_sync_dma()` is `true`.
 pub(crate) unsafe fn sync_dma_range(mut range: Range<Vaddr>, is_from_device: bool) {
     use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -135,26 +101,17 @@ pub(crate) unsafe fn sync_dma_range(mut range: Range<Vaddr>, is_from_device: boo
     if cache_line_size == 0 {
         let dmin_line = {
             let ctr: usize;
-            // SAFETY: It is safe to read the Cache Type Register (CTR).
             unsafe { asm!("mrs {}, ctr_el0", out(reg) ctr) };
-            // DminLine, bits [19:16]: Log2 of the number of words in the smallest cache line.
             (ctr >> 16) & 0xf
         };
-        // A word contains 4 bytes.
         cache_line_size = 4 << dmin_line;
         assert!(cache_line_size <= PAGE_SIZE);
         CACHE_LINE_SIZE.store(cache_line_size, Ordering::Relaxed);
     }
 
-    // Start at an aligned address, so the following loop can cover every byte in the range.
     range.start &= !(cache_line_size - 1);
 
     for vaddr in range.step_by(cache_line_size) {
-        // Performing cache maintenance operations is required for correctness
-        // on systems with non-coherent DMA.
-        // SAFETY: The caller ensures that the virtual address range corresponds
-        // to a DMA region. So the underlying memory is untyped and the operations
-        // are safe to perform.
         unsafe {
             if is_from_device {
                 asm!("dc ivac, {}", in(reg) vaddr, options(nostack, preserves_flags));
@@ -165,17 +122,10 @@ pub(crate) unsafe fn sync_dma_range(mut range: Range<Vaddr>, is_from_device: boo
     }
 }
 
-/// Activates the given root-level page table.
-///
-/// # Safety
-///
-/// Changing the root-level page table is unsafe, because it's possible to violate memory safety by
-/// changing the page mapping.
 pub(crate) unsafe fn activate_page_table(root_paddr: Paddr) {
     debug_assert_eq!(root_paddr >> ASID_SHIFT, 0);
     let ttbr = root_paddr | (SHARED_ASID << ASID_SHIFT);
 
-    // SAFETY: The safety is upheld by the caller.
     unsafe {
         asm!(
             "msr ttbr0_el1, {ttbr}",
@@ -185,13 +135,11 @@ pub(crate) unsafe fn activate_page_table(root_paddr: Paddr) {
         );
     }
 
-    // We reuse `SHARED_ASID`, so we need to flush the TLB entries.
     tlb_flush_all_excluding_global();
 }
 
 pub(crate) fn current_page_table_paddr() -> Paddr {
     let ttbr: usize;
-    // SAFETY: It is safe to read the register containing the root-level page table address.
     unsafe {
         asm!(
             "mrs {ttbr}, ttbr0_el1",
@@ -207,7 +155,6 @@ pub(crate) fn current_page_table_paddr() -> Paddr {
 #[derive(Clone, Copy, Debug, Default, Pod)]
 pub(crate) struct PageTableEntry(usize);
 
-/// Parses a bit-flag bits `val` in the representation of `from` to `to` in bits.
 macro_rules! parse_flags {
     ($val:expr, $from:expr, $to:expr) => {
         (($val as usize & $from.bits() as usize) >> $from.bits().ilog2() << $to.bits().ilog2())
@@ -219,13 +166,10 @@ impl PageTableEntry {
 
     fn is_present(&self) -> bool {
         if self.0 & PteFlags::VALID.bits() != 0 {
-            // Child page tables and readable pages.
             true
         } else if self.0 & PteFlags::SH_INNER.bits() != 0 {
-            // Non-readable pages (`new_page()` always sets `SH_INNER`).
             true
         } else {
-            // Nothing.
             false
         }
     }
@@ -275,8 +219,6 @@ impl PageTableEntry {
     }
 
     fn new_page(paddr: Paddr, level: PagingLevel, prop: PageProperty) -> Self {
-        // FIXME: To avoid the Access Flag Fault,
-        // we set the `ACCESSED` bit to 1 all the time.
         let mut flags = PteFlags::ACCESSED.bits();
         if level == 1 {
             flags |= PteFlags::NON_HUGE.bits();
@@ -310,9 +252,6 @@ impl PageTableEntry {
         match prop.cache {
             CachePolicy::Writeback => (),
             CachePolicy::Uncacheable => {
-                // TODO: Currently Asterinas uses `Uncacheable` only for I/O
-                // memory. Normal memory can also be `Noncacheable`, where the
-                // attribute should not be set to `ATTR_DEVICE`.
                 flags |= PteFlags::ATTR_DEVICE.bits();
             }
             _ => panic!("unsupported cache policy"),
@@ -343,10 +282,6 @@ impl PageTableEntry {
 
 impl PodOnce for PageTableEntry {}
 
-// SAFETY: The implementation is safe because:
-//  - `from_usize` and `into_usize` are not overridden;
-//  - `from_repr` and `repr` are correctly implemented;
-//  - a zeroed PTE represents an absent entry.
 unsafe impl PteTrait for PageTableEntry {
     fn from_repr(repr: &PteScalar, level: PagingLevel) -> Self {
         match repr {

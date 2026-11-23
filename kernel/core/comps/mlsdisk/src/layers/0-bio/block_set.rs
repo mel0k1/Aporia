@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::ops::Range;
 
 use inherit_methods_macro::inherit_methods;
@@ -7,18 +5,9 @@ use inherit_methods_macro::inherit_methods;
 use super::{Buf, BufMut, BufRef};
 use crate::{error::Errno, os::Mutex, prelude::*};
 
-/// A fixed set of data blocks that can support random reads and writes.
-///
-/// # Thread safety
-///
-/// `BlockSet` is a data structure of interior mutability.
-/// It is ok to perform I/O on a `BlockSet` concurrently in multiple threads.
-/// `BlockSet` promises the atomicity of reading and writing individual blocks.
 pub trait BlockSet: Sync + Send {
-    /// Read one or multiple blocks at a specified position.
     fn read(&self, pos: BlockId, buf: BufMut) -> Result<()>;
 
-    /// Read a slice of bytes at a specified byte offset.
     fn read_slice(&self, offset: usize, buf: &mut [u8]) -> Result<()> {
         let start_pos = offset / BLOCK_SIZE;
         let end_pos = (offset + buf.len()).div_ceil(BLOCK_SIZE);
@@ -35,10 +24,8 @@ pub trait BlockSet: Sync + Send {
         Ok(())
     }
 
-    /// Write one or multiple blocks at a specified position.
     fn write(&self, pos: BlockId, buf: BufRef) -> Result<()>;
 
-    /// Write a slice of bytes at a specified byte offset.
     fn write_slice(&self, offset: usize, buf: &[u8]) -> Result<()> {
         let start_pos = offset / BLOCK_SIZE;
         let end_pos = (offset + buf.len()).div_ceil(BLOCK_SIZE);
@@ -48,7 +35,6 @@ pub trait BlockSet: Sync + Send {
         let nblocks = end_pos - start_pos;
         let mut blocks = Buf::alloc(nblocks)?;
 
-        // Maybe we should read the first block partially.
         let start_offset = offset % BLOCK_SIZE;
         if start_offset != 0 {
             let mut start_block = Buf::alloc(1)?;
@@ -57,11 +43,9 @@ pub trait BlockSet: Sync + Send {
                 .copy_from_slice(&start_block.as_slice()[..start_offset]);
         }
 
-        // Copy the input buffer to the write buffer.
         let end_offset = start_offset + buf.len();
         blocks.as_mut_slice()[start_offset..end_offset].copy_from_slice(buf);
 
-        // Maybe we should read the last block partially.
         if !end_offset.is_multiple_of(BLOCK_SIZE) {
             let mut end_block = Buf::alloc(1)?;
             self.read(end_pos, end_block.as_mut())?;
@@ -69,20 +53,16 @@ pub trait BlockSet: Sync + Send {
                 .copy_from_slice(&end_block.as_slice()[end_offset % BLOCK_SIZE..]);
         }
 
-        // Write blocks.
         self.write(start_pos, blocks.as_ref())?;
         Ok(())
     }
 
-    /// Get a subset of the blocks in the block set.
     fn subset(&self, range: Range<BlockId>) -> Result<Self>
     where
         Self: Sized;
 
-    /// Ensure that blocks are persisted to the disk.
     fn flush(&self) -> Result<()>;
 
-    /// Returns the number of blocks.
     fn nblocks(&self) -> usize;
 }
 
@@ -120,9 +100,6 @@ impl_blockset_for!(Arc<T>, "(**self)", |this: &Arc<T>, range| {
     (**this).subset(range).map(|v| Arc::new(v))
 });
 
-/// A disk that impl `BlockSet`.
-///
-/// The `region` is the accessible subset.
 #[derive(Clone)]
 pub(in crate::layers) struct MemDisk {
     disk: Arc<Mutex<Buf>>,
@@ -130,7 +107,6 @@ pub(in crate::layers) struct MemDisk {
 }
 
 impl MemDisk {
-    /// Create a `MemDisk` with the number of blocks.
     pub(in crate::layers) fn create(num_blocks: usize) -> Result<Self> {
         let blocks = Buf::alloc(num_blocks)?;
         Ok(Self {

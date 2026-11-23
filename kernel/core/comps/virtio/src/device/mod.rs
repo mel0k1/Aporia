@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use int_to_c_enum::TryFromInt;
 
 use crate::{queue, transport::VirtioTransportError};

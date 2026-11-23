@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd::mm::VmIo;
 
 use super::{RawSocketOption, SocketOption};
@@ -9,9 +7,6 @@ use crate::{
     prelude::*,
 };
 
-/// Socket options for netlink socket.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.0.9/source/include/uapi/linux/netlink.h#L149>.
 #[expect(non_camel_case_types)]
 #[expect(clippy::upper_case_acronyms)]
 #[repr(i32)]
@@ -37,7 +32,6 @@ trait ReadNetlinkOption: Sized {
     fn read_netlink_option(addr: Vaddr, max_len: u32) -> Result<Self>;
 }
 
-// Netlink treats short inputs as zero and rejects short output buffers.
 macro_rules! impl_raw_netlink_socket_option {
     ($option:ty) => {
         impl RawSocketOption for $option {
@@ -50,7 +44,6 @@ macro_rules! impl_raw_netlink_socket_option {
             fn write_to_user(&self, addr: Vaddr, max_len: &mut u32) -> Result<usize> {
                 use $crate::util::net::options::utils::WriteToUser;
 
-                // Reference: <https://elixir.bootlin.com/linux/v7.1/source/net/netlink/af_netlink.c#L1786-L1787>.
                 if *max_len < size_of::<u32>() as u32 {
                     return Err(errno!(EINVAL, "max_len is too short"));
                 }
@@ -100,8 +93,6 @@ impl_raw_netlink_socket_option!(StrictCheck);
 
 impl ReadNetlinkOption for u32 {
     fn read_netlink_option(addr: Vaddr, max_len: u32) -> Result<Self> {
-        // Short inputs must not access user memory.
-        // Reference: <https://elixir.bootlin.com/linux/v7.1/source/net/netlink/af_netlink.c#L1658-L1660>.
         if max_len >= size_of::<u32>() as u32 {
             Ok(current_userspace!().read_val::<u32>(addr)?)
         } else {

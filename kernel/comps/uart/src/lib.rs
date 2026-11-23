@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Universal asynchronous receiver-transmitter (UART).
-
 #![no_std]
 #![deny(unsafe_code)]
 
@@ -9,7 +5,6 @@ extern crate alloc;
 
 use component::{ComponentInitError, init_component};
 
-// Set this crate's log prefix for `ostd::log`.
 macro_rules! __log_prefix {
     () => {
         "uart: "

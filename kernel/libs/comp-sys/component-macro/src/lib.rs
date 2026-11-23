@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//！This crate defines the component system related macros.
-
 #![deny(unsafe_code)]
 
 mod init_comp;
@@ -14,31 +10,6 @@ use syn::parse_macro_input;
 
 pub(crate) const COMPONENT_FILE_NAME: &str = "Components.toml";
 
-/// Register a function to be called when the component system is initialized. The function should not public.
-///
-/// You can specify the initialization stage by:
-/// - `#[init_component]` or `#[init_component(bootstrap)]` - the **Bootstrap** stage
-/// - `#[init_component(kthread)]` - the **Kthread** stage
-/// - `#[init_component(process)]` - the **Process** stage
-///
-/// Example:
-/// ```rust
-/// #[init_component]
-/// fn init() -> Result<(), component::ComponentInitError> {
-///     Ok(())
-/// }
-/// ```
-///
-/// It will expand to
-/// ```rust
-/// fn init() -> Result<(), component::ComponentInitError> {
-///     Ok(())
-/// }
-///
-/// component::submit!(component::ComponentRegistry::new(component::InitStage::Bootstrap, &init, file!()));
-/// ```
-/// The priority will calculate automatically
-///
 #[proc_macro_attribute]
 pub fn init_component(args: TokenStream, input: TokenStream) -> TokenStream {
     let stage = match args.to_string().as_str() {
@@ -61,18 +32,6 @@ pub fn init_component(args: TokenStream, input: TokenStream) -> TokenStream {
     .into()
 }
 
-/// Automatically generate all component information required by the component system.
-///
-/// It mainly uses the output of the command `cargo metadata` to automatically generate information about all components, and also checks whether `Components.toml` contains all the components.
-///
-/// It is often used with `component::init_all`.
-///
-/// Example:
-///
-/// ```rust
-///     component::init_all(component::InitStage::Bootstrap, component::parse_metadata!());
-/// ```
-///
 #[proc_macro]
 pub fn parse_metadata(_: TokenStream) -> TokenStream {
     let out = priority::component_generate();

@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! The virtio of Asterinas.
 #![no_std]
 #![deny(unsafe_code)]
 #![feature(custom_inner_attributes)]
@@ -26,7 +23,6 @@ use transport::{DeviceStatus, mmio::VIRTIO_MMIO_DRIVER};
 
 use crate::transport::{DeviceTransport, VirtioTransport};
 
-// Set this crate's log prefix for `ostd::log`.
 macro_rules! __log_prefix {
     () => {
         "virtio: "
@@ -45,7 +41,6 @@ static VIRTIO_BLOCK_MAJOR_ID: Once<MajorIdOwner> = Once::new();
 fn virtio_component_init() -> Result<(), ComponentInitError> {
     VIRTIO_BLOCK_MAJOR_ID.call_once(|| aster_block::allocate_major().unwrap());
 
-    // Find all devices and register them to the corresponding crate
     transport::init();
 
     device::entropy::init();
@@ -55,10 +50,6 @@ fn virtio_component_init() -> Result<(), ComponentInitError> {
     while let Some(mut transport) = pop_device_transport() {
         let device_type = transport.device_type();
 
-        // Follow VirtIO 1.3, 3.1.1 "Driver Requirements: Device Initialization".
-        // Reference: <https://docs.oasis-open.org/virtio/virtio/v1.3/virtio-v1.3.html#x1-1230001>
-
-        // Reset the device.
         transport
             .write_device_status(DeviceStatus::empty())
             .unwrap();
@@ -66,21 +57,17 @@ fn virtio_component_init() -> Result<(), ComponentInitError> {
             spin_loop();
         }
 
-        // Set `ACKNOWLEDGE` to report that the guest OS has noticed the device.
         transport
             .write_device_status(DeviceStatus::ACKNOWLEDGE)
             .unwrap();
 
-        // Set `DRIVER` to report that the guest OS knows how to drive the device.
         transport
             .write_device_status(DeviceStatus::ACKNOWLEDGE | DeviceStatus::DRIVER)
             .unwrap();
 
-        // Negotiate the feature subset supported by the driver.
         negotiate_features(&mut transport);
 
         if !transport.is_legacy_version() {
-            // Set `FEATURES_OK` to report that feature negotiation is complete.
             let status =
                 DeviceStatus::ACKNOWLEDGE | DeviceStatus::DRIVER | DeviceStatus::FEATURES_OK;
             transport.write_device_status(status).unwrap();
@@ -156,21 +143,16 @@ fn negotiate_features(transport: &mut Box<dyn VirtioTransport>) {
 }
 
 bitflags! {
-    /// all device features, bits 0~23 and 50~63 are specified by device.
-    /// if using this struct to translate u64, use from_bits_truncate function instead of from_bits
-    ///
     #[derive(Clone, Copy, Debug)]
     struct Feature: u64 {
 
-        // device independent
-        const NOTIFY_ON_EMPTY    = 1 << 24; // legacy
-        const ANY_LAYOUT         = 1 << 27; // legacy
+        const NOTIFY_ON_EMPTY    = 1 << 24;
+        const ANY_LAYOUT         = 1 << 27;
         const RING_INDIRECT_DESC = 1 << 28;
         const RING_EVENT_IDX     = 1 << 29;
-        const UNUSED             = 1 << 30; // legacy
-        const VERSION_1          = 1 << 32; // detect legacy
+        const UNUSED             = 1 << 30;
+        const VERSION_1          = 1 << 32;
 
-        // since virtio v1.1
         const ACCESS_PLATFORM    = 1 << 33;
         const RING_PACKED        = 1 << 34;
         const IN_ORDER           = 1 << 35;

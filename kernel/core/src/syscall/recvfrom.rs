@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::SyscallReturn;
 use crate::{
     fs::file::file_table::{RawFileDesc, get_file_fast},
@@ -33,7 +31,6 @@ pub(super) fn sys_recvfrom(
         socket
             .recvmsg(&mut writers, flags)
             .map_err(|err| match err.error() {
-                // FIXME: `recvfrom` should not be restarted if a timeout has been set on the socket using `setsockopt`.
                 Errno::EINTR => errno!(ERESTARTSYS),
                 _ => err,
             })?

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use std::{fs, process::Command, time::Duration};
 
 use assert_cmd::output::OutputOkExt;

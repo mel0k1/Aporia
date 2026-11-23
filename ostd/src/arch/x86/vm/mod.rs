@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Hardware virtualization support for x86.
-
 mod context;
 mod exit;
 pub(crate) mod guest_mode;
@@ -11,7 +7,6 @@ mod vmcs;
 mod vmx;
 mod x86;
 
-/// Initializes hardware-virtualization state on the current CPU.
 pub(super) fn init() {
     vmx::init_feature_control();
 }

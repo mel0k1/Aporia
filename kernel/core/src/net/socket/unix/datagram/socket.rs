@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::{
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
@@ -33,9 +31,6 @@ pub(crate) struct UnixDatagramSocket {
     remote_queue: RwLock<Option<Arc<MessageQueue>>>,
     options: RwLock<OptionSet>,
     timeouts: SocketTimeouts,
-    // Since datagram sockets are not connection-oriented, they typically lack well-defined peer
-    // credentials. According to the Linux implementation, however, peer credentials are recorded
-    // when a socket pair is created using the `socketpair` system call.
     peer_cred: Option<SocketCred>,
 
     is_write_shutdown: AtomicBool,
@@ -119,10 +114,8 @@ impl UnixDatagramSocket {
             })
         };
 
-        // A connected socket will automatically be disconnected if the remote has been closed.
         if remote.is_none() && res.is_err_and(|err| err.error() == Errno::ECONNREFUSED) {
             let mut remote_queue = self.remote_queue.write();
-            // Check to ensure that we are still connected to the same remote.
             if remote_queue
                 .as_ref()
                 .is_some_and(|remote| Arc::ptr_eq(remote, &queue))
@@ -135,9 +128,6 @@ impl UnixDatagramSocket {
     }
 
     fn check_io_events(&self) -> IoEvents {
-        // POLLOUT should be reported as long as there is space in the socket's send buffer.
-        // Currently, we only limit the size of the receive buffer, not the send buffer. Therefore,
-        // POLLOUT is always reported.
         let mut io_events = IoEvents::OUT;
 
         io_events |= self.local_receiver.check_io_events();
@@ -215,14 +205,12 @@ impl Socket for UnixDatagramSocket {
     fn get_option(&self, option: &mut dyn SocketOption) -> Result<()> {
         sock_option_mut!(match option {
             socket_errors @ SocketError => {
-                // TODO: Support socket errors for UNIX sockets
                 socket_errors.set(None);
                 return Ok(());
             }
             _ => (),
         });
 
-        // Deal with UNIX-socket-specific socket-level options
         match do_unix_getsockopt(option, self) {
             Err(err) if err.error() == Errno::ENOPROTOOPT => (),
             res => return res,
@@ -230,7 +218,6 @@ impl Socket for UnixDatagramSocket {
 
         let options = self.options.read();
 
-        // Deal with socket-level options
         match options
             .socket
             .get_option(option, &(&self.local_receiver, &self.timeouts))
@@ -239,7 +226,6 @@ impl Socket for UnixDatagramSocket {
             res => return res,
         }
 
-        // TODO: Deal with socket options from other levels
         warn!("only socket-level options are supported");
 
         Err(errno!(ENOPROTOOPT, "the socket option to get is unknown"))
@@ -253,7 +239,6 @@ impl Socket for UnixDatagramSocket {
             .set_option(option, &(&self.local_receiver, &self.timeouts))
         {
             Err(err) if err.error() == Errno::ENOPROTOOPT => {
-                // TODO: Deal with socket options from other levels
                 warn!("only socket-level options are supported");
                 Err(errno!(ENOPROTOOPT, "the socket option to get is unknown"))
             }
@@ -267,7 +252,6 @@ impl Socket for UnixDatagramSocket {
         message_header: MessageHeader,
         flags: SendFlags,
     ) -> Result<usize> {
-        // TODO: Deal with flags
         if !flags.is_all_supported() {
             warn!("unsupported flags: {:?}", flags);
         }
@@ -298,7 +282,6 @@ impl Socket for UnixDatagramSocket {
         writer: &mut dyn MultiWrite,
         flags: RecvFlags,
     ) -> Result<(RecvOutput, MessageHeader)> {
-        // TODO: Deal with flags
         if !flags.is_all_supported() {
             warn!("unsupported flags: {:?}", flags);
         }
@@ -354,11 +337,6 @@ impl GetSocketLevelOption for (&MessageReceiver, &SocketTimeouts) {
 
 impl SetSocketLevelOption for (&MessageReceiver, &SocketTimeouts) {
     fn set_pass_cred(&self, pass_cred: bool) {
-        // TODO: According to the Linux man pages, "When this option is set and the socket
-        // is not yet connected, a unique name in the abstract namespace will be generated
-        // automatically." See <https://man7.org/linux/man-pages/man7/unix.7.html> for
-        // details.
-
         self.0.set_pass_cred(pass_cred);
     }
 

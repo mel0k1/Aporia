@@ -1,15 +1,9 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! This module contains utilities for manipulating common Unix command-line arguments.
-
 use std::process;
 
 use indexmap::{IndexMap, IndexSet};
 
 use crate::{error::Errno, error_msg};
 
-/// Split a string of Unix arguments into an array of key-value strings or switches.
-/// Positional arguments are not supported.
 pub fn split_to_kv_array(args: &str) -> Vec<String> {
     let target = match shlex::split(args) {
         Some(v) => v,
@@ -19,7 +13,6 @@ pub fn split_to_kv_array(args: &str) -> Vec<String> {
         }
     };
 
-    // Join the key value arguments as a single element
     let mut joined = Vec::<String>::new();
     let mut last_has_value = false;
     for elem in target {
@@ -40,10 +33,6 @@ pub fn split_to_kv_array(args: &str) -> Vec<String> {
     joined
 }
 
-/// Apply key-value pairs to an array of strings.
-///
-/// The provided arguments will be appended to the array if the key is not already present or if the key is a multi-value key.
-/// Otherwise, the value will be updated.
 pub fn apply_kv_array(
     array: &mut Vec<String>,
     args: &Vec<String>,
@@ -60,12 +49,9 @@ pub fn apply_kv_array(
 
     debug!("multi value keys: {:?}", multi_value_keys);
 
-    // We use IndexMap to keep key orders
     let mut key_strings = IndexMap::new();
     let mut multi_value_key_strings: IndexMap<String, Vec<String>> = IndexMap::new();
     for item in array.drain(..) {
-        // Each key-value string has two patterns:
-        // 1. Separated by separator: key value / key=value
         if let Some(key) = get_key(&item, separator) {
             if multi_value_keys.contains(&key) {
                 if let Some(v) = multi_value_key_strings.get_mut(&key) {
@@ -80,7 +66,6 @@ pub fn apply_kv_array(
             key_strings.insert(key, item);
             continue;
         }
-        // 2. Only key, no value
         key_strings.insert(item.clone(), item);
     }
 

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::sync::atomic::{AtomicU32, AtomicU64};
 
 #[cfg(target_arch = "x86_64")]
@@ -27,9 +25,7 @@ use crate::{
     vm::vmar::VmarHandle,
 };
 
-/// The builder to build a POSIX thread
 pub(crate) struct PosixThreadBuilder {
-    // The essential part
     tid: Tid,
     thread_name: ThreadName,
     user_ctx: Box<UserContext>,
@@ -37,7 +33,6 @@ pub(crate) struct PosixThreadBuilder {
     credentials: Credentials,
     vmar: VmarHandle,
 
-    // Optional part
     set_child_tid: Vaddr,
     clear_child_tid: Vaddr,
     file_table: Option<RwArc<FileTable>>,
@@ -76,7 +71,7 @@ impl PosixThreadBuilder {
             supp_user_context: SuppUserContext::new(),
             user_ns: None,
             ns_proxy: None,
-            default_timer_slack_ns: 50_000, // 50 usec default slack
+            default_timer_slack_ns: 50_000,
         }
     }
 

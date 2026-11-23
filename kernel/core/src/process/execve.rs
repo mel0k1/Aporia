@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use aster_rights::ReadWriteOp;
 #[cfg(target_arch = "x86_64")]
 use ostd::arch::cpu::context::{FsBase, GsBase};
@@ -41,11 +39,6 @@ pub(crate) fn do_execve(
     ctx: &Context,
     user_context: &mut UserContext,
 ) -> Result<()> {
-    // FIXME: A malicious user could cause a kernel panic by exhausting available memory.
-    // Currently, the implementation reads up to `MAX_NR_STRING_ARGS` arguments, each up to
-    // `MAX_LEN_STRING_ARG` in length, without first verifying the total combined size.
-    // To prevent excessive memory allocation, a preliminary check should sum the lengths
-    // of all strings to enforce a sensible overall limit.
     let argv = read_cstring_vec(argv_ptr_ptr, MAX_NR_STRING_ARGS, MAX_LEN_STRING_ARG, ctx)?;
     let envp = read_cstring_vec(envp_ptr_ptr, MAX_NR_STRING_ARGS, MAX_LEN_STRING_ARG, ctx)?;
 
@@ -66,8 +59,6 @@ pub(crate) fn do_execve(
     let new_vmar = VmarHandle::new(ProcessVm::new(executable_path.clone()));
     let elf_load_info = program_to_load.load_to_vmar(&new_vmar, &path_resolver)?;
 
-    // Ensure no other thread is concurrently performing exit_group or execve.
-    // If such an operation is in progress, return EAGAIN.
     let mut task_set = ctx.process.tasks().lock();
     if task_set.has_exited_group() || task_set.in_execve() {
         return Err(errno!(
@@ -77,14 +68,10 @@ pub(crate) fn do_execve(
     }
     task_set.start_execve();
 
-    // Terminate all other threads
     sigkill_other_threads(ctx.task, &task_set);
     drop(task_set);
 
     let former_tid = ctx.posix_thread.tid();
-
-    // After this point, failures in subsequent operations are fatal: the process
-    // state may be left inconsistent and it can never return to user mode.
 
     let res = do_execve_no_return(
         ctx,
@@ -114,7 +101,6 @@ fn read_cstring_vec(
     max_string_len: usize,
     ctx: &Context,
 ) -> Result<Vec<CString>> {
-    // On Linux, argv pointer and envp pointer can be specified as NULL.
     if array_ptr == 0 {
         return Ok(Vec::new());
     }
@@ -146,7 +132,6 @@ fn read_cstring_vec(
     Err(errno!(E2BIG, "there are too many arguments"))
 }
 
-/// Prepares credential changes.
 fn prepare_exec_cred(elf_path: &Path, ctx: &Context) -> Result<ExecCred> {
     let credentials = ctx.posix_thread.credentials();
     if elf_path
@@ -163,9 +148,6 @@ fn prepare_exec_cred(elf_path: &Path, ctx: &Context) -> Result<ExecCred> {
             file_capabilities
                 .root_uid()
                 .map_or(current_user_ns_owner_uid.is_root(), |root_uid| {
-                    // FIXME: When creating new user namespaces is supported, compare file
-                    // capability root IDs against the current namespace owner UID mapped into
-                    // the initial user namespace.
                     root_uid == current_user_ns_owner_uid
                 })
         });
@@ -199,42 +181,27 @@ fn do_execve_no_return(
         ..
     } = ctx;
 
-    // Wait for all other threads to terminate,
-    // then promote the current thread to be the process's main thread if necessary.
     wait_other_threads_exit(ctx)?;
     make_current_main_thread(ctx);
 
-    // Activate the new VMAR in the current context and apply file-capability changes,
-    // while holding the process VMAR lock.
-    // This prevents race conditions when checking access permissions while opening
-    // `/proc/[pid]/mem` or `/proc/[pid]/maps`.
     let (vmar_guard, old_vmar) = activate_vmar(ctx, new_vmar);
     apply_exec_cred(process, &ctx.credentials_mut(), exec_cred)?;
     drop(vmar_guard);
     drop(old_vmar);
 
-    // After the program has been successfully loaded, the virtual memory of the current process
-    // is initialized. Hence, it is necessary to clear the previously recorded robust list.
     *thread_local.robust_list().borrow_mut() = None;
     thread_local.clear_child_tid().set(0);
 
-    // Set up the CPU context.
     set_cpu_context(thread_local, user_context, elf_load_info);
 
-    // If this was a vfork child, reset vfork-specific state.
     reset_vfork_child(process);
 
-    // Unshare file descriptor table and close files with O_CLOEXEC flag.
     unshare_and_close_files(ctx);
 
-    // Set the thread name.
     *posix_thread.thread_name().lock() = thread_name;
 
-    // Unshare and reset signal dispositions to their default actions.
     unshare_and_reset_sigdispositions(process);
-    // Reset the alternate signal stack to its default state.
     *thread_local.sig_stack().borrow_mut() = SigStack::default();
-    // Restore the process exit signal to SIGCHLD.
     process.set_exit_signal(SIGCHLD);
 
     Ok(())
@@ -253,7 +220,6 @@ fn wait_other_threads_exit(ctx: &Context) -> Result<()> {
             return Ok(());
         }
 
-        // Wait until any signal comes or any other thread exits.
         let (waiter, waker) = Waiter::new_pair();
 
         ctx.posix_thread
@@ -279,14 +245,10 @@ fn make_current_main_thread(ctx: &Context) {
     let pid = ctx.process.pid();
     let old_tid = ctx.posix_thread.tid();
 
-    // The current thread is already the main thread.
     if old_tid == pid {
         return;
     }
 
-    // The current thread is not the main thread.
-
-    // Lock order: PID table -> tracer.tracees -> tasks of process
     let mut pid_table = pid_table::pid_table_mut();
     let tracer = ctx.posix_thread.tracer();
     let mut tracer_tracees = tracer
@@ -322,28 +284,22 @@ fn set_cpu_context(
 ) {
     let supp = thread_local.supp_user_context();
 
-    // Reset FPU context.
     supp.fpu().set(FpuContext::new());
 
-    // Clear the TLS pointer.
     #[cfg(target_arch = "x86_64")]
     {
         supp.fs_base().set(FsBase::default());
         supp.gs_base().set(GsBase::default());
     }
 
-    // Reset the user register context.
     *user_context = UserContext::default();
 
-    // Set the new instruction pointer to the ELF entry point.
     user_context.set_instruction_pointer(elf_load_info.entry_point as _);
     debug!("entry_point: 0x{:x}", elf_load_info.entry_point);
-    // Set the new user-space stack pointer.
     user_context.set_stack_pointer(elf_load_info.user_stack_top as _);
     debug!("user stack top: 0x{:x}", elf_load_info.user_stack_top);
 }
 
-/// Applies prepared credentials.
 fn apply_exec_cred(
     process: &Process,
     credentials: &Credentials<ReadWriteOp>,
@@ -359,7 +315,6 @@ fn apply_exec_cred(
 
 fn reset_vfork_child(process: &Process) {
     if process.status().is_vfork_child() {
-        // Resumes the parent process.
         process.status().set_vfork_child(false);
         let parent = process.parent().lock().process().upgrade().unwrap();
         parent.children_wait_queue().wake_all();

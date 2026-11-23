@@ -1,21 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Layer stack assembly for the overlay filesystem.
-//!
-//! This module contains the mount-time half of the layer model: the roots the
-//! options name, resolved and validated once into [`MountRoots`], and the
-//! mount's read-only state, layer stack, and claimed upper/workdir pair each
-//! answered from that value.
-//!
-//! Lower layers are read-only: the overlay never writes the lower layers.
-//!
-//! - External concurrent modification of the lower layers is unsupported:
-//!   the dev/ino identity translation and the inode identity-reuse cache
-//!   assume a stable layer stack, and an external lower writer can corrupt
-//!   the visible merge.
-//! - Overlap between the upper, the workdir, and the lower layers is
-//!   rejected at the mount boundary.
-
 use super::{
     super::{
         super::layer::{Layer, LayerStack, ensure_distinct_non_overlapping},
@@ -32,21 +14,14 @@ use crate::{
     prelude::*,
 };
 
-/// The mount's resolved roots, validated: the layer roots and the upper/workdir claim's input.
 pub(super) struct MountRoots {
-    /// The upper root; absent on a mount given no upper.
     upper: Option<Path>,
-    /// The workdir root; present exactly when `upper` is.
     work: Option<Path>,
-    /// Every lower root, topmost first.
     lowers: Vec<Path>,
 }
 
 impl MountRoots {
-    /// Resolves and validates the mount's roots, and settles the read-only state they imply.
     pub(super) fn resolve(ctx: &Context, options: &MountOptions) -> Result<Self> {
-        // The pair is all-or-nothing before `MountOptions` is usable, so this guard only keeps the
-        // unreachable mixed shape from reaching the resolutions below.
         if options.upper_dir.is_some() != options.work_dir.is_some() {
             return Err(errno!(
                 EINVAL,
@@ -54,7 +29,6 @@ impl MountRoots {
             ));
         }
 
-        // Resolve original roots in option order: upperdir -> lowerdir -> workdir.
         let upper = options
             .upper_dir
             .as_ref()
@@ -82,7 +56,6 @@ impl MountRoots {
             warn!("the upperdir is read-only; the mount is treated as read-only");
         }
 
-        // An overlay cannot back another's upper: writes re-enter the backing overlay.
         if let Some(upper_root) = &roots.upper
             && upper_root
                 .mount_node()
@@ -109,7 +82,6 @@ impl MountRoots {
         Ok(roots)
     }
 
-    /// Claims the upper/workdir pair, absent on a mount with no upper.
     pub(super) fn claim_upper_workdir(
         &self,
         options: &MountOptions,
@@ -134,7 +106,6 @@ impl MountRoots {
         )?))
     }
 
-    /// Builds the layer stack from the resolved roots.
     pub(super) fn into_layer_stack(self) -> Result<LayerStack> {
         let upper = self.upper.as_ref().map(Layer::from_path).transpose()?;
         let lowers = self
@@ -153,7 +124,6 @@ impl MountRoots {
         self.upper.as_ref().is_some_and(upper_path_is_read_only)
     }
 
-    /// Rejects any two roots being the same or nested.
     fn validate_overlap(&self) -> Result<()> {
         let mut roots: Vec<&Arc<Dentry>> = Vec::new();
         if let Some(upper) = &self.upper {
@@ -177,7 +147,6 @@ fn upper_path_is_read_only(upper: &Path) -> bool {
         || upper.mount_node().flags().contains(PerMountFlags::RDONLY)
 }
 
-/// Resolves one layer root path and rejects it when it is not a directory.
 fn resolve_root_dir(ctx: &Context, raw_path: &str, _not_dir_msg: &'static str) -> Result<Path> {
     let fs_path = FsPath::from_fd_at(AT_FDCWD, raw_path, EmptyPathStr::Reject)?;
     let path = ctx
@@ -192,7 +161,6 @@ fn resolve_root_dir(ctx: &Context, raw_path: &str, _not_dir_msg: &'static str) -
     Ok(path)
 }
 
-/// Resolves every lower layer root.
 fn resolve_lower_roots(ctx: &Context, raw_paths: &[String]) -> Result<Vec<Path>> {
     raw_paths
         .iter()

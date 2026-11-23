@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd::arch::boot::DEVICE_TREE;
 
 mod ns16550a;

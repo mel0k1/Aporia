@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::{boxed::Box, collections::VecDeque, sync::Arc, vec::Vec};
 
 use super::{EnqueueFlags, LocalRunQueue, Scheduler, UpdateFlags, info::CommonSchedInfo};
@@ -15,14 +13,11 @@ pub(super) fn new_instance() -> &'static dyn Scheduler {
     Box::<FifoScheduler<Task>>::leak(fifo_scheduler)
 }
 
-/// A simple FIFO (First-In-First-Out) task scheduler.
 struct FifoScheduler<T: CommonSchedInfo> {
-    /// A thread-safe queue to hold tasks waiting to be executed.
     rq: Vec<SpinLock<FifoRunQueue<T>>>,
 }
 
 impl<T: CommonSchedInfo> FifoScheduler<T> {
-    /// Creates a new instance of `FifoScheduler`.
     fn new(nr_cpus: usize) -> Self {
         let mut rq = Vec::new();
         for _ in 0..nr_cpus {
@@ -32,7 +27,6 @@ impl<T: CommonSchedInfo> FifoScheduler<T> {
     }
 
     fn select_cpu(&self) -> CpuId {
-        // FIXME: adopt more reasonable policy once we fully enable SMP.
         CpuId::bsp()
     }
 }
@@ -56,7 +50,6 @@ impl<T: CommonSchedInfo + Send + Sync> Scheduler<T> for FifoScheduler<T> {
         }
         rq.queue.push_back(runnable);
 
-        // All tasks are important. Do not preempt the current task without good reason.
         None
     }
 

@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! x86-64 ptrace ABI.
-
 use core::ops::Range;
 
 use ostd::{
@@ -19,9 +15,6 @@ use x86_64::registers::rflags::RFlags;
 
 use crate::{prelude::*, process::posix_thread::SuppUserContext};
 
-/// The system-wide mask of valid MXCSR bits, detected on the boot CPU.
-///
-/// We assume that every CPU supports all bits in this mask.
 static MXCSR_MASK: Once<u32> = Once::new();
 
 pub(super) fn init() {
@@ -30,8 +23,6 @@ pub(super) fn init() {
         context.save();
         let regs = CUserFpregsStruct::from_bytes(context.fxsave_area().as_bytes());
 
-        // Intel SDM Vol. 1, Section 11.6.6: a zero MXCSR_MASK denotes the
-        // architectural fallback mask (which excludes DAZ).
         if regs.mxcsr_mask == 0 {
             0x0000_ffbf
         } else {
@@ -40,13 +31,6 @@ pub(super) fn init() {
     });
 }
 
-// =====================================================================
-// Public ABI mirror.
-// =====================================================================
-
-/// `struct user_regs_struct` in Linux.
-//
-// Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/arch/x86/include/asm/user_64.h#L66-L97>
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
 pub(crate) struct CUserRegsStruct {
@@ -80,10 +64,6 @@ pub(crate) struct CUserRegsStruct {
 }
 
 impl CUserRegsStruct {
-    /// Builds the register snapshot from saved register state.
-    ///
-    /// `orig_rax` is left at zero. Callers needing the syscall-entry
-    /// value should assign it from `ThreadLocal::orig_syscall_ret`.
     fn from_regs(user_context: &UserContext, fs_base: FsBase, gs_base: GsBase) -> Self {
         let mut out = Self::default();
         let bytes = out.as_mut_bytes();
@@ -112,14 +92,6 @@ impl CUserRegsStruct {
         out
     }
 
-    /// Validates and applies only the registers in the supplied byte prefix.
-    ///
-    /// `orig_rax` is ignored. Callers should separately assign this
-    /// field to `ThreadLocal::orig_syscall_ret`.
-    ///
-    /// # Errors
-    ///
-    /// Returns `EIO` on any invalid value.
     fn apply_prefix_to(
         &self,
         user_context: &mut UserContext,
@@ -135,7 +107,6 @@ impl CUserRegsStruct {
         let bytes = self.as_bytes();
         debug_assert!(len <= bytes.len() && len.is_multiple_of(size_of::<usize>()));
 
-        // Keep the original state intact if any register in the prefix is invalid.
         let mut new_user_context = user_context.clone();
         let mut new_fs_base = *fs_base;
         let mut new_gs_base = *gs_base;
@@ -169,9 +140,6 @@ impl CUserRegsStruct {
     }
 }
 
-/// `struct user_i387_struct` in Linux.
-//
-// Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/arch/x86/include/asm/user_64.h#L48-L64>
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 struct CUserFpregsStruct {
@@ -189,20 +157,16 @@ struct CUserFpregsStruct {
 }
 
 impl CUserFpregsStruct {
-    /// Builds the ABI snapshot from saved FPU state.
     fn from_context(context: &FpuContext) -> Self {
         let mut out = Self::from_bytes(context.fxsave_area().as_bytes());
 
-        // Legacy FXSAVE contexts have no header or initial-state bits.
         let Some(features) = context.features() else {
             return out;
         };
 
-        // XRSTOR initializes components whose state bits are clear.
         if !features.contains(XStateFeatures::X87) {
             out.cwd = X87_INITIAL_CONTROL_WORD;
             out.swd = 0;
-            // The high byte is reserved and is preserved on reads.
             out.ftw &= 0xff00;
             out.fop = 0;
             out.rip = 0;
@@ -217,7 +181,6 @@ impl CUserFpregsStruct {
         out
     }
 
-    /// Validates and applies the x87/SSE state, preserving extended components.
     fn apply_to(&self, context: &mut FpuContext) -> Result<()> {
         if self.mxcsr & !*MXCSR_MASK.get().unwrap() != 0 {
             return Err(errno!(EINVAL, "invalid MXCSR value"));
@@ -228,9 +191,7 @@ impl CUserFpregsStruct {
             .as_mut_bytes()
             .copy_from_slice(self.as_bytes());
 
-        // FXRSTOR restores the legacy area without consulting a header.
         if let Some(features) = context.features_mut() {
-            // XRSTOR otherwise ignores writes to initial-state components.
             features.insert(XStateFeatures::X87 | XStateFeatures::SSE);
         }
         Ok(())
@@ -240,14 +201,11 @@ impl CUserFpregsStruct {
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, TryFromInt)]
 pub(crate) enum Regset {
-    /// General-purpose registers (`NT_PRSTATUS`).
     General = 1,
-    /// x87 and SSE registers (`NT_PRFPREG`).
     Fp = 2,
 }
 
 impl Regset {
-    /// Validates the requested byte length and truncates it to the register set size.
     pub(crate) fn validate_and_truncate_len(self, len: usize) -> Result<usize> {
         let size = match self {
             Self::General => size_of::<CUserRegsStruct>(),
@@ -261,7 +219,6 @@ impl Regset {
     }
 }
 
-/// x86-64 register state saved while a tracee is stopped.
 pub(crate) struct PtraceState {
     user_context: UserContext,
     fs_base: FsBase,
@@ -274,7 +231,6 @@ pub(crate) struct PtraceState {
 impl PtraceState {
     const NOT_A_SYSCALL: usize = usize::MAX;
 
-    /// Creates the x86-64 ptrace state from saved registers.
     pub(crate) fn new(
         user_context: &UserContext,
         supp_context: &SuppUserContext,
@@ -290,7 +246,6 @@ impl PtraceState {
         }
     }
 
-    /// Restores the possibly modified registers when the tracee resumes.
     pub(crate) fn restore(self, user_context: &mut UserContext, supp_context: &SuppUserContext) {
         *user_context = self.user_context;
         supp_context.fs_base().set(self.fs_base);
@@ -300,21 +255,16 @@ impl PtraceState {
         }
     }
 
-    /// Returns the saved syscall-return register value, including any tracer modifications.
-    ///
-    /// Returns `None` if the value indicates a non-syscall entry.
     pub(crate) fn orig_syscall_ret(&self) -> Option<usize> {
         (self.orig_syscall_ret != Self::NOT_A_SYSCALL).then_some(self.orig_syscall_ret)
     }
 
-    /// Returns the x86-64 general-purpose register ABI snapshot.
     pub(crate) fn get_user_regs(&self) -> CUserRegsStruct {
         let mut regs = CUserRegsStruct::from_regs(&self.user_context, self.fs_base, self.gs_base);
         regs.orig_rax = self.orig_syscall_ret;
         regs
     }
 
-    /// Applies an x86-64 general-purpose register ABI snapshot.
     pub(crate) fn set_user_regs(&mut self, regs: CUserRegsStruct) -> Result<()> {
         self.set_user_regs_prefix(regs, size_of::<CUserRegsStruct>())
     }
@@ -332,7 +282,6 @@ impl PtraceState {
         Ok(())
     }
 
-    /// Copies a prefix of the register set into the writer.
     pub(crate) fn get_regset(&self, regset: Regset, writer: &mut VmWriter) -> Result<()> {
         match regset {
             Regset::General => {
@@ -347,10 +296,6 @@ impl PtraceState {
         Ok(())
     }
 
-    /// Applies a register set from the reader.
-    ///
-    /// General-purpose registers permit prefix writes; FPU registers require
-    /// the complete FXSAVE area.
     pub(crate) fn set_regset(&mut self, regset: Regset, reader: &mut VmReader) -> Result<()> {
         match regset {
             Regset::General => {
@@ -373,7 +318,6 @@ impl PtraceState {
         }
     }
 
-    /// Reads one word from the x86-64 USER area.
     pub(crate) fn peek_user(&self, offset: usize) -> Result<usize> {
         check_user_offset(offset)?;
         if offset == core::mem::offset_of!(CUserRegsStruct, rflags) {
@@ -389,11 +333,6 @@ impl PtraceState {
             return Ok(self.orig_syscall_ret);
         }
 
-        // FIXME: This emulates the default state of the x86 debug registers,
-        // so it can correctly respond when a tracer reads the tracee’s debug
-        // registers via `PTRACE_PEEKUSER`.
-        // Currently, the tracee’s x86 debug registers are never actually modified,
-        // so they always remain at their default values.
         if let Some(index) = debug_register_index(offset) {
             let value = match index {
                 6 => DEBUG_STATUS_DEFAULT_VALUE,
@@ -411,7 +350,6 @@ impl PtraceState {
         })
     }
 
-    /// Writes one word to the x86-64 USER area.
     pub(crate) fn poke_user(&mut self, offset: usize, value: usize) -> Result<()> {
         check_user_offset(offset)?;
         if offset == core::mem::offset_of!(CUserRegsStruct, rflags) {
@@ -448,22 +386,16 @@ impl PtraceState {
         rule.apply(self.user_context.general_regs_mut(), value)
     }
 
-    /// Enables single-step execution.
     pub(crate) fn enable_single_step(&mut self) {
         self.user_context
             .set_rflags(self.user_context.rflags() | RFlags::TRAP_FLAG.bits() as usize);
     }
 
-    /// Disables single-step execution.
     pub(crate) fn disable_single_step(&mut self) {
         self.user_context
             .set_rflags(self.user_context.rflags() & !(RFlags::TRAP_FLAG.bits() as usize));
     }
 }
-
-// =====================================================================
-// Per-register policy table.
-// =====================================================================
 
 macro_rules! off {
     ($field:ident) => {
@@ -471,12 +403,6 @@ macro_rules! off {
     };
 }
 
-/// Defines the ptrace access rules for `CUserRegsStruct`.
-///
-/// Each entry covers one `usize` field in `CUserRegsStruct` that is either
-/// backed by `GeneralRegs` or fixed to an ABI-defined value.
-/// `orig_rax`, `fsbase`, and `gsbase` are handled separately because they are
-/// not stored in `GeneralRegs`.
 const REG_RULES: &[RegRule] = &[
     RegRule::rw(off!(rax), |r| r.rax, |r, v| r.rax = v, Policy::Set),
     RegRule::rw(off!(rbx), |r| r.rbx, |r, v| r.rbx = v, Policy::Set),
@@ -493,7 +419,6 @@ const REG_RULES: &[RegRule] = &[
     RegRule::rw(off!(r13), |r| r.r13, |r, v| r.r13 = v, Policy::Set),
     RegRule::rw(off!(r14), |r| r.r14, |r, v| r.r14 = v, Policy::Set),
     RegRule::rw(off!(r15), |r| r.r15, |r, v| r.r15 = v, Policy::Set),
-    // These are more strict than Linux.
     RegRule::rw(
         off!(rsp),
         |r| r.rsp,
@@ -506,8 +431,6 @@ const REG_RULES: &[RegRule] = &[
         |r, v| r.rip = v,
         Policy::SetIf(is_user_addr),
     ),
-    // Asterinas does not run 32-bit user code,
-    // so the segment selectors are always at fixed values.
     RegRule::fixed(off!(cs), USER_CS_VALUE),
     RegRule::fixed(off!(ss), USER_SS_VALUE),
     RegRule::fixed(off!(ds), 0),
@@ -520,20 +443,14 @@ const _: () = {
     assert!((REG_RULES.len() + 4) * size_of::<usize>() == size_of::<CUserRegsStruct>());
 };
 
-/// One rule for a single register inside `CUserRegsStruct`.
 struct RegRule {
-    /// Byte offset of this register inside `CUserRegsStruct`.
     offset: usize,
-    /// Read accessor on `GeneralRegs`, `None` for `Policy::Fixed`.
     get: Option<fn(&GeneralRegs) -> usize>,
-    /// Write accessor on `GeneralRegs`, `None` for `Policy::Fixed`.
     set: Option<fn(&mut GeneralRegs, usize)>,
-    /// Policy for validating user input when writing this register.
     policy: Policy,
 }
 
 impl RegRule {
-    /// Builds a rule for a `GeneralRegs`-backed register.
     const fn rw(
         offset: usize,
         get: fn(&GeneralRegs) -> usize,
@@ -548,7 +465,6 @@ impl RegRule {
         }
     }
 
-    /// Builds a rule for a pseudo field fixed at `expected`.
     const fn fixed(offset: usize, expected: usize) -> Self {
         Self {
             offset,
@@ -558,12 +474,10 @@ impl RegRule {
         }
     }
 
-    /// Returns the rule whose offset matches `offset`.
     fn for_offset(offset: usize) -> Option<&'static Self> {
         REG_RULES.iter().find(|rule| rule.offset == offset)
     }
 
-    /// Applies one user-supplied register write according to this rule.
     fn apply(&self, regs: &mut GeneralRegs, value: usize) -> Result<()> {
         match self.policy {
             Policy::Set => {
@@ -586,13 +500,9 @@ impl RegRule {
     }
 }
 
-/// The policy for validating user input when writing a register.
 enum Policy {
-    /// Unrestricted.
     Set,
-    /// Set only if the predicate accepts the value.
     SetIf(fn(usize) -> bool),
-    /// The field is fixed at the expected value.
     Fixed(usize),
 }
 
@@ -600,17 +510,11 @@ const fn is_user_addr(v: usize) -> bool {
     v < MAX_USERSPACE_VADDR
 }
 
-/// Checks whether the given offset is valid in `struct user`.
-//
-// Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/arch/x86/include/asm/user_64.h#L103-L132>
 fn check_user_offset(offset: usize) -> Result<()> {
     if !offset.is_multiple_of(size_of::<usize>()) {
         return Err(errno!(EIO, "invalid USER area offset"));
     }
 
-    // We only support the offsets for general-purpose registers,
-    // and x86 debug registers currently.
-    // `struct user_regs_struct` is the first field in `struct user`.
     if offset < size_of::<CUserRegsStruct>() {
         return Ok(());
     }
@@ -625,7 +529,6 @@ fn check_user_offset(offset: usize) -> Result<()> {
     ))
 }
 
-// Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/arch/x86/include/asm/user_64.h#L103-L132>.
 const DEBUG_REGS_OFFSET: usize = 848;
 const DEBUG_REGS_COUNT: usize = 8;
 const DEBUG_STATUS_DEFAULT_VALUE: usize = 0xffff0ff0;
@@ -656,13 +559,8 @@ const fn word_range(offset: usize) -> Range<usize> {
     offset..offset + size_of::<usize>()
 }
 
-// Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/arch/x86/include/asm/segment.h#L188-L189>
 const LINUX_USER_CS: usize = 0x33;
 const LINUX_USER_SS: usize = 0x2b;
 
-// Some applications (e.g., GDB) rely on `ptrace` exposing Linux's
-// conventional x86-64 user segment selector values.
-//
-// See: <https://sourceware.org/git/?p=binutils-gdb.git;a=blob;f=gdb/nat/x86-linux.c;h=16391dcde24407fc2c219194bc960f761bd048fe;hb=HEAD#l124>.
 ostd::const_assert!(LINUX_USER_CS == USER_CS_VALUE);
 ostd::const_assert!(LINUX_USER_SS == USER_SS_VALUE);

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::sync::atomic::Ordering;
 
 use aster_util::printer::VmPrinter;
@@ -15,12 +13,10 @@ use crate::{
     thread::Thread,
 };
 
-/// Represents the inode at `/proc/[pid]/task/[tid]/oom_score_adj` (and also `/proc/[pid]/oom_score_adj`).
 pub(super) struct OomScoreAdjFileOps(TidDirOps);
 
 impl OomScoreAdjFileOps {
     pub(super) fn new_inode(dir: &TidDirOps, parent: Weak<dyn Inode>) -> Arc<dyn Inode> {
-        // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/fs/proc/base.c#L3386>
         ProcFile::new(Self(dir.clone()), parent, mkmod!(a+r, u+w))
     }
 }
@@ -49,11 +45,6 @@ impl ProcFileOps for OomScoreAdjFileOps {
             return Err(errno!(EINVAL, "the OOM score adjustment is out of range"));
         }
 
-        // TODO: If the new adjustment value is smaller than the smallest
-        // adjustment value that the process has ever reached and the writer
-        // does not have the `SYS_RESOURCE` capability, we should fail with
-        // `EACCES`. See
-        // <https://elixir.bootlin.com/linux/v6.16.5/source/fs/proc/base.c#L1152>.
         let Some(process) = self.0.process() else {
             return Err(errno!(ESRCH, "the process does not exist"));
         };
@@ -63,6 +54,5 @@ impl ProcFileOps for OomScoreAdjFileOps {
     }
 }
 
-// FIXME: Support OOM killer and move these constants to a more appropriate place.
 const OOM_SCORE_ADJ_MIN: i32 = -1000;
 const OOM_SCORE_ADJ_MAX: i32 = 1000;

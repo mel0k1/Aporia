@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::{
     StaticEntryWithOps,
     template::{
@@ -21,18 +19,11 @@ use crate::{
 mod task;
 pub(super) use task::TidDirOps;
 
-/// Represents the inode at `/proc/[pid]`.
-pub(super) struct PidDirOps(
-    // The `/proc/<pid>` directory is a superset of the `/proc/<pid>/task/<tid>` directory.
-    // So we embed `TidDirOps` here so that `PidDirOps` can "inherit" entries and methods
-    // from `TidDirOps`.
-    TidDirOps,
-);
+pub(super) struct PidDirOps(TidDirOps);
 
 impl PidDirOps {
     pub(super) fn new_inode(pid_entry: Arc<PidEntry>, parent: Weak<dyn Inode>) -> Arc<dyn Inode> {
         let this = Self(TidDirOps::new(pid_entry));
-        // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/fs/proc/base.c#L3493>
         ProcDir::new(this, parent, mkmod!(a+rx))
     }
 
@@ -64,16 +55,12 @@ impl ProcDirOps for PidDirOps {
             return Err(errno!(ESRCH, "the process does not exist"));
         }
 
-        // Look up entries that either exist under `/proc/<pid>`
-        // but not under `/proc/<pid>/task/<tid>`,
-        // or entries whose contents differ between `/proc/<pid>` and `/proc/<pid>/task/<tid>`.
         if let Some(child) = lookup_child_from_table(name, Self::STATIC_ENTRIES, |f| {
             (f)(self, this_dir.this_weak().clone())
         }) {
             return Ok(child);
         }
 
-        // For all other children, the content is the same under both `/proc/<pid>` and `/proc/<pid>/task/<tid>`.
         self.0
             .lookup_static_child(this_dir.this_weak().clone(), name)
     }
@@ -96,8 +83,6 @@ impl ProcDirOps for PidDirOps {
 
         const PROCESS_OVERRIDE_NAMES: &[&str] = &["stat"];
 
-        // Add the children that are inherited from `/proc/<pid>/task/<tid>` but not overridden
-        // by process-specific entries under `/proc/<pid>`.
         let listed_entries = listed_entries_from_table(Self::STATIC_ENTRIES).chain(
             self.0
                 .static_listed_entries()

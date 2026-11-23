@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Server-issued FUSE open handles for `virtiofs`.
-
 use aster_fuse::{FuseFileHandle, FuseNodeId, FuseOpenFlags, ops::release::ReleaseOptions};
 
 use super::fs::VirtioFs;
@@ -11,9 +7,6 @@ use crate::{
     thread::work_queue::{self, WorkPriority},
 };
 
-/// A server-issued FUSE open handle.
-///
-/// This object owns `fh` returned by `FUSE_OPEN` or `FUSE_OPENDIR`.
 pub(super) struct VirtioFsOpenHandle {
     fh: FuseFileHandle,
     nodeid: FuseNodeId,
@@ -45,22 +38,18 @@ impl VirtioFsOpenHandle {
         })
     }
 
-    /// Returns the FUSE file handle (`fh`) issued by the server.
     pub(super) fn fh(&self) -> FuseFileHandle {
         self.fh
     }
 
-    /// Returns the composite file flags (access mode | status flags).
     pub(super) fn file_flags(&self) -> u32 {
         self.access_mode as u32 | self.status_flags.bits()
     }
 
-    /// Returns the access mode.
     pub(super) fn access_mode(&self) -> AccessMode {
         self.access_mode
     }
 
-    /// Returns the `FUSE_OPEN` reply flags.
     pub(super) fn open_flags(&self) -> FuseOpenFlags {
         self.open_flags
     }
@@ -71,16 +60,11 @@ impl Drop for VirtioFsOpenHandle {
         let fs = self.fs.clone();
         let nodeid = self.nodeid;
         let fh = self.fh;
-        // FIXME: `FUSE_RELEASE` should use the current status flags from the
-        // owning file description. `VirtioFsOpenHandle` can outlive that
-        // context, so release currently uses the flags captured at open time.
         let file_flags = self.file_flags();
         let release_options = self.release_options;
 
         work_queue::submit_work_func(
             move || {
-                // If the filesystem has been unmounted, the release operation is skipped.
-                // Reference: <https://github.com/libfuse/libfuse/blob/master/include/fuse_lowlevel.h#L664>.
                 let Some(fs) = fs.upgrade() else {
                     return;
                 };
@@ -97,7 +81,6 @@ impl Drop for VirtioFsOpenHandle {
     }
 }
 
-/// Open handles that have been opened on a virtio-fs inode.
 pub(super) struct OpenHandles {
     handles: Mutex<Vec<Weak<VirtioFsOpenHandle>>>,
 }
@@ -109,7 +92,6 @@ impl OpenHandles {
         }
     }
 
-    /// Registers a handle, pruning dead weak references first.
     pub(super) fn insert(&self, handle: &Arc<VirtioFsOpenHandle>) {
         let mut handles = self.handles.lock();
 
@@ -117,12 +99,10 @@ impl OpenHandles {
         handles.push(Arc::downgrade(handle));
     }
 
-    /// Finds a readable handle, if any.
     pub(super) fn find_readable_handle(&self) -> Option<Arc<VirtioFsOpenHandle>> {
         self.find_handle(AccessMode::is_readable)
     }
 
-    /// Finds a writable handle, if any.
     pub(super) fn find_writable_handle(&self) -> Option<Arc<VirtioFsOpenHandle>> {
         self.find_handle(AccessMode::is_writable)
     }
@@ -134,10 +114,6 @@ impl OpenHandles {
         let mut handles = self.handles.lock();
         let mut found = None;
 
-        // TODO: Replace this scan-and-fallback scheme with a more direct way
-        // to serve inode/page-cache I/O without probing the live open-handle set.
-        // Prefer recently inserted handles, which are more likely to have
-        // required properties and be valid.
         handles.retain(|handle| {
             let Some(open_handle) = handle.upgrade() else {
                 return false;

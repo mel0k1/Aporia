@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::time::Duration;
 
 use ostd::mm::VmIo;
@@ -56,7 +54,6 @@ pub(super) fn sys_pselect6(
     )
 }
 
-// Reference: <https://elixir.bootlin.com/linux/v6.19.8/source/fs/select.c#L763-L772>
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 struct SigMaskWithSize {

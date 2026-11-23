@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::{
     ExitCode, Pid, Process,
     process_filter::ProcessFilter,
@@ -17,12 +15,11 @@ use crate::{
     time::clocks::ProfClock,
 };
 
-// The definition of WaitOptions is from Occlum
 bitflags! {
     #[derive(Clone, Copy, Debug)]
     pub(crate) struct WaitOptions: u32 {
         const WNOHANG    = 0x1;
-        const WSTOPPED   = 0x2; // Same as WUNTRACED
+        const WSTOPPED   = 0x2;
         const WEXITED    = 0x4;
         const WCONTINUED = 0x8;
         const WNOWAIT    = 0x01000000;
@@ -94,7 +91,6 @@ pub(crate) fn do_wait(
                     )));
                 }
 
-                // wait
                 None
             })
         },
@@ -167,26 +163,17 @@ enum WaitStatusSource<'a> {
     Thread(&'a PosixThread),
 }
 
-/// The result of trying to wait for a child/tracee state change.
 enum WaitResult {
-    /// A waitable status is found.
     Found(WaitStatus),
-    /// At least one target matches, but none is waitable yet.
     MatchedButUnready,
-    /// No target matches the wait filter.
     NoMatch,
 }
 
-/// Checks tracees for exited or ptrace-stopped threads.
 fn try_wait_tracees(
     child_filter: &ProcessFilter,
     wait_options: WaitOptions,
     ctx: &Context,
 ) -> WaitResult {
-    // Currently, we only support the main thread as the tracer,
-    // so there is no need to check the tracees of other threads.
-    //
-    // Lock order: tracer.tracees -> tracee.tracee_status
     let Some(tracees) = ctx.posix_thread.tracees() else {
         return WaitResult::NoMatch;
     };
@@ -203,30 +190,10 @@ fn try_wait_tracees(
             continue;
         }
 
-        // We have found at least one tracee matching `child_filter`.
         fallback_result = WaitResult::MatchedButUnready;
 
-        // Exit/death by signal is reported first to the tracer, then,
-        // when the tracer consumes the waitpid(2) result, to the real
-        // parent (to the real parent only when the whole multithreaded
-        // process exits). If the tracer and the real parent are the same
-        // process, the report is sent only once.
-        //
-        // Reference: <https://man7.org/linux/man-pages/man2/ptrace.2.html>
         if thread.is_exited() {
-            // Lock order: tracer.tracees -> tracee_process.tasks
             if Arc::ptr_eq(&process.main_thread(), thread) && !process.status().is_zombie() {
-                // Delay reporting `TraceeExit` for a process's main-thread tracee until the
-                // process becomes zombie.
-                //
-                // This avoids a race when the main thread is the last thread to exit and its
-                // tracer is also its parent: the thread has called `Thread::exit()` but
-                // `ProcessStatus::set_zombie()` has not run yet, so an early wait could
-                // report the same exit twice, first as `WaitStatus::TraceeExit` and
-                // later as `WaitStatus::Zombie`.
-                //
-                // Also matches Linux behavior:
-                // <https://elixir.bootlin.com/linux/v6.16.5/source/kernel/exit.c#L1486-L1487>.
                 continue;
             }
 
@@ -237,7 +204,6 @@ fn try_wait_tracees(
             return WaitResult::Found(WaitStatus::TraceeExit(thread));
         }
 
-        // Waiting for ptrace-stops does not require `WaitOptions::WSTOPPED`.
         if let Some(sig_num) = tracee.wait_ptrace_stopped(wait_options) {
             return WaitResult::Found(WaitStatus::TraceeStop(thread.clone(), sig_num));
         }
@@ -279,15 +245,11 @@ fn cleanup_exited_tracee(
     );
 }
 
-/// Checks children for zombie or stopped/continued events.
 fn try_wait_children(
     child_filter: &ProcessFilter,
     wait_options: WaitOptions,
     ctx: &Context,
 ) -> WaitResult {
-    // Acquire the children lock at first to prevent race conditions.
-    // We want to ensure that multiple waiting threads
-    // do not return the same waited process status.
     let mut children_lock = ctx.process.children().lock();
     let children_mut = children_lock.as_mut().unwrap();
 
@@ -298,7 +260,6 @@ fn try_wait_children(
             continue;
         }
 
-        // We have found at least one child matching `child_filter`.
         fallback_result = WaitResult::MatchedButUnready;
 
         if child.main_thread().as_posix_thread().unwrap().is_traced() {
@@ -333,7 +294,6 @@ fn try_wait_children(
     fallback_result
 }
 
-/// Free zombie child with `child_pid`, returns the exit code of child process.
 fn reap_zombie_child(
     child_pid: Pid,
     children_lock: &mut BTreeMap<Pid, Arc<Process>>,
@@ -344,7 +304,6 @@ fn reap_zombie_child(
 
     let mut pid_table = pid_table::pid_table_mut();
 
-    // Lock order: children of process -> PID table -> tasks of process
     debug_assert_eq!(child_process.tasks().lock().as_slice().len(), 1);
     debug_assert_eq!(
         child_process.tasks().lock().as_slice()[0]
@@ -354,13 +313,8 @@ fn reap_zombie_child(
         child_pid
     );
 
-    // Lock order: children of process -> PID table
-    // -> group of process -> group inner -> session inner
-
-    // Remove the process from the global table
     pid_table.remove_process(child_process.pid());
 
-    // Remove the process group and the session from global table, if necessary
     let mut child_group_mut = child_process.process_group.lock();
     child_process.clear_old_group_and_session(&mut child_group_mut, &mut pid_table);
 

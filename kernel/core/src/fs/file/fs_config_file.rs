@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::fmt::Display;
 
 use super::{AccessMode, CreationFlags, FileCommon, FileLike, StatusFlags};
@@ -18,36 +16,6 @@ use crate::{
     process::signal::{PollHandle, Pollable},
 };
 
-/// Represents a filesystem configuration context.
-///
-/// The file stores configuration until the filesystem is created. Once creation
-/// succeeds, further configuration is rejected unless it is an explicit
-/// reconfiguration request.
-///
-/// The context has four states:
-///
-/// - `Configuring`: accepts parameters for filesystem creation.
-/// - `AwaitingMount`: contains a created filesystem and accepts a request to
-///   create one detached mount. A failed request leaves the context in this
-///   state so that it can be retried.
-/// - `Reconfiguring`: accepts parameters for reconfiguring the created
-///   filesystem. A successful reconfiguration leaves the context in this state.
-/// - `Failed`: indicates that filesystem creation or reconfiguration failed and
-///   rejects further operations.
-///
-/// The state transitions are:
-///
-/// ```text
-/// ┌─────────────┐  create_fs  ┌───────────────┐  create_detached_mount  ┌───────────────┐
-/// │ Configuring │ ──────────> │ AwaitingMount │ ──────────────────────> │ Reconfiguring │
-/// └──────┬──────┘             └───────────────┘                         └───────┬───────┘
-///        │ create_fs fails                                 reconfigure_fs fails │
-///        └──────────────────────────────┬───────────────────────────────────────┘
-///                                       ▼
-///                              ┌────────────────┐
-///                              │     Failed     │
-///                              └────────────────┘
-/// ```
 pub(crate) struct FsConfigFile {
     fs_type: &'static dyn DynFsType,
     config: Mutex<FsConfig>,
@@ -57,8 +25,6 @@ pub(crate) struct FsConfigFile {
 struct FsConfig {
     flags: FsFlags,
     source: Option<String>,
-    /// Accumulates filesystem-specific mount options as a comma-separated string
-    /// until filesystem creation or reconfiguration.
     extra_options: String,
     state: FsConfigState,
 }
@@ -71,7 +37,6 @@ enum FsConfigState {
 }
 
 impl FsConfigFile {
-    /// Creates a filesystem configuration file for a filesystem type.
     pub(crate) fn new(fs_type: &'static dyn DynFsType) -> Self {
         let pseudo_path = AnonInodeFs::new_path(|_| "anon_inode:[fscontext]".to_string());
         Self {
@@ -82,14 +47,10 @@ impl FsConfigFile {
                 extra_options: String::new(),
                 state: FsConfigState::Configuring,
             }),
-            // Reference: <https://elixir.bootlin.com/linux/v7.0/source/fs/fsopen.c#L97>.
             common: FileCommon::new(pseudo_path, AccessMode::O_RDWR, StatusFlags::empty()),
         }
     }
 
-    /// Sets a flag-style filesystem configuration option.
-    ///
-    /// This is valid in the `Configuring` and `Reconfiguring` states.
     pub(crate) fn set_flag(&self, key: &str) -> Result<()> {
         let mut config = self.config.lock();
         match &config.state {
@@ -99,8 +60,6 @@ impl FsConfigFile {
                     Ok(())
                 }
                 _ => {
-                    // TODO: Validate filesystem-specific mount options when filesystem APIs
-                    // expose their supported options.
                     append_option(&mut config.extra_options, key, None);
                     Ok(())
                 }
@@ -112,10 +71,6 @@ impl FsConfigFile {
         }
     }
 
-    /// Sets a string filesystem configuration option.
-    ///
-    /// This is valid in the `Configuring` and `Reconfiguring` states. The
-    /// `source` option may only be specified once in the `Configuring` state.
     pub(crate) fn set_string(&self, key: &str, value: &str) -> Result<()> {
         let mut config = self.config.lock();
         match &config.state {
@@ -128,8 +83,6 @@ impl FsConfigFile {
                     Ok(())
                 }
                 _ => {
-                    // TODO: Validate filesystem-specific mount options when filesystem APIs
-                    // expose their supported options.
                     append_option(&mut config.extra_options, key, Some(value));
                     Ok(())
                 }
@@ -145,11 +98,6 @@ impl FsConfigFile {
         }
     }
 
-    /// Creates the configured filesystem.
-    ///
-    /// This is only valid in the `Configuring` state. Success transitions to
-    /// `AwaitingMount`, while failure transitions to `Failed`. It returns
-    /// `EBUSY` in all other states.
     pub(crate) fn create_fs(&self, ctx: &Context) -> Result<()> {
         let mut config = self.config.lock();
         if !matches!(&config.state, FsConfigState::Configuring) {
@@ -176,11 +124,6 @@ impl FsConfigFile {
         }
     }
 
-    /// Creates a detached mount from the created filesystem.
-    ///
-    /// This is only valid in the `AwaitingMount` state. Success transitions to
-    /// `Reconfiguring`, while failure leaves the context in `AwaitingMount` so
-    /// that the operation can be retried.
     pub(crate) fn create_detached_mount(
         &self,
         flags: PerMountFlags,
@@ -211,10 +154,6 @@ impl FsConfigFile {
         Ok(detached_mount)
     }
 
-    /// Reconfigures the created filesystem with the current parameters.
-    ///
-    /// This is only valid in the `Reconfiguring` state. Success leaves the
-    /// context in `Reconfiguring`, while failure transitions to `Failed`.
     pub(crate) fn reconfigure_fs(&self, ctx: &Context) -> Result<()> {
         let mut config = self.config.lock();
         let FsConfigState::Reconfiguring(fs) = &config.state else {
@@ -229,9 +168,6 @@ impl FsConfigFile {
             return Err(err);
         }
 
-        // Discard parameters after a successful reconfiguration.
-        // Reference:
-        // <https://elixir.bootlin.com/linux/v7.0/source/fs/fs_context.c#L536>.
         config.flags = fs.flags();
         config.extra_options.clear();
         Ok(())
@@ -278,25 +214,20 @@ impl FileLike for FsConfigFile {
     }
 }
 
-/// Represents a detached mount.
 pub(crate) struct DetachedMountFile {
     mount: Arc<Mount>,
     common: FileCommon,
 }
 
 impl DetachedMountFile {
-    /// Creates a detached mount file.
     pub(crate) fn new(mount: Arc<Mount>) -> Self {
         let root_path = Path::new_root(mount.clone());
         Self {
             mount,
-            // `DetachedMountFile` is opened with `O_PATH` by default.
-            // Reference: <https://elixir.bootlin.com/linux/v7.0/source/fs/namespace.c#L4497-L4498>.
             common: FileCommon::new(root_path, AccessMode::O_RDONLY, StatusFlags::O_PATH),
         }
     }
 
-    /// Returns the detached mount.
     pub(crate) fn mount(&self) -> Arc<Mount> {
         self.mount.clone()
     }

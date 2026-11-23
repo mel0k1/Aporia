@@ -1,10 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Filesystem-tree operations for creating and deleting devtmpfs nodes.
-//!
-//! The current devtmpfs backing is a tmpfs-flavored `RamFs`, so the inodes in
-//! this tree are expected to be `RamInode`s.
-
 use alloc::borrow::Cow;
 
 use device_id::DeviceId;
@@ -23,37 +16,20 @@ use crate::{
     prelude::*,
 };
 
-/// The metadata that describes a devtmpfs node.
-///
-/// The metadata contains the inode path relative to `/dev` and the permission
-/// bits used when creating the inode. Device subsystems can use this type to
-/// override the default mode.
-///
-/// If a device does not specify a mode explicitly, we use `mkmod!(u+rw)`,
-/// matching Linux devtmpfs's default device inode permissions.
-/// Reference: <https://elixir.bootlin.com/linux/v6.18/source/drivers/base/devtmpfs.c#L11>.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DevtmpfsNodeMeta {
     path: Cow<'static, str>,
     mode: InodeMode,
 }
 
-/// An error returned by [`DevtmpfsNodeMeta::new`] and [`DevtmpfsNodeMeta::with_mode`].
 #[derive(Clone, Copy, Debug)]
 pub struct InvalidDevtmpfsPath;
 
 impl DevtmpfsNodeMeta {
-    /// Creates the metadata for a devtmpfs node with the default mode (`u+rw`).
-    ///
-    /// `path` must be a non-empty, relative, well-formed path. For example,
-    /// `a/b/c` is valid, whereas `/`, `/abc`, `a//b`, and `a/b/` are invalid.
     pub fn new(path: impl Into<Cow<'static, str>>) -> Result<Self, InvalidDevtmpfsPath> {
         Self::with_mode(path, mkmod!(u+rw))
     }
 
-    /// Creates the metadata for a devtmpfs node with the specified mode.
-    ///
-    /// The path follows the same requirements as [`Self::new`].
     pub(crate) fn with_mode(
         path: impl Into<Cow<'static, str>>,
         mode: InodeMode,
@@ -79,7 +55,6 @@ impl DevtmpfsNodeMeta {
     }
 }
 
-/// The complete description of a device node managed by devtmpfs.
 pub(crate) struct DevtmpfsNode {
     device_type: DeviceType,
     device_id: DeviceId,

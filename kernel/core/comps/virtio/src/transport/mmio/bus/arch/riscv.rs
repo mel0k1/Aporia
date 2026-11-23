@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use fdt_util::{AcquireIoMems, AcquireIrqLines};
 use ostd::arch::boot::DEVICE_TREE;
 pub(super) use ostd::arch::irq::MappedIrqLine;
@@ -9,9 +7,6 @@ use crate::transport::mmio::{
 };
 
 pub(super) fn probe_for_device() {
-    // The device tree parsing logic here assumed a Linux-compatible device
-    // tree.
-    // Reference: <https://www.kernel.org/doc/Documentation/devicetree/bindings/virtio/mmio.txt>.
     let device_tree = DEVICE_TREE.get().unwrap();
     let mmio_nodes = device_tree.all_nodes().filter(|node| {
         node.compatible().is_some_and(|compatibles| {

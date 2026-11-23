@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Methods and constructors for `VirtioFsInode`.
-
 #![short_vis_path::add(virtiofs)]
 
 use core::time::Duration;
@@ -41,11 +37,9 @@ use crate::{
     util::ReadWithLen,
 };
 
-/// Use one page for each `FUSE_READDIR` request.
 const FUSE_READDIR_BUF_SIZE: u32 = 4096;
 
 impl VirtioFsInode {
-    /// Reads file data through the page cache.
     pub(in virtiofs) fn cached_read_at(
         &self,
         offset: usize,
@@ -57,10 +51,6 @@ impl VirtioFsInode {
             return self.direct_read_at(offset, writer, fh, flags);
         }
 
-        // FIXME: The virtio-fs session currently always requests `AUTO_INVAL_DATA`,
-        // so cached reads refresh attributes before checking the cached file size.
-        // If this flag becomes optional, reads that stay below EOF should be allowed
-        // to use still-valid cached attributes.
         self.revalidate_attr(Some(fh))?;
 
         let inner = self.inner.read();
@@ -75,7 +65,6 @@ impl VirtioFsInode {
         Ok(read_len)
     }
 
-    /// Reads file data directly from the server.
     pub(in virtiofs) fn direct_read_at(
         &self,
         offset: usize,
@@ -89,10 +78,6 @@ impl VirtioFsInode {
         if read_len == 0 {
             return Ok(0);
         }
-
-        // FIXME: A direct read must observe writes already staged in the page cache.
-        // With the current write-through policy, this usually has no dirty pages to
-        // submit, but it is still required for future write-back semantics.
 
         let fs = self.fs_ref();
         let data_buf = fs.session().alloc_read_buf(read_len)?;
@@ -112,11 +97,6 @@ impl VirtioFsInode {
         Ok(copied)
     }
 
-    /// Writes file data through the page cache.
-    ///
-    /// Cached writes use write-through semantics: they copy user bytes into the
-    /// page cache, flush the dirtied range to the server, and commit metadata
-    /// only after writeback succeeds.
     pub(in virtiofs) fn cached_write_at(
         &self,
         write_offset: WriteOffset,
@@ -142,7 +122,6 @@ impl VirtioFsInode {
         let page_cache = inner.page_cache_mut().unwrap();
 
         if requested_end > old_size {
-            // Extend the visible EOF before growing the page cache.
             self.set_size(requested_end);
             page_cache
                 .resize(requested_end, old_size)
@@ -156,8 +135,6 @@ impl VirtioFsInode {
 
         if let Err(err) = write_through_page_cache() {
             if requested_end > old_size {
-                // Roll back in truncate order: shrink the page cache before
-                // restoring the old visible EOF.
                 page_cache.resize(old_size, requested_end)?;
                 self.set_size(old_size);
             }
@@ -172,7 +149,6 @@ impl VirtioFsInode {
         Ok(write_len)
     }
 
-    /// Writes file data directly to the server.
     pub(in virtiofs) fn direct_write_at(
         &self,
         write_offset: WriteOffset,
@@ -193,9 +169,6 @@ impl VirtioFsInode {
         };
 
         let written = self.do_direct_write(offset, reader, fh, flags)?;
-
-        // TODO: Do `evict_range` again after write to prevent stale data from
-        // being loaded into the page cache during asynchronous read-ahead.
 
         let new_size = offset
             .checked_add(written)
@@ -247,9 +220,6 @@ impl VirtioFsInode {
         let max_write = fs.session().max_write() as usize;
         let mut total_written = 0usize;
 
-        // `FUSE_WRITE` replies carry the accepted byte count. Submit and wait
-        // for one chunk at a time. Once any bytes are accepted, a later error
-        // is reported as a successful partial write.
         while reader.has_remain() {
             let write_size = reader.remain().min(max_write);
             let data_buf = match fs.session().alloc_write_buf(write_size) {
@@ -363,7 +333,6 @@ impl VirtioFsInode {
             return Err(err);
         }
 
-        // Cache the open handle for later page cache I/O.
         if cache_policy == CachePolicy::Cached {
             self.open_handles.insert(&open_handle);
         }
@@ -402,11 +371,6 @@ impl VirtioFsInode {
         Ok(Box::new(VirtioFsDir::new(inode, open_handle)))
     }
 
-    /// Commits an `EntryReply` reply for this cached inode.
-    ///
-    /// `EntryReply` replies carry both attributes and one new lookup reference.
-    /// Updating the two together keeps the client-side `nlookup` mirror in sync
-    /// with the server-side count.
     pub(super) fn commit_entry_reply(
         &self,
         entry_reply: &EntryReply,
@@ -423,11 +387,6 @@ impl VirtioFsInode {
         )
     }
 
-    /// Reads directory entries and expires this directory's attribute cache.
-    ///
-    /// `READDIR` does not return a complete attribute reply for the directory,
-    /// but successful directory reads may observe server-side changes. Expiring
-    /// attributes forces later metadata-sensitive operations to revalidate.
     pub(in virtiofs) fn readdir(
         &self,
         fh: FuseFileHandle,
@@ -461,9 +420,6 @@ impl VirtioFsInode {
             let mut iterate_offset = offset;
             match try_readdir_fn(&mut iterate_offset, visitor) {
                 Err(e) if iterate_offset == offset => Err(e),
-                // FIXME: FUSE directory offsets are opaque cookies, but this
-                // path currently treats them as linear values that can be
-                // subtracted to produce a cursor delta.
                 _ => Ok(iterate_offset - offset),
             }?
         };
@@ -473,11 +429,6 @@ impl VirtioFsInode {
         Ok(offset_read)
     }
 
-    /// Sets one inode timestamp through `SETATTR`.
-    ///
-    /// Calls this from VFS timestamp setters whose trait signature cannot
-    /// return an error. Failures are logged and the cached metadata is left to be
-    /// repaired by a later revalidation.
     pub(super) fn set_time(&self, field: TimeField, time: Duration) {
         let setattr_req = match field {
             TimeField::Access => SetattrReq::new(SetattrValid::empty())
@@ -496,10 +447,6 @@ impl VirtioFsInode {
         }
     }
 
-    /// Applies a FUSE `SETATTR` request and commits its returned attributes.
-    ///
-    /// If the reply loses the attr-version race, only fields selected by the
-    /// request's `SetattrValid` mask remain safe to merge into cached metadata.
     pub(super) fn setattr(&self, setattr_req: SetattrReq) -> Result<()> {
         let fs = self.fs_ref();
         let request_attr_version = fs.session().snapshot_attr_version();
@@ -537,11 +484,6 @@ impl VirtioFsInode {
         }
     }
 
-    /// Revalidates a cached directory entry with `LOOKUP`.
-    ///
-    /// The entry TTL and attribute TTL are independent caches. A successful
-    /// revalidation refreshes the dentry deadline and commits the returned
-    /// attributes as an observation, so a stale attribute reply is discarded.
     pub(super) fn revalidate_lookup(
         &self,
         parent_nodeid: aster_fuse::FuseNodeId,
@@ -582,13 +524,6 @@ impl VirtioFsInode {
         Ok(())
     }
 
-    /// Refreshes cached attributes when their server TTL has expired.
-    ///
-    /// Calls this before operations that depend on a current size or on
-    /// page-cache coherency, such as reads, `O_APPEND` writes, and `SEEK_END`.
-    /// It is a cheap no-op while the cached attributes are still valid. When a
-    /// refresh is needed, the supplied FUSE file handle is passed to `GETATTR`
-    /// so the server may return handle-specific attributes.
     pub(in virtiofs) fn revalidate_attr(&self, fh: Option<FuseFileHandle>) -> Result<()> {
         let now = MonotonicCoarseClock::get().read_time();
         if self.inner.read().is_attr_valid(now) {
@@ -612,8 +547,6 @@ impl VirtioFsInode {
 }
 
 impl Drop for VirtioFsInode {
-    // FUSE forgets must run outside Drop: the session may sleep and
-    // may need VFS locks; defer to the work queue.
     fn drop(&mut self) {
         if let Some(fs) = self.fs.upgrade() {
             fs.remove_inode_from_cache(self);

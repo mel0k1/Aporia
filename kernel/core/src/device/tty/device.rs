@@ -1,11 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! TTY devices.
-//!
-//! This module implements TTY devices such as `/dev/tty0`, `/dev/tty`, and `/dev/console`.
-//!
-//! Reference: <https://www.kernel.org/doc/html/latest/admin-guide/devices.html>
-
 use device_id::{DeviceId, MajorId, MinorId};
 use spin::Once;
 
@@ -22,8 +14,6 @@ use crate::{
     prelude::*,
 };
 
-/// Corresponds to `/dev/tty0` in the file system. This device represents the active virtual
-/// terminal.
 pub(crate) struct Tty0Device;
 
 impl Device for Tty0Device {
@@ -44,8 +34,6 @@ impl Device for Tty0Device {
     }
 }
 
-/// Corresponds to `/dev/tty` in the file system. This device represents the controlling terminal
-/// of the session of the current process.
 pub(crate) struct TtyDevice;
 
 impl Device for TtyDevice {
@@ -58,7 +46,6 @@ impl Device for TtyDevice {
     }
 
     fn devtmpfs_meta(&self) -> Option<DevtmpfsNodeMeta> {
-        // Reference: <https://elixir.bootlin.com/linux/v6.18/source/drivers/tty/tty_io.c#L3511>.
         Some(DevtmpfsNodeMeta::with_mode("tty", mkmod!(a+rw)).unwrap())
     }
 
@@ -74,22 +61,17 @@ impl Device for TtyDevice {
     }
 }
 
-/// Corresponds to `/dev/console` in the file system. This device represents a console to which
-/// system messages will be sent.
 pub(crate) struct SystemConsole {
     inner: Arc<dyn Device>,
 }
 
-/// The device ID of `/dev/console`.
 pub(crate) const CONSOLE_DEVICE_ID: DeviceId = DeviceId::new(MajorId::new(5), MinorId::new(1));
 
 impl SystemConsole {
-    /// Returns the singleton instance of the console device.
     pub(crate) fn singleton() -> &'static Arc<SystemConsole> {
         static INSTANCE: Once<Arc<SystemConsole>> = Once::new();
 
         INSTANCE.call_once(|| {
-            // TODO: Support specifying multiple TTY devices, e.g., "console=hvc0 console=tty0".
             let console_name = CONSOLES
                 .get()
                 .and_then(|consoles| consoles.first().map(|s| s.as_str()))

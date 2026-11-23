@@ -1,24 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! A fixed-size set of unique IDs.
-//!
-//! This module introduces two abstract data collection types.
-//! The first one is [`IdSet<I>`],
-//! a set that contains at most `I::cardinality()` items,
-//! each of which represents a unique ID of type `I`.
-//! The second one is [`AtomicIdSet<I>`],
-//! the atomic version of `IdSet<I>`.
-//!
-//! The type parameter `I` implements the [`Id`] trait,
-//! which abstracts any ID type whose instances
-//! can be 1:1 mapped to the integers from 0 to `Id::cardinality()` (exclusive).
-//! The ID type is required to implement `Into<u32>` and `TryFrom<u32>`.
-//!
-//! One use case of `IdSet<I>` inside OSTD is
-//! to implement a set of CPU IDs.
-//! [`crate::cpu::CpuSet`] has been simply defined
-//! as a type alias for `IdSet<CpuId>`.
-
 use core::{
     fmt::Debug,
     marker::PhantomData,
@@ -31,98 +10,21 @@ use smallvec::SmallVec;
 
 use crate::const_assert;
 
-/// A trait to abstract an ID type.
-///
-/// # Safety
-///
-/// There must be a 1:1 mapping between this ID type and
-/// the integers from 0 to `Self::cardinality()` (exclusive).
-/// This implies that the implementation must ensure that
-/// if one invokes `Into::<u32>::into()` for an `Id` value,
-/// then the returned integer always falls within `0..Id::cardinality()`.
-/// Furthermore, the implementation must ensure that
-/// for any `id_value` of type `MyId: Id`,
-/// the following assertion always succeed
-///
-/// ```rust
-/// assert!(id_value == MyId::new(id_value.into()));
-/// ```
-///
-/// There are also constraints on the implementation of `self::cardinality`.
-/// For one thing, the cardinality of the ID type must not change, i.e.,
-/// different calls to `self::cardinality` return the same value.
-/// In addition, the value of a cardinality must be greater than zero.
 pub unsafe trait Id: Copy + Clone + Debug + Eq + Into<u32> + PartialEq {
-    /// Creates an ID instance given a raw ID number.
-    ///
-    /// # Panics
-    ///
-    /// The given number must be less than `Self::cardinality()`.
-    /// Otherwise, this method would panic.
     fn new(raw_id: u32) -> Self {
         assert!(raw_id < Self::cardinality());
-        // SAFETY: The raw ID is a valid one.
         unsafe { Self::new_unchecked(raw_id) }
     }
 
-    /// Creates an ID instance given a raw ID number.
-    ///
-    /// # Safety
-    ///
-    /// The given number must be less than `Self::cardinality()`.
     unsafe fn new_unchecked(raw_id: u32) -> Self;
 
-    /// The number of unique IDs representable by this type.
     fn cardinality() -> u32;
 
-    /// Returns an [`usize`] from the [`Id`]'s corresponding [`u32`].
     fn as_usize(self) -> usize {
         Into::<u32>::into(self) as usize
     }
 }
 
-/// A set of IDs.
-///
-/// # Examples
-///
-/// Assume that you have a type named `MyId`,
-/// which represents a set of IDs from 0 to 10 (exclusive).
-///
-/// ```
-/// #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-/// pub struct MyId(u32);
-///
-/// // SAFETY: `MyId` maintains the 1:1 mapping invariant for 0..10.
-/// unsafe impl Id for MyId {
-///     fn new_unchecked(raw_id: u32) -> Self { Self(raw_id) }
-///     fn cardinality() -> u32 { 10 } // Fixed cardinality for this example
-/// }
-/// impl From<MyId> for u32 { fn from(id: MyId) -> u32 { id.0 } }
-/// ```
-///
-/// Now you can use `IdSet<MyId>` as a container for `MyID`s.
-///
-/// ```
-/// let mut my_id_set: IdSet<MyId> = IdSet::new_empty();
-///
-/// let id0 = MyId::new(0);
-/// my_id_set.add(id0);
-/// assert!(my_id_set.contains(id0));
-/// assert_eq!(my_id_set.count(), 1);
-///
-/// let id5 = MyId::new(5);
-/// my_id_set.add(id5);
-/// assert!(my_id_set.contains(id5));
-/// assert_eq!(my_id_set.count(), 2);
-///
-/// my_id_set.remove(id0);
-/// assert!(!my_id_set.contains(id0));
-/// assert_eq!(my_id_set.count(), 1);
-///
-/// let full_set = IdSet::<MyId>::new_full();
-/// assert_eq!(full_set.count(), 10);
-/// assert!(full_set.contains(MyId::new(9)));
-/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IdSet<I> {
     bits: SmallVec<[InnerPart; NR_PARTS_NO_ALLOC]>,
@@ -147,7 +49,6 @@ fn parts_for_ids<I: Id>() -> usize {
 }
 
 impl<I: Id> IdSet<I> {
-    /// Creates a new `IdSet` with all IDs in the system.
     pub fn new_full() -> Self {
         let mut bits = Self::with_bit_pattern(!0);
         Self::clear_invalid_id_bits(&mut bits);
@@ -157,7 +58,6 @@ impl<I: Id> IdSet<I> {
         }
     }
 
-    /// Creates a new `IdSet` with no IDs in the system.
     pub fn new_empty() -> Self {
         let bits = Self::with_bit_pattern(0);
         Self {
@@ -166,10 +66,6 @@ impl<I: Id> IdSet<I> {
         }
     }
 
-    /// Creates a new bitmap with each of its parts filled with the given bits.
-    ///
-    /// Depending on the bit pattern and the number of IDs,
-    /// the resulting bitmap may end with some invalid bits.
     fn with_bit_pattern(part_bits: InnerPart) -> SmallVec<[InnerPart; NR_PARTS_NO_ALLOC]> {
         let num_parts = parts_for_ids::<I>();
         let mut bits = SmallVec::with_capacity(num_parts);
@@ -185,7 +81,6 @@ impl<I: Id> IdSet<I> {
         }
     }
 
-    /// Adds an ID to the set.
     pub fn add(&mut self, id: I) {
         let part_idx = part_idx(id);
         let bit_idx = bit_idx(id);
@@ -195,7 +90,6 @@ impl<I: Id> IdSet<I> {
         self.bits[part_idx] |= 1 << bit_idx;
     }
 
-    /// Removes an ID from the set.
     pub fn remove(&mut self, id: I) {
         let part_idx = part_idx(id);
         let bit_idx = bit_idx(id);
@@ -204,14 +98,12 @@ impl<I: Id> IdSet<I> {
         }
     }
 
-    /// Returns true if the set contains the specified ID.
     pub fn contains(&self, id: I) -> bool {
         let part_idx = part_idx(id);
         let bit_idx = bit_idx(id);
         part_idx < self.bits.len() && (self.bits[part_idx] & (1 << bit_idx)) != 0
     }
 
-    /// Returns the number of IDs in the set.
     pub fn count(&self) -> usize {
         self.bits
             .iter()
@@ -219,12 +111,10 @@ impl<I: Id> IdSet<I> {
             .sum()
     }
 
-    /// Returns true if the set is empty.
     pub fn is_empty(&self) -> bool {
         self.bits.iter().all(|part| *part == 0)
     }
 
-    /// Returns true if the set is full.
     pub fn is_full(&self) -> bool {
         let num_ids = I::cardinality() as usize;
         self.bits.iter().enumerate().all(|(idx, part)| {
@@ -236,56 +126,33 @@ impl<I: Id> IdSet<I> {
         })
     }
 
-    /// Adds all IDs to the set.
     pub fn add_all(&mut self) {
         self.bits.fill(!0);
         Self::clear_invalid_id_bits(&mut self.bits);
     }
 
-    /// Removes all IDs from the set.
     pub fn clear(&mut self) {
         self.bits.fill(0);
     }
 
-    /// Iterates over all IDs in the set.
-    ///
-    /// The iteration is guaranteed to be in ascending order.
     #[inline]
     pub fn iter(&self) -> impl Iterator<Item = I> + '_ {
         self.iter_in(..)
     }
 
-    /// Iterates over the IDs in the set within the specified range.
-    ///
-    /// The iteration is guaranteed to be in ascending order.
-    /// Only IDs that are both in the set and within the specified range will be returned.
     pub fn iter_in<S: IdSetSlicer<I>>(&self, slicer: S) -> impl Iterator<Item = I> + '_ {
         let (start, end) = slicer.to_range_bounds();
 
         self.bits.view_bits::<Lsb0>()[start..end]
             .iter_ones()
-            .map(move |offset| {
-                // SAFETY: `offset` is relative to the slice `[start..end]`,
-                // therefore `start + offset` is the absolute index of the bit.
-                // Since `offset` only iterates over relative positions of bit 1s, the
-                // resulting absolute index must refer to an active bit in `self.bits`.
-                unsafe { I::new_unchecked((start + offset) as u32) }
-            })
+            .map(move |offset| unsafe { I::new_unchecked((start + offset) as u32) })
     }
 }
 
-/// A trait that unifies all types that slice a portion of [`IdSet`].
 pub trait IdSetSlicer<I: Id> {
-    /// Converts the index type to inclusive start and exclusive end bounds.
-    ///
-    /// Returns `(start, end)` where:
-    /// - `start`: inclusive lower bound
-    /// - `end`: exclusive upper bound
     fn to_range_bounds(self) -> (usize, usize);
 }
 
-// In the following implementations of `IdSetSlicer`, the `Id` values are upcast
-// from `u32` to `usize`. So adding one is guaranteed to *not* overflow.
 impl<I: Id> IdSetSlicer<I> for RangeTo<I> {
     fn to_range_bounds(self) -> (usize, usize) {
         (0, self.end.as_usize())
@@ -342,11 +209,6 @@ impl<I: Id> Default for IdSet<I> {
     }
 }
 
-/// A set of IDs that may be accessed concurrently.
-///
-/// `AtomicIdSet` is backed by an array of `AtomicU64`.
-/// This allows individual ID bits to be added, removed, or tested atomically.
-/// But operations that span multiple `AtomicU64` values are non-atomic.
 #[derive(Debug)]
 pub struct AtomicIdSet<I> {
     bits: SmallVec<[AtomicInnerPart; NR_PARTS_NO_ALLOC]>,
@@ -357,7 +219,6 @@ type AtomicInnerPart = AtomicU64;
 const_assert!(size_of::<AtomicInnerPart>() == size_of::<InnerPart>());
 
 impl<I: Id> AtomicIdSet<I> {
-    /// Creates a new `AtomicIdSet` from an `IdSet`.
     pub fn new(value: IdSet<I>) -> Self {
         let bits = value.bits.into_iter().map(AtomicU64::new).collect();
         Self {
@@ -366,16 +227,6 @@ impl<I: Id> AtomicIdSet<I> {
         }
     }
 
-    /// Loads the value of the set with the given ordering.
-    ///
-    /// This operation is not atomic. When racing with a [`Self::store`]
-    /// operation, this load may return a set that contains a portion of the
-    /// new value and a portion of the old value. Load on each specific
-    /// word is atomic, and follows the specified ordering.
-    ///
-    /// Note that load with [`Ordering::Release`] is a valid operation, which
-    /// is different from the normal atomic operations. When coupled with
-    /// [`Ordering::Release`], it actually performs `fetch_or(0, Release)`.
     pub fn load(&self, ordering: Ordering) -> IdSet<I> {
         let bits = self
             .bits
@@ -391,19 +242,12 @@ impl<I: Id> AtomicIdSet<I> {
         }
     }
 
-    /// Stores a new value to the set with the given ordering.
-    ///
-    /// This operation is not atomic. When racing with a [`Self::load`]
-    /// operation, that load may return a set that contains a portion of the
-    /// new value and a portion of the old value. Load on each specific
-    /// word is atomic, and follows the specified ordering.
     pub fn store(&self, value: &IdSet<I>, ordering: Ordering) {
         for (part, new_part) in self.bits.iter().zip(value.bits.iter()) {
             part.store(*new_part, ordering);
         }
     }
 
-    /// Atomically adds an ID with the given ordering.
     pub fn add(&self, id: I, ordering: Ordering) {
         let part_idx = part_idx(id);
         let bit_idx = bit_idx(id);
@@ -412,7 +256,6 @@ impl<I: Id> AtomicIdSet<I> {
         }
     }
 
-    /// Atomically removes an ID with the given ordering.
     pub fn remove(&self, id: I, ordering: Ordering) {
         let part_idx = part_idx(id);
         let bit_idx = bit_idx(id);
@@ -421,7 +264,6 @@ impl<I: Id> AtomicIdSet<I> {
         }
     }
 
-    /// Atomically checks if the set contains the specified ID.
     pub fn contains(&self, id: I, ordering: Ordering) -> bool {
         let part_idx = part_idx(id);
         let bit_idx = bit_idx(id);
@@ -436,8 +278,6 @@ mod id_set_tests {
     use super::*;
     use crate::prelude::*;
 
-    /// A mock ID type for testing `IdSet`.
-    /// `C` is the cardinality of this ID type.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     struct MockId<const C: u32>(u32);
 
@@ -457,11 +297,9 @@ mod id_set_tests {
         }
     }
 
-    // Test cases for `IdSet` with various cardinalities
-
     #[ktest]
     fn id_set_empty() {
-        type TestId = MockId<10>; // Cardinality 10
+        type TestId = MockId<10>;
         let set: IdSet<TestId> = IdSet::new_empty();
         assert!(set.is_empty());
         assert_eq!(set.count(), 0);
@@ -472,7 +310,7 @@ mod id_set_tests {
 
     #[ktest]
     fn id_set_full() {
-        type TestId = MockId<10>; // Cardinality 10
+        type TestId = MockId<10>;
         let set: IdSet<TestId> = IdSet::new_full();
         assert!(!set.is_empty());
         assert_eq!(set.count(), 10);
@@ -483,7 +321,7 @@ mod id_set_tests {
 
     #[ktest]
     fn id_set_add_remove() {
-        type TestId = MockId<64>; // Cardinality 64 (one InnerPart)
+        type TestId = MockId<64>;
         let mut set: IdSet<TestId> = IdSet::new_empty();
 
         assert!(set.is_empty());
@@ -514,20 +352,19 @@ mod id_set_tests {
         assert_eq!(set.count(), 0);
         assert!(set.is_empty());
 
-        // Removing a non-existent ID should not panic or change the set
         set.remove(TestId::new(1));
         assert!(set.is_empty());
     }
 
     #[ktest]
     fn id_set_add_remove_multi_part() {
-        type TestId = MockId<128>; // Cardinality 128 (two InnerParts)
+        type TestId = MockId<128>;
         let mut set: IdSet<TestId> = IdSet::new_empty();
 
         set.add(TestId::new(0));
-        set.add(TestId::new(63)); // Last bit of first part
-        set.add(TestId::new(64)); // First bit of second part
-        set.add(TestId::new(127)); // Last bit of second part
+        set.add(TestId::new(63));
+        set.add(TestId::new(64));
+        set.add(TestId::new(127));
 
         assert_eq!(set.count(), 4);
         assert!(set.contains(TestId::new(0)));
@@ -546,7 +383,7 @@ mod id_set_tests {
 
     #[ktest]
     fn id_set_add_all_clear() {
-        type TestId = MockId<70>; // Cardinality 70 (spans two parts, second part not full)
+        type TestId = MockId<70>;
         let mut set: IdSet<TestId> = IdSet::new_empty();
 
         set.add_all();
@@ -566,7 +403,7 @@ mod id_set_tests {
 
     #[ktest]
     fn id_set_iter() {
-        type TestId = MockId<5>; // Cardinality 5
+        type TestId = MockId<5>;
         let mut set: IdSet<TestId> = IdSet::new_empty();
 
         set.add(TestId::new(2));
@@ -586,7 +423,7 @@ mod id_set_tests {
 
     #[ktest]
     fn id_set_iter_full() {
-        type TestId = MockId<3>; // Cardinality 3
+        type TestId = MockId<3>;
         let set: IdSet<TestId> = IdSet::new_full();
         let collected_ids: Vec<TestId> = set.iter().collect();
         assert_eq!(
@@ -597,7 +434,7 @@ mod id_set_tests {
 
     #[ktest]
     fn id_set_iter_multi_part() {
-        type TestId = MockId<100>; // Cardinality 100
+        type TestId = MockId<100>;
         let mut set: IdSet<TestId> = IdSet::new_empty();
         set.add(TestId::new(1));
         set.add(TestId::new(65));
@@ -630,7 +467,7 @@ mod id_set_tests {
 
     #[ktest]
     fn id_set_cardinality_one() {
-        type TestId = MockId<1>; // Cardinality 1
+        type TestId = MockId<1>;
         let mut set: IdSet<TestId> = IdSet::new_empty();
         assert!(set.is_empty());
         assert_eq!(set.count(), 0);
@@ -652,7 +489,7 @@ mod id_set_tests {
 
     #[ktest]
     fn id_set_exact_part_boundary() {
-        type TestId = MockId<64>; // Cardinality exactly one full part
+        type TestId = MockId<64>;
         let mut set: IdSet<TestId> = IdSet::new_empty();
 
         set.add(TestId::new(0));
@@ -669,12 +506,12 @@ mod id_set_tests {
 
     #[ktest]
     fn id_set_just_over_part_boundary() {
-        type TestId = MockId<65>; // Cardinality just over one part
+        type TestId = MockId<65>;
         let mut set: IdSet<TestId> = IdSet::new_empty();
 
         set.add(TestId::new(0));
-        set.add(TestId::new(63)); // End of first part
-        set.add(TestId::new(64)); // Start of second part
+        set.add(TestId::new(63));
+        set.add(TestId::new(64));
         assert_eq!(set.count(), 3);
 
         let full_set = IdSet::<TestId>::new_full();
@@ -687,18 +524,16 @@ mod id_set_tests {
 
     #[ktest]
     fn id_set_is_full_with_less_than_full_last_part() {
-        type TestId = MockId<70>; // Cardinality 70 (64 in first part, 6 in second)
+        type TestId = MockId<70>;
         let mut set: IdSet<TestId> = IdSet::new_full();
 
         assert!(set.is_full());
         assert_eq!(set.count(), 70);
 
-        // Remove one ID from the last part
         set.remove(TestId::new(69));
         assert!(!set.is_full());
         assert_eq!(set.count(), 69);
 
-        // Add it back
         set.add(TestId::new(69));
         assert!(set.is_full());
         assert_eq!(set.count(), 70);

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 #![expect(dead_code)]
 
 use core::ops::Range;
@@ -15,19 +13,16 @@ use super::{
 };
 use crate::{fs::exfat::fat::FatChainFlags, prelude::*};
 
-// TODO: use u64
 type BitStore = u8;
 
 const BITS_PER_BYTE: usize = 8;
 
 #[derive(Debug, Default)]
 pub(super) struct ExfatBitmap {
-    // Start cluster of allocation bitmap.
     chain: ExfatChain,
     bitvec: BitVec<BitStore>,
     dirty_bytes: VecDeque<Range<usize>>,
 
-    // Used to track the number of free clusters.
     num_free_cluster: u32,
     fs: Weak<ExfatFs>,
 }
@@ -109,13 +104,11 @@ impl ExfatBitmap {
         Ok(true)
     }
 
-    /// Return the first unused cluster.
     pub(super) fn find_next_unused_cluster(&self, cluster: ClusterID) -> Result<ClusterID> {
         let clusters = self.find_next_unused_cluster_range_by_bits(cluster, 1)?;
         Ok(clusters.start)
     }
 
-    /// Return the first unused cluster range, set num_clusters=1 to find a single cluster.
     fn find_next_unused_cluster_range_by_bits(
         &self,
         search_start_cluster: ClusterID,
@@ -154,7 +147,6 @@ impl ExfatBitmap {
         Err(errno!(ENOSPC))
     }
 
-    /// Make sure the bit at the range start position is 0.
     fn adjust_head_pos(
         &self,
         bytes: &[BitStore],
@@ -166,11 +158,9 @@ impl ExfatBitmap {
         while cur_unit_index < total_cluster_num {
             let leading_zeros = bytes[cur_unit_index as usize].leading_zeros();
             if leading_zeros == 0 {
-                // Fall over to the next unit, we need to continue checking.
                 cur_unit_index += 1;
                 cur_unit_offset = 0;
             } else {
-                // Stop at current unit, we may need to adjust the cur_offset
                 cur_unit_offset = cur_unit_offset.max(unit_size - leading_zeros);
                 break;
             }
@@ -178,8 +168,6 @@ impl ExfatBitmap {
         (cur_unit_index, cur_unit_offset)
     }
 
-    /// Check if the next mid_unit_num units are zero.
-    /// If not, return the index of the first not zero unit.
     fn check_mid_units(&self, bytes: &[BitStore], cur_unit_index: u32, mid_unit_num: u32) -> u32 {
         for i in 1..mid_unit_num + 1 {
             if bytes[(cur_unit_index + i) as usize] != 0 {
@@ -189,8 +177,6 @@ impl ExfatBitmap {
         cur_unit_index
     }
 
-    /// Check if the tail unit is valid.
-    /// Currently not used.
     fn check_tail_bits(
         &self,
         bytes: &[BitStore],
@@ -227,7 +213,6 @@ impl ExfatBitmap {
             ..result_bit_index + EXFAT_RESERVED_CLUSTERS + num_clusters
     }
 
-    /// Return the next contiguous unused clusters, set cluster_num=1 to find a single cluster
     pub(super) fn find_next_unused_cluster_range(
         &self,
         search_start_cluster: ClusterID,
@@ -254,36 +239,23 @@ impl ExfatBitmap {
             complete_unit_num
         };
         if num_clusters <= unit_size {
-            // If this case, back to the simple function
             return self.find_next_unused_cluster_range_by_bits(search_start_cluster, num_clusters);
         }
-        // Treat a continuous bit chunk as lead_bits+mid_units+tail_bits (mid_units are unit aligned)
-        // For example: 11110000 00000000 00000000 00111111
-        //                  **** -------- -------- ..
-        //                  ^(start bit)
-        // (*): head_bits;  (-): mid_units;  (.): tail_bits
-        // The start bit can be identified with a pair (cur_unit_index, cur_unit_offset)
         while cur_unit_index < complete_unit_num {
-            // First, adjust the cur_idx to a proper head.
             (cur_unit_index, cur_unit_offset) =
                 self.adjust_head_pos(bytes, cur_unit_index, cur_unit_offset, total_cluster_num);
             let head_cluster_num = unit_size - cur_unit_offset;
             let mid_unit_num = (num_clusters - head_cluster_num) / unit_size;
             let tail_cluster_num = (num_clusters - head_cluster_num) % unit_size;
-            // If the last complete unit to be check is out of range, stop searching
             if cur_unit_index + mid_unit_num >= complete_unit_num {
                 break;
             }
-            // Then check for the mid units, these units should be all zero
-            // Due to previous check, there will be no array out of bounds situation
             let ret = self.check_mid_units(bytes, cur_unit_index, mid_unit_num);
             if ret != cur_unit_index {
-                // Mid_checks failed, should go back to the first step.
                 cur_unit_index = ret;
                 cur_unit_offset = 0;
                 continue;
             }
-            // At last, check for the tail bits
             if tail_cluster_num == 0 {
                 return Ok(self.make_range(cur_unit_index, cur_unit_offset, num_clusters));
             }
@@ -301,7 +273,6 @@ impl ExfatBitmap {
                 cur_unit_offset = tailing_zeros + 1;
                 continue;
             }
-            // If we reach here, it means we have found a result
             return Ok(self.make_range(cur_unit_index, cur_unit_offset, num_clusters));
         }
         Err(errno!(ENOSPC))

@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Data buffering.
 use core::ops::RangeInclusive;
 
 use super::mlsdisk::RecordKey;
@@ -10,7 +7,6 @@ use crate::{
     prelude::*,
 };
 
-/// A buffer to cache data blocks before they are written to disk.
 #[derive(Debug)]
 pub(super) struct DataBuf {
     buf: Mutex<BTreeMap<RecordKey, Arc<DataBlock>>>,
@@ -19,11 +15,9 @@ pub(super) struct DataBuf {
     is_full: CvarMutex<bool>,
 }
 
-/// User data block.
 pub(super) struct DataBlock([u8; BLOCK_SIZE]);
 
 impl DataBuf {
-    /// Create a new empty data buffer with a given capacity.
     pub(super) fn new(cap: usize) -> Self {
         Self {
             buf: Mutex::new(BTreeMap::new()),
@@ -33,8 +27,6 @@ impl DataBuf {
         }
     }
 
-    /// Get the buffered data block with the key and copy
-    /// the content into `buf`.
     pub(super) fn get(&self, key: RecordKey, buf: &mut BufMut) -> Option<()> {
         debug_assert_eq!(buf.nblocks(), 1);
         if let Some(block) = self.buf.lock().get(&key) {
@@ -45,7 +37,6 @@ impl DataBuf {
         }
     }
 
-    /// Get the buffered data blocks which keys are within the given range.
     pub(super) fn get_range(
         &self,
         range: RangeInclusive<RecordKey>,
@@ -63,8 +54,6 @@ impl DataBuf {
             .collect()
     }
 
-    /// Put the data block in `buf` into the buffer. Return
-    /// whether the buffer is full after insertion.
     pub(super) fn put(&self, key: RecordKey, buf: BufRef) -> bool {
         debug_assert_eq!(buf.nblocks(), 1);
 
@@ -83,22 +72,18 @@ impl DataBuf {
         *is_full
     }
 
-    /// Return the number of data blocks of the buffer.
     pub(super) fn nblocks(&self) -> usize {
         self.buf.lock().len()
     }
 
-    /// Return whether the buffer is full.
     pub(super) fn at_capacity(&self) -> bool {
         self.nblocks() >= self.cap
     }
 
-    /// Return whether the buffer is empty.
     pub(super) fn is_empty(&self) -> bool {
         self.nblocks() == 0
     }
 
-    /// Empty the buffer.
     pub(super) fn clear(&self) {
         let mut is_full = self.is_full.lock().unwrap();
         self.buf.lock().clear();
@@ -108,7 +93,6 @@ impl DataBuf {
         }
     }
 
-    /// Return all the buffered data blocks.
     pub(super) fn all_blocks(&self) -> Vec<(RecordKey, Arc<DataBlock>)> {
         self.buf
             .lock()
@@ -119,13 +103,11 @@ impl DataBuf {
 }
 
 impl DataBlock {
-    /// Create a new data block from the given `buf`.
     pub(super) fn from_buf(buf: BufRef) -> Arc<Self> {
         debug_assert_eq!(buf.nblocks(), 1);
         Arc::new(DataBlock(buf.as_slice().try_into().unwrap()))
     }
 
-    /// Return the immutable slice of the data block.
     pub(super) fn as_slice(&self) -> &[u8] {
         &self.0
     }

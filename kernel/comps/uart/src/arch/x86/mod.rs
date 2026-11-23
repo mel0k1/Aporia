@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::string::ToString;
 
 use ostd::{
@@ -13,11 +11,8 @@ use spin::Once;
 
 use crate::console::{Uart, UartConsole};
 
-/// ISA interrupt number for UART serial.
-// FIXME: The interrupt number should be retrieved from the ACPI table instead of being hard-coded.
 const ISA_INTR_NUM: u8 = 4;
 
-/// IRQ line for UART serial.
 static IRQ_LINE: Once<MappedIrqLine> = Once::new();
 
 pub(super) fn init() {

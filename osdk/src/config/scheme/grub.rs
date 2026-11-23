@@ -1,16 +1,11 @@
-// SPDX-License-Identifier: MPL-2.0
+use std::path::PathBuf;
 
 use clap::ValueEnum;
 
-use std::path::PathBuf;
-
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct GrubScheme {
-    /// The path of `grub_mkrecue`. Only needed if `boot.method` is `grub`
     pub grub_mkrescue: Option<PathBuf>,
-    /// The boot protocol specified in the GRUB configuration
     pub boot_protocol: Option<BootProtocol>,
-    /// Whether to display the GRUB menu, defaults to `false`
     #[serde(default)]
     pub display_grub_menu: bool,
 }
@@ -49,7 +44,6 @@ impl GrubScheme {
         if self.boot_protocol.is_none() {
             self.boot_protocol = from.boot_protocol;
         }
-        // `display_grub_menu` is not inherited
     }
 
     pub fn finalize(self) -> Grub {

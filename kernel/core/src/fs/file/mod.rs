@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! File-level abstractions and management.
-
 mod file_attr;
 mod file_common;
 mod file_handle;

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 #![short_vis_path::add(route)]
 
 use aster_bigtcp::{iface::InterfaceName, wire::EthernetAddress};
@@ -10,9 +8,6 @@ use crate::{
     util::MultiRead,
 };
 
-/// Link-level attributes.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.13/source/include/uapi/linux/if_link.h#L297>.
 #[expect(non_camel_case_types)]
 #[expect(clippy::upper_case_acronyms)]
 #[repr(u16)]
@@ -29,9 +24,7 @@ pub(in route) enum LinkAttrClass {
     COST = 8,
     PRIORITY = 9,
     MASTER = 10,
-    /// Wireless Extension event
     WIRELESS = 11,
-    /// Protocol specific information for a link
     PROTINFO = 12,
     TXQLEN = 13,
     MAP = 14,
@@ -41,19 +34,15 @@ pub(in route) enum LinkAttrClass {
     LINKINFO = 18,
     NET_NS_PID = 19,
     IFALIAS = 20,
-    /// Number of VFs if device is SR-IOV PF
     NUM_VF = 21,
     VFINFO_LIST = 22,
     STATS64 = 23,
     VF_PORTS = 24,
     PORT_SELF = 25,
     AF_SPEC = 26,
-    /// Group the device belongs to
     GROUP = 27,
     NET_NS_FD = 28,
-    /// Extended info mask, VFs, etc.
     EXT_MASK = 29,
-    /// Promiscuity count: > 0 means acts PROMISC
     PROMISCUITY = 30,
     NUM_TX_QUEUES = 31,
     NUM_RX_QUEUES = 32,
@@ -77,7 +66,6 @@ pub(in route) enum LinkAttrClass {
     MIN_MTU = 50,
     MAX_MTU = 51,
     PROP_LIST = 52,
-    /// Alternative ifname
     ALT_IFNAME = 53,
     PERM_ADDRESS = 54,
     PROTO_DOWN_REASON = 55,
@@ -87,9 +75,6 @@ pub(in route) enum LinkAttrClass {
 
 #[derive(Debug)]
 pub(crate) enum LinkAttr {
-    // FIXME: Linux link-layer addresses have device-specific lengths.
-    // Using `EthernetAddress` may be inappropriate
-    // once Asterinas supports other network device types.
     Address(EthernetAddress),
     Broadcast(EthernetAddress),
     Name(InterfaceName),
@@ -136,10 +121,7 @@ impl Attribute for LinkAttr {
     {
         let payload_len = header.payload_len();
 
-        // TODO: Currently, `IS_NET_BYTEORDER_MASK` and `IS_NESTED_MASK` are ignored.
         let Ok(class) = LinkAttrClass::try_from(header.type_()) else {
-            // Unknown attributes should be ignored.
-            // Reference: <https://docs.kernel.org/userspace-api/netlink/intro.html#unknown-attributes>.
             reader.skip_some(payload_len);
             return Ok(ContinueAttrRead::SkippedUnsupported);
         };
@@ -199,9 +181,6 @@ impl Attribute for LinkAttr {
     }
 }
 
-/// New extended info filters for [`LinkAttr::ExtMask`].
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.13/source/include/uapi/linux/rtnetlink.h#L819>.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(crate) struct RtExtFilter(u32);
@@ -217,8 +196,6 @@ bitflags! {
         const CFM_STATUS        = 1 << 6;
         const MST               = 1 << 7;
 
-        // This type accepts all bit patterns,
-        // although only some flags are recognized.
         const _                 = !0;
     }
 }

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::ops::Range;
 
 use spin::Once;
@@ -47,37 +45,22 @@ impl PagingConstsTrait for PagingConsts {
 }
 
 bitflags::bitflags! {
-    /// Possible flags for a page table entry.
     #[derive(Clone, Copy, Debug)]
     pub(crate) struct PteFlags: usize {
-        /// Specifies whether the mapped frame or page table is valid.
         const VALID      = 1 << 0;
-        /// Controls whether reads to the mapped frames are allowed.
         const READABLE   = 1 << 1;
-        /// Controls whether writes to the mapped frames are allowed.
         const WRITABLE   = 1 << 2;
-        /// Controls whether execution code in the mapped frames are allowed.
         const EXECUTABLE = 1 << 3;
-        /// Controls whether accesses from userspace (i.e. U-mode) are permitted.
         const USER       = 1 << 4;
-        /// Indicates that the mapping is present in all address spaces, so it isn't flushed from
-        /// the TLB on an address space switch.
         const GLOBAL     = 1 << 5;
-        /// Whether the memory area represented by this entry is accessed.
         const ACCESSED   = 1 << 6;
-        /// Whether the memory area represented by this entry is modified.
         const DIRTY      = 1 << 7;
 
-        /// First bit ignored by MMU.
         const RSV1       = 1 << 8;
-        /// Second bit ignored by MMU.
         const RSV2       = 1 << 9;
 
-        /// PBMT: Non-cacheable, idempotent, weakly-ordered (RVWMO), main memory.
         const PBMT_NC    = 1 << 61;
-        /// PBMT: Non-cacheable, non-idempotent, strongly-ordered (I/O ordering), I/O.
         const PBMT_IO    = 1 << 62;
-        /// Naturally aligned power-of-2.
         const NAPOT      = 1 << 63;
     }
 }
@@ -85,9 +68,6 @@ bitflags::bitflags! {
 const SHARED_ASID: usize = 0;
 
 pub(crate) fn tlb_flush_addr(vaddr: Vaddr) {
-    // Don't specify an ASID here. `vaddr` may be associated with a global entry.
-    //
-    // SAFETY: This invalidates the TLB, which doesn't affect the memory safety.
     unsafe { core::arch::riscv64::sfence_vma_vaddr(vaddr) };
 }
 
@@ -98,14 +78,10 @@ pub(crate) fn tlb_flush_addr_range(range: &Range<Vaddr>) {
 }
 
 pub(crate) fn tlb_flush_all_excluding_global() {
-    // We use `SHARED_ASID` all the time, so all non-global pages are associated with it.
-    //
-    // SAFETY: This invalidates the TLB, which doesn't affect the memory safety.
     unsafe { core::arch::riscv64::sfence_vma_asid(SHARED_ASID) };
 }
 
 pub(crate) fn tlb_flush_all_including_global() {
-    // SAFETY: This invalidates the TLB, which doesn't affect the memory safety.
     unsafe { core::arch::riscv64::sfence_vma_all() };
 }
 
@@ -113,12 +89,6 @@ pub(crate) fn can_sync_dma() -> bool {
     has_extensions(IsaExtensions::ZICBOM)
 }
 
-/// # Safety
-///
-/// The caller must ensure that
-///  - the virtual address range and DMA direction correspond correctly to a
-///    DMA region;
-///  - `can_sync_dma()` is `true`.
 pub(crate) unsafe fn sync_dma_range(mut range: Range<Vaddr>, is_from_device: bool) {
     use core::arch::asm;
 
@@ -141,15 +111,9 @@ pub(crate) unsafe fn sync_dma_range(mut range: Range<Vaddr>, is_from_device: boo
         block_size
     });
 
-    // Start at an aligned address, so the following loop can cover every byte in the range.
     range.start &= !(cmo_management_block_size - 1);
 
     for addr in range.step_by(cmo_management_block_size) {
-        // Performing cache maintenance operations is required for correctness
-        // on systems with non-coherent DMA.
-        // SAFETY: The caller ensures that the virtual address range corresponds
-        // to a DMA region. So the underlying memory is untyped and the operations
-        // are safe to perform.
         unsafe {
             if is_from_device {
                 asm!("cbo.inval ({})", in(reg) addr, options(nostack, preserves_flags));
@@ -160,12 +124,6 @@ pub(crate) unsafe fn sync_dma_range(mut range: Range<Vaddr>, is_from_device: boo
     }
 }
 
-/// Activates the given root-level page table.
-///
-/// # Safety
-///
-/// Changing the root-level page table is unsafe, because it's possible to violate memory safety by
-/// changing the page mapping.
 pub(crate) unsafe fn activate_page_table(root_paddr: Paddr) {
     assert!(root_paddr.is_multiple_of(PagingConsts::BASE_PAGE_SIZE));
     let ppn = root_paddr >> 12;
@@ -175,12 +133,8 @@ pub(crate) unsafe fn activate_page_table(root_paddr: Paddr) {
     #[cfg(feature = "riscv_sv39_mode")]
     let mode = riscv::register::satp::Mode::Sv39;
 
-    // SAFETY: The safety is upheld by the caller.
     unsafe { riscv::register::satp::set(mode, SHARED_ASID, ppn) };
 
-    // We reuse `SHARED_ASID`, so we need to flush the TLB entries.
-    // "[..] if an ASID is reused, it may be necessary to execute an SFENCE.VMA instruction."
-    // Reference: <https://docs.riscv.org/reference/isa/v20260120/priv/supervisor.html#satp>.
     tlb_flush_all_excluding_global();
 }
 
@@ -192,7 +146,6 @@ pub(crate) fn current_page_table_paddr() -> Paddr {
 #[derive(Clone, Copy, Debug, Default, Pod)]
 pub(crate) struct PageTableEntry(usize);
 
-/// Parses a bit-flag bits `val` in the representation of `from` to `to` in bits.
 macro_rules! parse_flags {
     ($val:expr, $from:expr, $to:expr) => {
         (($val as usize & $from.bits() as usize) >> $from.bits().ilog2() << $to.bits().ilog2())
@@ -261,18 +214,12 @@ impl PageTableEntry {
             | parse_flags!(prop.flags.bits(), PageFlags::AVAIL2, PteFlags::RSV2);
 
         if has_extensions(IsaExtensions::SVADE) {
-            // TODO: With Svade, these bits must be managed by software, but
-            // that is not yet supported. For now, set them to 1 to avoid
-            // page fault exceptions.
             flags |= (PteFlags::ACCESSED | PteFlags::DIRTY).bits();
         }
 
         match prop.cache {
             CachePolicy::Writeback => (),
             CachePolicy::Uncacheable => {
-                // TODO: Currently Asterinas uses `Uncacheable` only for I/O
-                // memory. Normal memory can also be `Noncacheable`, where the
-                // PBMT should be set to `PBMT_NC`.
                 if has_extensions(IsaExtensions::SVPBMT) {
                     flags |= PteFlags::PBMT_IO.bits()
                 }
@@ -285,8 +232,6 @@ impl PageTableEntry {
     }
 
     fn new_pt(paddr: Paddr, flags: PageTableFlags) -> Self {
-        // In RISC-V, non-leaf PTE should have RWX = 000,
-        // and D, A, and U are reserved for future standard use.
         let flags = PteFlags::VALID.bits()
             | parse_flags!(flags.bits(), PageTableFlags::AVAIL1, PteFlags::RSV1)
             | parse_flags!(flags.bits(), PageTableFlags::AVAIL2, PteFlags::RSV2);
@@ -298,10 +243,6 @@ impl PageTableEntry {
 
 impl PodOnce for PageTableEntry {}
 
-// SAFETY: The implementation is safe because:
-//  - `from_usize` and `into_usize` are not overridden;
-//  - `from_repr` and `repr` are correctly implemented;
-//  - a zeroed PTE represents an absent entry.
 unsafe impl PteTrait for PageTableEntry {
     fn from_repr(repr: &PteScalar, level: PagingLevel) -> Self {
         match repr {

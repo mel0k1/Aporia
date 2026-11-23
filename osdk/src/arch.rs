@@ -1,15 +1,7 @@
-// SPDX-License-Identifier: MPL-2.0
-
-use clap::{ValueEnum, builder::PossibleValue};
 use std::fmt::{self, Display, Formatter};
 
-/// Supported architectures.
-///
-/// The target triple for each architecture is fixed and shall not
-/// be assigned by the user. This is also different from the first
-/// element of the target triple, but akin to the "target_arch" cfg
-/// of Cargo:
-/// <https://doc.rust-lang.org/reference/conditional-compilation.html#target_arch>
+use clap::{ValueEnum, builder::PossibleValue};
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum Arch {
     #[serde(rename = "aarch64")]
@@ -43,7 +35,6 @@ impl ValueEnum for Arch {
 }
 
 impl Arch {
-    /// Get the target triple for the architecture.
     pub fn triple(&self) -> &'static str {
         match self {
             Arch::Aarch64 => "aarch64-unknown-none-softfloat",
@@ -78,10 +69,6 @@ impl Display for Arch {
     }
 }
 
-/// Get the default architecture implied by the host rustc's default architecture.
-///
-/// If the environment variable `OSDK_TARGET_ARCH` is set, use it to determine the default
-/// architecture directly.
 pub fn get_default_arch() -> Arch {
     if let Ok(arch) = std::env::var("OSDK_TARGET_ARCH") {
         return match arch.as_str() {

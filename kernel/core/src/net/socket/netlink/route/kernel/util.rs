@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use crate::{
     net::socket::netlink::{
         message::{CMsgSegHdr, DoneSegment, ProtocolSegment, SegHdrCommonFlags},
@@ -8,18 +6,13 @@ use crate::{
     prelude::*,
 };
 
-/// Response framing for single queries and dumps.
 #[derive(Eq, PartialEq)]
 pub(super) enum ResponseMode {
-    /// A single reply without `NLMSG_DONE`.
     Single,
-    /// A multipart dump ending with `NLMSG_DONE`.
     Dump,
-    /// A dump marked with `DUMP_FILTERED`, including its final `NLMSG_DONE`.
     FilteredDump,
 }
 
-/// Finishes a response message.
 pub(super) fn finish_response(
     request_header: &CMsgSegHdr,
     mode: ResponseMode,
@@ -41,7 +34,6 @@ pub(super) fn finish_response(
     }
 }
 
-/// Appends a done segment as the last segment of the provided segments.
 fn append_done_segment(request_header: &CMsgSegHdr, response_segments: &mut Vec<RtnlSegment>) {
     let done_segment = DoneSegment::new_from_request(request_header, None);
     response_segments.push(RtnlSegment::Done(done_segment));

@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! The process status.
-
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use ostd::sync::SpinLock;
@@ -9,14 +5,6 @@ use ostd::sync::SpinLock;
 use super::ExitCode;
 use crate::process::{WaitOptions, signal::sig_num::SigNum};
 
-/// The status of a process.
-///
-/// This maintains:
-/// 1. Whether the process is a zombie (i.e., all its threads have exited);
-/// 2. Whether the process is the vfork child, which shares the user-space virtual memory
-///    with its parent process;
-/// 3. The exit code of the process;
-/// 4. Whether the process is stopped by a signal.
 #[derive(Debug)]
 pub(crate) struct ProcessStatus {
     is_zombie: AtomicBool,
@@ -37,42 +25,30 @@ impl Default for ProcessStatus {
 }
 
 impl ProcessStatus {
-    /// Returns whether the process is a zombie process.
     pub(crate) fn is_zombie(&self) -> bool {
-        // Use the `Acquire` memory order to make the exit code visible.
         self.is_zombie.load(Ordering::Acquire)
     }
 
-    /// Sets the process to be a zombie process.
-    ///
-    /// This method should be called when the process completes its exit. The current thread must
-    /// be the last thread in the process, so that no threads belonging to the process can run
-    /// after it.
     pub(super) fn set_zombie(&self) {
-        // Use the `Release` memory order to make the exit code visible.
         self.is_zombie.store(true, Ordering::Release);
     }
 }
 
 impl ProcessStatus {
-    /// Returns whether the process is the vfork child.
     pub(crate) fn is_vfork_child(&self) -> bool {
         self.is_vfork_child.load(Ordering::Acquire)
     }
 
-    /// Sets whether the process is the vfork child.
     pub(crate) fn set_vfork_child(&self, is_vfork_child: bool) {
         self.is_vfork_child.store(is_vfork_child, Ordering::Release);
     }
 }
 
 impl ProcessStatus {
-    /// Returns the exit code.
     pub(crate) fn exit_code(&self) -> ExitCode {
         self.exit_code.load(Ordering::Relaxed)
     }
 
-    /// Sets the exit code.
     pub(super) fn set_exit_code(&self, exit_code: ExitCode) {
         self.exit_code.store(exit_code, Ordering::Relaxed);
     }
@@ -86,15 +62,8 @@ impl ProcessStatus {
 
 #[derive(Debug)]
 pub(super) struct StopStatus {
-    /// Indicates whether the process is stopped.
     is_stopped: AtomicBool,
 
-    /// Indicates whether the process's status has changed and has not yet been waited on.
-    ///
-    /// User programs may use the wait* syscalls to check for changes in
-    /// the process's status. This field will be set to `Some(_)` once the
-    /// process's status changes and will be set to `None` if the process
-    /// has already been waited on.
     wait_status: SpinLock<Option<StopWaitStatus>>,
 }
 
@@ -106,11 +75,7 @@ impl StopStatus {
         }
     }
 
-    /// Stops the process by some signal.
-    ///
-    /// The return value indicates whether the stop status has changed.
     pub(super) fn stop(&self, signum: SigNum) -> bool {
-        // Hold the lock first to avoid race conditions
         let mut wait_status = self.wait_status.lock();
 
         if self.is_stopped.load(Ordering::Relaxed) {
@@ -122,11 +87,7 @@ impl StopStatus {
         }
     }
 
-    /// Resumes the process.
-    ///
-    /// The return value indicates whether the stop status has changed.
     pub(super) fn resume(&self) -> bool {
-        // Hold the lock first to avoid race conditions
         let mut wait_status = self.wait_status.lock();
 
         if self.is_stopped.load(Ordering::Relaxed) {
@@ -138,12 +99,10 @@ impl StopStatus {
         }
     }
 
-    /// Returns whether the process is stopped.
     pub(super) fn is_stopped(&self) -> bool {
         self.is_stopped.load(Ordering::Relaxed)
     }
 
-    /// Returns the stop status changes for the `wait` syscall.
     pub(super) fn wait(&self, options: WaitOptions) -> Option<StopWaitStatus> {
         let mut wait_status = self.wait_status.lock();
 

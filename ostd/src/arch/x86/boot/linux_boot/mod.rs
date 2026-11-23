@@ -1,8 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! The Linux 64-bit Boot Protocol supporting module.
-//!
-
 use linux_boot_params::{BootParams, E820Type, EfiInfo, LINUX_BOOT_HEADER_MAGIC};
 
 use super::ToEarlyBootInfo;
@@ -34,7 +29,6 @@ impl From<E820Type> for MemoryRegionType {
             E820Type::ACPI => Self::Reclaimable,
             E820Type::NVS => Self::NonVolatileSleep,
             E820Type::UNUSABLE => Self::BadMemory,
-            // All other memory regions are reserved.
             _ => Self::Reserved,
         }
     }
@@ -42,13 +36,10 @@ impl From<E820Type> for MemoryRegionType {
 
 impl ToEarlyBootInfo for BootParams {
     fn bootloader_name(&self) -> &'static str {
-        // The bootloaders have assigned IDs in Linux, see
-        // https://www.kernel.org/doc/Documentation/x86/boot.txt
-        // for details.
         match self.hdr.type_of_loader {
-            0x0 => "LILO", // (0x00 reserved for pre-2.00 bootloader)
+            0x0 => "LILO",
             0x1 => "Loadlin",
-            0x2 => "bootsect-loader", // (0x20, all other values reserved)
+            0x2 => "bootsect-loader",
             0x3 => "Syslinux",
             0x4 => "Etherboot/gPXE/iPXE",
             0x5 => "ELILO",
@@ -60,7 +51,7 @@ impl ToEarlyBootInfo for BootParams {
             0xC => "Arcturus Networks uCbootloader",
             0xD => "kexec-tools",
             0xE => "Extended loader",
-            0xF => "Special", // (0xFF = undefined)
+            0xF => "Special",
             0x10 => "Reserved",
             0x11 => "Minimal Linux Bootloader <http://sebastian-plotz.blogspot.de>",
             0x12 => "OVMF UEFI virtualization stack",
@@ -70,9 +61,6 @@ impl ToEarlyBootInfo for BootParams {
 
     fn kernel_commandline(&self) -> Option<&'static str> {
         if self.ext_cmd_line_ptr != 0 {
-            // TODO: We can support the above 4GiB command line after setting up
-            // linear mappings. By far, we cannot log the error because the serial is
-            // not up. Proceed as if there was no command line.
             return None;
         }
 
@@ -85,28 +73,19 @@ impl ToEarlyBootInfo for BootParams {
 
         let mut len = 0;
         while len < cmdline_max_len {
-            // SAFETY: By the contract with the loader, the command line terminates at the first nul
-            // byte or after `cmdline_max_len` bytes, whichever comes first. `len` is within the
-            // bounds, so the byte is safe to read.
             if unsafe { cmdline_ptr.add(len).read() } == 0 {
                 break;
             }
             len += 1;
         }
 
-        // SAFETY:
-        // 1. The command line is safe to read because of the contract with the loader.
-        // 2. We reserve the command-line region in `finish_memory_regions`, so it will live as an
-        //    immutable reference for `'static`.
         let cmdline = unsafe { core::slice::from_raw_parts(cmdline_ptr, len) };
 
-        // Now, unfortunately, there are silent errors because the serial is not up.
         core::str::from_utf8(cmdline).ok()
     }
 
     fn initramfs(&self) -> Option<&'static [u8]> {
         if self.ext_ramdisk_image != 0 || self.ext_ramdisk_size != 0 {
-            // See the explanation in `kernel_commandline`.
             return None;
         }
 
@@ -116,10 +95,6 @@ impl ToEarlyBootInfo for BootParams {
 
         let initramfs_ptr = paddr_to_vaddr(self.hdr.ramdisk_image as usize);
         let initramfs_len = self.hdr.ramdisk_size as usize;
-        // SAFETY:
-        // 1. The initramfs is safe to read because of the contract with the loader.
-        // 2. We reserve the initramfs region in `memory_regions`, so it will live as an immutable
-        //    reference for `'static`.
         let initramfs =
             unsafe { core::slice::from_raw_parts(initramfs_ptr as *const u8, initramfs_len) };
 
@@ -164,7 +139,6 @@ impl ToEarlyBootInfo for BootParams {
     ) -> MemoryRegionArray {
         let mut regions = MemoryRegionArray::new();
 
-        // Add regions from E820.
         let num_entries = self.e820_entries as usize;
         for e820_entry in &self.e820_table[0..num_entries] {
             regions
@@ -188,22 +162,11 @@ impl ToEarlyBootInfo for BootParams {
             }
         });
 
-        // FIXME: Early versions of TDVF did not correctly report the location of AP's page tables as
-        // EfiACPIMemoryNVS. We need to manually reserve this memory region to prevent them from being
-        // corrupted. TDVF has now been upstreamed to OVMF, and this issue has been fixed in OVMF
-        // stable-202411 or later. See the commit for details:
-        // <https://github.com/tianocore/edk2/commit/383f729ac096b8deb279933fce86e83a5f7f5ec7>.
         if_tdx_enabled!({
-            // The definition of these constants can be found in:
-            // <https://github.com/tianocore/edk2/blob/a7ab45ace25c4b987994158687d04de07ed20a96/OvmfPkg/IntelTdx/IntelTdxX64.fdf#L64-L71>
-            // <https://github.com/tianocore/edk2/blob/a7ab45ace25c4b987994158687d04de07ed20a96/OvmfPkg/Include/Fdf/OvmfPkgDefines.fdf.inc#L106>
             regions
                 .push(MemoryRegion::new(
-                    // PcdOvmfSecPageTablesBase = $(MEMFD_BASE_ADDRESS) + 0x000000 = 0x800000
                     0x800000,
-                    // PcdOvmfSecPageTablesSize = 0x006000
                     0x006000,
-                    // EfiACPIMemoryNVS
                     MemoryRegionType::NonVolatileSleep,
                 ))
                 .unwrap();
@@ -213,14 +176,6 @@ impl ToEarlyBootInfo for BootParams {
     }
 }
 
-/// The entry point of the Rust code portion of Asterinas (with Linux boot parameters).
-///
-/// # Safety
-///
-/// - This function must be called only once at a proper timing in the BSP's boot assembly code.
-/// - The caller must follow C calling conventions and put the right arguments in registers.
-/// - If this function is called, entry points of other boot protocols must never be called.
-// SAFETY: The name does not collide with other symbols.
 #[unsafe(no_mangle)]
 unsafe extern "sysv64" fn __linux_boot(params_ptr: *const BootParams) -> ! {
     let params = unsafe { &*params_ptr };
@@ -233,7 +188,5 @@ unsafe extern "sysv64" fn __linux_boot(params_ptr: *const BootParams) -> ! {
 
     EARLY_INFO.call_once(|| params.to_early_boot_info());
 
-    // SAFETY: The safety is guaranteed by the safety preconditions and the fact that we call it
-    // once after setting up necessary resources.
     unsafe { start_kernel() };
 }

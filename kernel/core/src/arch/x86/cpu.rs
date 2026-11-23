@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::{borrow::ToOwned, collections::btree_set::BTreeSet, string::String, vec::Vec};
 use core::{arch::x86_64::CpuidResult, ffi::CStr, fmt, str};
 
@@ -26,9 +24,6 @@ use crate::{
     vm::{perms::VmPerms, vmar::PageFaultInfo},
 };
 
-// RFLAGS bits that Linux restores from a user signal frame.
-//
-// Reference: <https://elixir.bootlin.com/linux/v7.1/source/arch/x86/include/asm/sighandling.h#L11-L14>.
 const SIGRETURN_RFLAGS_MASK: usize =
     USER_MODIFIABLE_RFLAGS & !(RFlags::NESTED_TASK.bits() as usize);
 
@@ -57,12 +52,6 @@ impl LinuxAbi for UserContext {
     }
 }
 
-/// Represents the context of a signal handler.
-///
-/// This contains the context saved before a signal handler is invoked; it will be restored by
-/// `sys_rt_sigreturn`.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.15.7/source/arch/x86/include/uapi/asm/sigcontext.h#L325>
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
 pub(crate) struct SigContext {
@@ -92,7 +81,6 @@ pub(crate) struct SigContext {
     trap_num: usize,
     old_mask: u64,
     page_fault_addr: usize,
-    // A stack pointer to FPU context.
     fpu_context_addr: Vaddr,
     reserved: [u64; 8],
 }
@@ -132,8 +120,6 @@ impl SigContext {
         let gp_regs = src.general_regs();
         copy_gp_regs!(gp_regs, self);
         self.rflags = src.rflags();
-
-        // TODO: Fill exception information in `SigContext`.
     }
 
     pub(crate) fn fpu_context_addr(&self) -> Vaddr {
@@ -153,8 +139,6 @@ impl From<&RawPageFaultInfo> for PageFaultInfo {
         {
             VmPerms::EXEC
         } else if raw_info.error_code.contains(PageFaultErrorCode::WRITE) {
-            // On x86_64, writable pages must also be readable.
-            // Reference: Section 5.11.3 from <https://www.intel.com/content/dam/www/public/us/en/documents/manuals/64-ia-32-architectures-software-developer-vol-3a-part-1-manual.pdf>.
             VmPerms::READ | VmPerms::WRITE
         } else {
             VmPerms::READ
@@ -165,8 +149,6 @@ impl From<&RawPageFaultInfo> for PageFaultInfo {
 }
 
 impl TryFrom<&CpuException> for PageFaultInfo {
-    // [`Err`] indicates that the [`CpuExceptionInfo`] is not a page fault,
-    // with no additional error information.
     type Error = ();
 
     fn try_from(value: &CpuException) -> Result<Self, ()> {
@@ -202,7 +184,6 @@ enum CpuidLeaf {
     Cache = 0x04,
     Topology = 0x0b,
 
-    // ExtBase = 0x80000000,
     ExtBrand1 = 0x80000002,
     ExtBrand2 = 0x80000003,
     ExtBrand3 = 0x80000004,
@@ -211,19 +192,8 @@ enum CpuidLeaf {
     ExtAddrSizes = 0x80000008,
 }
 
-/// A collection of CPU cores.
-///
-/// Note that hyperthreading can result in multiple logical processors within one core.
 static CPU_CORES: SpinLock<BTreeSet<u32>> = SpinLock::new(BTreeSet::new());
 
-/// CPU information to be shown in `/proc/cpuinfo`.
-///
-/// Different CPUs may have different information, such as the core ID. Therefore, [`Self::new`]
-/// should be called on every CPU.
-//
-// Implementation notes: For each field in this structure that is conditionally shown in Linux, it
-// should be wrapped in an `Option`. Please conduct the Linux implementation when adding a new
-// field, see <https://elixir.bootlin.com/linux/v6.16/source/arch/x86/kernel/cpu/proc.c#L63>.
 pub(crate) struct CpuInformation {
     processor: u32,
     vendor_id: String,
@@ -244,7 +214,6 @@ pub(crate) struct CpuInformation {
 }
 
 impl CpuInformation {
-    /// Constructs the information for the current CPU.
     pub(crate) fn new(guard: &DisabledPreemptGuard) -> Self {
         let mut result = Self {
             processor: guard.current_cpu().into(),
@@ -253,8 +222,6 @@ impl CpuInformation {
             model: 0,
             model_name: "unknown".to_owned(),
             stepping: None,
-            // FIXME: The CPU frequency may not be equal to the TSC frequency. It may not even be a
-            // constant (i.e., the real CPU frequency can be adjusted due to the workload).
             cpu_khz: Some((tsc_freq() / 1000) as u32),
             cache_size: None,
             core_id: 0,
@@ -305,7 +272,6 @@ impl CpuInformation {
         let ext_model = (eax >> 16) & 0xf;
         let ext_family = (eax >> 20) & 0xff;
 
-        // "The Extended Family ID needs to be examined only when the Family ID is 0FH."
         let family = if base_family == 0xf {
             base_family + ext_family
         } else {
@@ -313,11 +279,7 @@ impl CpuInformation {
         };
 
         let has_ext_model = match vendor {
-            // The Intel manual says: "The Extended Model ID needs to be examined only when the
-            // Family ID is 06H or 0FH."
             CpuVendor::Intel => base_family == 0x6 || base_family == 0xf,
-            // The AMD manual says: "If BaseFamily[3:0] is less than Fh, then ExtFamily is reserved
-            // and Family is equal to BaseFamily[3:0]."
             CpuVendor::Amd | CpuVendor::Unknown => base_family == 0xf,
         };
         let model = if has_ext_model {
@@ -330,11 +292,8 @@ impl CpuInformation {
         self.model = model as u8;
         self.stepping = Some(stepping as u8);
 
-        // "Bits 15-08: CLFLUSH line size (Value ∗ 8 = cache line size in bytes; used also by
-        // CLFLUSHOPT)."
         self.clflush_size = ((ebx >> 8) & 0xff) * 8;
         self.cache_alignment = self.clflush_size;
-        // Bits 31-24: Initial APIC ID.
         self.apicid = ebx >> 24;
         self.core_id = self.apicid;
     }
@@ -402,7 +361,6 @@ impl CpuInformation {
                 break;
             };
 
-            // Bits 04-00, Cache Type Field: Null - No more caches.
             if eax & 0x1f == 0 {
                 break;
             }
@@ -417,7 +375,6 @@ impl CpuInformation {
                 * (ways_of_associativity + 1)
                 * (number_of_sets + 1);
 
-            // Bits 07-05, Cache Level (starts at 1).
             match (eax >> 5) & 0x7 {
                 1 => l1size += size,
                 2 => l2size += size,
@@ -438,9 +395,7 @@ impl CpuInformation {
     fn fill_cache_info_amd(&mut self) {
         let l1_cache_size =
             if let Some(CpuidResult { ecx, edx, .. }) = cpuid(CpuidLeaf::ExtCacheL1 as u32, 0) {
-                // Bits 31-24, L1DcSize: L1 data cache size in KB.
                 let l1d_cache_size = ecx >> 24;
-                // Bits 31-24, L1IcSize: L1 instruction cache size KB.
                 let l1i_cache_size = edx >> 24;
                 l1d_cache_size + l1i_cache_size
             } else {
@@ -449,25 +404,14 @@ impl CpuInformation {
 
         let (l2_tlb_size, l2_cache_size) =
             if let Some(CpuidResult { ebx, ecx, .. }) = cpuid(CpuidLeaf::ExtCacheL2L3 as u32, 0) {
-                // Bits 11-0, L2ITlb4KSize: L2 instruction TLB number of entries for 4-KB pages.
                 let l2i_tlb_size = ebx & 0xfff;
-                // Bits 27-16, L2DTlb4KSize: L2 data TLB number of entries for 4-KB pages.
                 let l2d_tlb_size = (ebx >> 16) & 0xfff;
-                // Bits 31-16, L2Size: L2 cache size in KB.
                 let l2_cache_size = ecx >> 16;
                 (l2i_tlb_size + l2d_tlb_size, l2_cache_size)
             } else {
                 (0, 0)
             };
 
-        // The Linux implementation here is quite odd, we just follow its logic:
-        //  - If the L3 cache is present, it will be ignored on AMD CPUs [1] but it will be reported as
-        //    the cache size on Intel CPUs [2].
-        //  - The TLB size is never counted on Intel CPUs.
-        //  - The L1 TLB is never counted on 64-bit AMD CPUs. But the L2 TLB will be counted.
-        //
-        // [1]: https://elixir.bootlin.com/linux/v6.16/source/arch/x86/kernel/cpu/common.c#L811
-        // [2]: https://elixir.bootlin.com/linux/v6.16/source/arch/x86/kernel/cpu/cacheinfo.c#L359
         if l2_tlb_size != 0 {
             self.tlb_size = Some(l2_tlb_size);
         }
@@ -483,10 +427,7 @@ impl CpuInformation {
             return;
         };
 
-        // "Bits 31-00: x2APIC ID of the current logical processor."
         self.apicid = edx;
-        // "Bits 04-00: The number of bits that the x2APIC ID must be shifted to the right to
-        // address instances of the next higher-scoped domain."
         self.core_id = self.apicid >> (eax & 0x1f);
 
         CPU_CORES.lock().insert(self.core_id);
@@ -501,15 +442,6 @@ impl CpuInformation {
                 })*
             }};
         }
-
-        // The feature detection code below is based on
-        // <https://github.com/torvalds/linux/blob/aaf724ed69264719550ec4f194d3ab17b886af9a/arch/x86/include/asm/cpufeatures.h>.
-        // The specific commit is provided for the convenience of future synchronization with the
-        // latest Linux implementation. Please don't forget to update the commit hash after you
-        // modified the code below.
-        //
-        // Note that only Intel- and AMD-defined features are currently supported. We do not
-        // include features defined by other vendors or defined by the Linux kernel.
 
         if let Some(CpuidResult { edx, .. }) = cpuid(0x00000001, 0) {
             parse_feature_bits!(edx;
@@ -803,9 +735,7 @@ impl CpuInformation {
             return;
         };
 
-        // "Bits 07-00: #Physical Address Bits*."
         self.address_sizes.0 = eax & 0xff;
-        // "Bits 15-08: #Linear Address Bits."
         self.address_sizes.1 = (eax >> 8) & 0xff;
     }
 }
@@ -828,8 +758,6 @@ impl fmt::Display for CpuInformation {
             writeln!(f, "stepping\t: unknown")?;
         }
 
-        // TODO: Add the `microcode` field.
-
         if let Some(cpu_khz) = self.cpu_khz {
             writeln!(f, "cpu MHz\t\t: {}.{:03}", cpu_khz / 1000, cpu_khz % 1000)?;
         } else {
@@ -840,8 +768,6 @@ impl fmt::Display for CpuInformation {
             writeln!(f, "cache size\t: {} KB", cache_size)?;
         }
 
-        // Note that we don't support NUMA now, so we assume that all CPUs are on the same package
-        // (i.e., their physical IDs are all zeros).
         let siblings = num_cpus();
         let cpu_cores = CPU_CORES.lock().len();
         write!(
@@ -869,16 +795,11 @@ impl fmt::Display for CpuInformation {
             write!(f, " {}", flag)?;
         }
 
-        // TODO: Add the `vmx flags` field.
-
-        // TODO: Fill the `bugs` field.
         write!(
             f,
             "\n\
              bugs\t\t:\n"
         )?;
-
-        // TODO: Add the `bogomips` field.
 
         if let Some(tlb_size) = self.tlb_size {
             writeln!(f, "TLB size\t: {} 4K pages", tlb_size)?;
@@ -892,7 +813,6 @@ impl fmt::Display for CpuInformation {
             self.clflush_size, self.cache_alignment, self.address_sizes.0, self.address_sizes.1,
         )?;
 
-        // TODO: Fill the `power management` field.
         writeln!(f, "power management:")?;
 
         Ok(())

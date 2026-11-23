@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::num::NonZeroU8;
 
 use aster_bigtcp::socket::NeedIfacePoll;
@@ -12,7 +10,6 @@ use crate::{
     prelude::*,
 };
 
-/// IP-level socket options.
 #[derive(Clone, Copy, CopyGetters, Debug, Setters)]
 #[get_copy = "pub"]
 #[set = "pub"]

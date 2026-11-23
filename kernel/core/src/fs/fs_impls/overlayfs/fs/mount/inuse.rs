@@ -1,20 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Upper/workdir exclusivity claims and the unified 64-bit overlay identity.
-//!
-//! This module implements the inode `Extension` runtime lease that carries
-//! the claim. Each claimed root inode hosts an `OverlayInuseSlot`.
-//! The non-zero unified [`Uuid`] value serves two roles:
-//!
-//! - claim token: the per-slot compare-and-swap (CAS) on the slot's owner
-//!   token guards this value so only one overlay can hold the claim;
-//! - persisted overlay UUID: when effective, the value is stored under the
-//!   mount's selected private-prefix uuid record (`trusted.overlay.uuid` by
-//!   default, `user.overlay.uuid` in `userxattr` mode) on the upper root.
-//!
-//! The module also owns the staging-name generator: `next_temp_name` is the one place a workdir
-//! temp name is built, so the counter it reads stays private to the claim.
-
 #![short_vis_path::add(overlayfs)]
 
 use alloc::{boxed::ThinBox, format};
@@ -36,7 +19,6 @@ use crate::{
     prelude::*,
 };
 
-/// The wire width of the persisted uuid record: one `u64` in little-endian bytes.
 pub(super) const OVERLAY_UUID_SIZE: usize = 8;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -66,7 +48,6 @@ impl Uuid {
     }
 }
 
-/// The inode-owned runtime claim slot used by overlayfs mounts.
 struct OverlayInuseSlot {
     owner_token: AtomicU64,
 }
@@ -78,7 +59,6 @@ impl OverlayInuseSlot {
         }
     }
 
-    /// Claims this slot for a non-zero owner token.
     fn try_claim(&self, token: u64) -> Result<()> {
         if token == 0 {
             return Err(errno!(EINVAL, "the overlay inuse token must be non-zero"));
@@ -89,7 +69,6 @@ impl OverlayInuseSlot {
         Ok(())
     }
 
-    /// Releases this slot only when `token` still owns it.
     fn release(&self, token: u64) {
         let _ = self
             .owner_token
@@ -97,7 +76,6 @@ impl OverlayInuseSlot {
     }
 }
 
-/// Keeps the claimed inode from being evicted while this guard is held.
 #[derive(Debug)]
 struct InuseGuard {
     dentry: Arc<Dentry>,
@@ -135,8 +113,6 @@ impl Drop for InuseGuard {
     }
 }
 
-/// The claim a mount holds on its upper and workdir root inodes, together with the private staging
-/// workspace it prepares under the workdir; every staged object is created in that workspace.
 #[derive(Debug)]
 pub(in overlayfs) struct UpperWorkdirInuse {
     workdir: InuseGuard,
@@ -146,7 +122,6 @@ pub(in overlayfs) struct UpperWorkdirInuse {
 }
 
 impl UpperWorkdirInuse {
-    /// Validates the workdir/upper pair: one underlying filesystem, one mount, distinct roots.
     pub(super) fn validate_pair(upper: &Path, workdir: &Path) -> Result<()> {
         if upper.metadata()?.container_dev_id != workdir.metadata()?.container_dev_id {
             return Err(errno!(
@@ -206,18 +181,9 @@ impl UpperWorkdirInuse {
         &self.upper.dentry
     }
 
-    /// Builds the next staged name from `label`, one `#` separator, and the hex counter, all within
-    /// `NAME_MAX`.
-    ///
-    /// The returned name is never empty (`format!` always writes the separator and the counter)
-    /// and never repeats within this mount (the counter is bumped by `fetch_add`), which is the
-    /// guarantee a staged object's identity rests on.
     pub(in overlayfs) fn next_temp_name(&self, label: &str) -> String {
-        /// The counter's width in lowercase hex digits: the width of `u64`.
         const TEMP_NAME_COUNTER_HEX_DIGITS: usize = (u64::BITS / 4) as usize;
-        /// The bytes the one `#` separator occupies in the generated name.
         const TEMP_NAME_SEPARATOR_BYTES: usize = 1;
-        /// The largest byte count the target-name copy may keep within `NAME_MAX`.
         const TEMP_NAME_TARGET_MAX_BYTES: usize =
             NAME_MAX - TEMP_NAME_SEPARATOR_BYTES - TEMP_NAME_COUNTER_HEX_DIGITS;
         let suffix = self.next_temp.fetch_add(1, Ordering::Relaxed);
@@ -228,15 +194,6 @@ impl UpperWorkdirInuse {
         )
     }
 
-    /// Prepares this mount's private staging workspace inside the workdir.
-    ///
-    /// It clears any residue at the `work` entry and creates a fresh directory there for the objects
-    /// this mount stages. The placement and the name follow Linux `ovl_workdir_create`, which creates
-    /// the `work` (`OVL_WORKDIR_NAME`) subdirectory inside the workdir the caller named, after
-    /// clearing the residue there.
-    ///
-    /// Reference:
-    /// <https://elixir.bootlin.com/linux/v7.2/source/fs/overlayfs/super.c>.
     pub(super) fn prepare_workdir(&mut self) -> Result<()> {
         const WORKDIR_NAME: &str = "work";
         const WORKDIR_MODE: InodeMode = InodeMode::from_bits_truncate(0o700);
@@ -262,7 +219,6 @@ impl UpperWorkdirInuse {
         Ok(())
     }
 
-    /// Persists the claimed overlay uuid on the upper root and returns it.
     pub(super) fn persist_identity(&self, namespace: XattrNamespace) -> Result<Uuid> {
         let value = self.workdir.token.value().to_le_bytes();
         OverlayXattrType::Uuid.set_value_on(

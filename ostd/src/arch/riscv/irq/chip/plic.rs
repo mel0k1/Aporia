@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Platform-Level Interrupt Controller (PLIC) for RISC-V.
-
 use alloc::{boxed::Box, collections::btree_map::BTreeMap, vec::Vec};
 
 use bit_field::BitField;
@@ -13,12 +9,10 @@ use crate::{
     irq::IrqLine,
 };
 
-/// The Platform-Level Interrupt Controller (PLIC) for RISC-V.
 pub(super) struct Plic {
     phandle: u32,
     io_mem: IoMem<Sensitive>,
     hart_to_target_mapping: BTreeMap<u32, u32>,
-    /// Per-Plic interrupt-source-to-IRQ-number mappings.
     interrupt_number_mappings: Box<[Option<u8>]>,
 }
 
@@ -31,32 +25,23 @@ impl Plic {
         self.interrupt_number_mappings.len() as u32
     }
 
-    /// Sets the priority of an interrupt source.
     pub(super) fn set_priority(&mut self, interrupt_source: u32, priority: u32) {
         assert!(interrupt_source > 0 && interrupt_source < self.num_interrupt_sources());
 
         let offset = Self::PRIORITY_OFFSET + 4 * interrupt_source as usize;
-        // SAFETY: The calculation of `offset` follows RISC-V PLIC's
-        // specification and is guaranteed to be valid.
-        // Reference: <https://github.com/riscv/riscv-plic-spec>.
         unsafe { self.io_mem.write_once(offset, &priority) };
     }
 
-    /// Checks if an interrupt source is pending.
     pub(super) fn is_pending(&self, interrupt_source: u32) -> bool {
         assert!(interrupt_source > 0 && interrupt_source < self.num_interrupt_sources());
 
         let word_index = interrupt_source as usize / 32;
         let bit_index = interrupt_source as usize % 32;
         let offset = Self::PENDING_OFFSET + 4 * word_index;
-        // SAFETY: The calculation of `offset` follows RISC-V PLIC's
-        // specification and is guaranteed to be valid.
-        // Reference: <https://github.com/riscv/riscv-plic-spec>.
         let value = unsafe { self.io_mem.read_once::<u32>(offset) };
         (value >> bit_index) & 1 != 0
     }
 
-    /// Sets whether an interrupt source is enabled for a specific target (hart).
     pub(super) fn set_interrupt_enabled(&self, hart: u32, interrupt_source: u32, enabled: bool) {
         assert!(interrupt_source > 0 && interrupt_source < self.num_interrupt_sources());
 
@@ -65,71 +50,50 @@ impl Plic {
         let bit_index = interrupt_source as usize % 32;
         let offset = Self::ENABLE_OFFSET + Self::ENABLE_STRIDE * target as usize + 4 * word_index;
 
-        // SAFETY: The calculation of `offset` follows RISC-V PLIC's
-        // specification and is guaranteed to be valid.
-        // Reference: <https://github.com/riscv/riscv-plic-spec>.
         let mut value = unsafe { self.io_mem.read_once::<u32>(offset) };
         value.set_bit_to(bit_index, enabled);
         unsafe { self.io_mem.write_once(offset, &value) };
     }
 
-    /// Sets the threshold for a specific target (hart).
     pub(super) fn set_threshold(&self, hart: u32, threshold: u32) {
         let target = *self.hart_to_target_mapping.get(&hart).unwrap();
         let offset = Self::THRESHOLD_OFFSET + Self::THRESHOLD_STRIDE * target as usize;
 
-        // SAFETY: The calculation of `offset` follows RISC-V PLIC's
-        // specification and is guaranteed to be valid.
-        // Reference: <https://github.com/riscv/riscv-plic-spec>.
         unsafe { self.io_mem.write_once(offset, &threshold) };
     }
 
-    /// Claims the highest priority pending interrupt for a specific target (hart).
     pub(super) fn claim_interrupt(&self, hart: u32) -> u32 {
         let target = *self.hart_to_target_mapping.get(&hart).unwrap();
         let offset = Self::CLAIM_COMPLETE_OFFSET + Self::CLAIM_COMPLETE_STRIDE * target as usize;
 
-        // SAFETY: The calculation of `offset` follows RISC-V PLIC's
-        // specification and is guaranteed to be valid.
-        // Reference: <https://github.com/riscv/riscv-plic-spec>.
         unsafe { self.io_mem.read_once::<u32>(offset) }
     }
 
-    /// Completes the interrupt for a specific target (hart) and interrupt source.
     pub(super) fn complete_interrupt(&self, hart: u32, interrupt_source: u32) {
         assert!(interrupt_source > 0 && interrupt_source < self.num_interrupt_sources());
 
         let target = *self.hart_to_target_mapping.get(&hart).unwrap();
         let offset = Self::CLAIM_COMPLETE_OFFSET + Self::CLAIM_COMPLETE_STRIDE * target as usize;
 
-        // SAFETY: The calculation of `offset` follows RISC-V PLIC's
-        // specification and is guaranteed to be valid.
-        // Reference: <https://github.com/riscv/riscv-plic-spec>.
         unsafe { self.io_mem.write_once(offset, &interrupt_source) };
     }
 
-    /// Gets an iterator of harts managed by this PLIC.
     pub(super) fn managed_harts(&self) -> impl Iterator<Item = u32> + use<'_> {
         self.hart_to_target_mapping.keys().copied()
     }
 
-    /// Initializes the PLIC.
     pub(super) fn init(&mut self) {
-        // Initialize priorities of all interrupt sources to 0.
         for interrupt_source in 1..self.num_interrupt_sources() {
             self.set_priority(interrupt_source, 0);
         }
 
         for hart in self.managed_harts() {
-            // Disable all interrupt sources for all targets.
             for interrupt_source in 1..self.num_interrupt_sources() {
                 self.set_interrupt_enabled(hart, interrupt_source, false);
             }
 
-            // Set all targets' thresholds to 0 to allow all priority levels.
             self.set_threshold(hart, 0);
 
-            // Clear all pending claims.
             while let irq_num = self.claim_interrupt(hart)
                 && irq_num != 0
             {
@@ -140,83 +104,6 @@ impl Plic {
 }
 
 impl Plic {
-    // Here we define the constants for PLIC MMIO access.
-    //
-    // The layout of PLIC MMIO region is as follows
-    // +-------------------------------------------------------------------+
-    // |                         PLIC MMIO Region                          |
-    // | (Base Address: e.g., 0x0C00_0000)                                 |
-    // +-------------------------------------------------------------------+
-    // |                                                                   |
-    // |  +-------------------------------------------------------------+  |
-    // |  |             Interrupt Source Priority Registers             |  |
-    // |  | (Offset: 0x0000_0000)                                       |  |
-    // |  |                                                             |  |
-    // |  | - 32-bit register per interrupt source (Source 1 to N)      |  |
-    // |  | - Offset for Source I: 0x0 + (I * 4)                        |  |
-    // |  | - Used to set priority (0 = disabled, higher value = higher)|  |
-    // |  +-------------------------------------------------------------+  |
-    // |                                                                   |
-    // |  +-------------------------------------------------------------+  |
-    // |  |                 Interrupt Pending Registers                 |  |
-    // |  | (Offset: 0x0000_1000)                                       |  |
-    // |  |                                                             |  |
-    // |  | - 32-bit registers, bit-mapped for pending interrupts       |  |
-    // |  | - Word Index: Source ID / 32                                |  |
-    // |  | - Bit Index: Source ID % 32                                 |  |
-    // |  | - Read-only to check if an interrupt is pending             |  |
-    // |  +-------------------------------------------------------------+  |
-    // |                                                                   |
-    // |  +-------------------------------------------------------------+  |
-    // |  |             Interrupt Enable Registers (per Target)         |  |
-    // |  | (Offset: 0x0000_2000)                                       |  |
-    // |  |                                                             |  |
-    // |  | +---------------------------------------------------------+ |  |
-    // |  | | Target 0 Enable Bits (Offset: 0x0000_2000)              | |  |
-    // |  | | - 32-bit registers, bit-mapped for interrupt enables    | |  |
-    // |  | | - Word Index: Source ID / 32                            | |  |
-    // |  | | - Bit Index: Source ID % 32                             | |  |
-    // |  | +---------------------------------------------------------+ |  |
-    // |  | | Target 1 Enable Bits (Offset: 0x0000_2000 + 0x80)       | |  |
-    // |  | | ...                                                     | |  |
-    // |  | | Target M Enable Bits (Offset: 0x0000_2000 + M*0x80)     | |  |
-    // |  | +---------------------------------------------------------+ |  |
-    // |  | - Used to enable/disable specific interrupts for each hart  |  |
-    // |  +-------------------------------------------------------------+  |
-    // |                                                                   |
-    // |  +-------------------------------------------------------------+  |
-    // |  |             Priority Threshold Registers (per Target)       |  |
-    // |  | (Offset: 0x0020_0000)                                       |  |
-    // |  |                                                             |  |
-    // |  | +---------------------------------------------------------+ |  |
-    // |  | | Target 0 Threshold (Offset: 0x0020_0000)                | |  |
-    // |  | | - 32-bit register                                       | |  |
-    // |  | +---------------------------------------------------------+ |  |
-    // |  | | Target 1 Threshold (Offset: 0x0020_0000 + 0x1000)       | |  |
-    // |  | | ...                                                     | |  |
-    // |  | | Target M Threshold (Offset: 0x0020_0000 + M*0x1000)     | |  |
-    // |  | +---------------------------------------------------------+ |  |
-    // |  | - Used to set the minimum priority for interrupts to be     |  |
-    // |  |   delivered to a target.                                    |  |
-    // |  +-------------------------------------------------------------+  |
-    // |                                                                   |
-    // |  +-------------------------------------------------------------+  |
-    // |  |          Claim/Complete Registers (per Target)              |  |
-    // |  | (Offset: 0x0020_0004)                                       |  |
-    // |  |                                                             |  |
-    // |  | +---------------------------------------------------------+ |  |
-    // |  | | Target 0 Claim/Complete (Offset: 0x0020_0004)           | |  |
-    // |  | | - 32-bit register                                       | |  |
-    // |  | +---------------------------------------------------------+ |  |
-    // |  | | Target 1 Claim/Complete (Offset: 0x0020_0004 + 0x1000)  | |  |
-    // |  | | ...                                                     | |  |
-    // |  | | Target M Claim/Complete (Offset: 0x0020_0004 + M*0x1000)| |  |
-    // |  | +---------------------------------------------------------+ |  |
-    // |  | - Read to claim the highest priority pending interrupt ID.  |  |
-    // |  | - Write the ID back to complete the interrupt.              |  |
-    // |  +-------------------------------------------------------------+  |
-    // |                                                                   |
-    // +-------------------------------------------------------------------+
     const PRIORITY_OFFSET: usize = 0x0;
     const PENDING_OFFSET: usize = 0x1000;
     const ENABLE_OFFSET: usize = 0x2000;
@@ -237,8 +124,6 @@ impl Plic {
 
 impl Plic {
     pub(super) fn from_fdt(fdt: &Fdt<'_>, io_mem_builder: &IoMemAllocatorBuilder) -> Vec<Self> {
-        // The parsing logic here assumes a Linux-compatible device tree.
-        // Reference: <https://www.kernel.org/doc/Documentation/devicetree/bindings/interrupt-controller/sifive%2Cplic-1.0.0.yaml>.
         fdt.all_nodes()
             .filter(|node| {
                 node.compatible().is_some_and(|compatibles| {
@@ -341,8 +226,6 @@ impl Plic {
         interrupt_source: u32,
         irq_line: &IrqLine,
     ) -> Result<()> {
-        // An interrupt source number of 0 is reserved to mean “no interrupt”.
-        // Reference: <https://github.com/riscv/riscv-plic-spec>.
         assert_ne!(interrupt_source, 0);
 
         match self.interrupt_number_mappings[interrupt_source as usize] {
@@ -355,8 +238,6 @@ impl Plic {
     }
 
     pub(super) fn unmap_interrupt_source(&mut self, interrupt_source: u32) {
-        // An interrupt source number of 0 is reserved to mean “no interrupt”.
-        // Reference: <https://github.com/riscv/riscv-plic-spec>.
         assert_ne!(interrupt_source, 0);
 
         self.interrupt_number_mappings[interrupt_source as usize] = None;

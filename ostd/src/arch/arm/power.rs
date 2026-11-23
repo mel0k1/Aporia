@@ -1,11 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Power management.
-//!
-//! This implements ARM Power State Coordination Interface (PSCI).
-//!
-//! Reference: <https://developer.arm.com/documentation/den0022/fb/>
-
 use core::arch::asm;
 
 use fdt::node::FdtNode;
@@ -38,31 +30,19 @@ enum PsciFunc {
     SystemReset = 0x8400_0009,
 }
 
-/// Attempts to power off the system using an architecture-specific mechanism.
-///
-/// On ARM, this function attempts to power off the system if a supported PSCI device tree node
-/// exists. Otherwise, it does nothing and returns.
 pub fn try_poweroff(_code: ExitCode) {
     psci_call(PsciFunc::SystemOff);
 }
 
-/// Attempts to restart the system using an architecture-specific mechanism.
-///
-/// On ARM, this function attempts to restart the system if a supported PSCI device tree node
-/// exists. Otherwise, it does nothing and returns.
 pub fn try_restart(_code: ExitCode) {
     psci_call(PsciFunc::SystemReset);
 }
 
 fn psci_call(func_id: PsciFunc) {
-    // If possible, keep this method panic-free because it may be called by the panic handler.
     let Some(psci_method) = PSCI_METHOD.get() else {
         return;
     };
 
-    // For the SMC Calling Convention (SMCCC) version 1.1 and higher, we only need to clobber
-    // registers `x0`-`x3`. Since we don't check the SMCC version, we clobber registers `x0`-`x17`,
-    // which are required by SMCC v1.0.
     macro_rules! asm_smccc {
         ($insn:literal, $func_id:expr) => {
             asm!(
@@ -75,8 +55,6 @@ fn psci_call(func_id: PsciFunc) {
         }
     }
 
-    // SAFETY: We've checked that PSCI exists vis the device tree. Then it is safe to invoke a PCSI
-    // function using the correct calling convention.
     unsafe {
         match psci_method {
             PsciMethod::Smc => asm_smccc!("smc #0", func_id as u32),
@@ -86,7 +64,6 @@ fn psci_call(func_id: PsciFunc) {
 }
 
 pub(super) fn init() {
-    // Reference: <https://www.kernel.org/doc/Documentation/devicetree/bindings/arm/psci.txt>
     const FDT_COMPATIBLE: &[&str] = &["arm,psci-0.2", "arm,psci-1.0"];
 
     let device_tree = DEVICE_TREE.get().unwrap();

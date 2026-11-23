@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::TidDirOps;
 use crate::{
     fs::{
@@ -11,12 +9,10 @@ use crate::{
     thread::Thread,
 };
 
-/// Represents the inode at `/proc/[pid]/task/[tid]/cmdline` (and also `/proc/[pid]/cmdline`).
 pub(super) struct CmdlineFileOps(TidDirOps);
 
 impl CmdlineFileOps {
     pub(super) fn new_inode(dir: &TidDirOps, parent: Weak<dyn Inode>) -> Arc<dyn Inode> {
-        // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/fs/proc/base.c#L3340>
         ProcFile::new(Self(dir.clone()), parent, mkmod!(a+r))
     }
 }
@@ -33,8 +29,6 @@ impl ProcFileOps for CmdlineFileOps {
 
         let vmar_guard = process.lock_vmar();
         let Some(init_stack_reader) = vmar_guard.init_stack_reader() else {
-            // According to Linux behavior, return an empty string
-            // if the process is a zombie process.
             return Ok(0);
         };
 

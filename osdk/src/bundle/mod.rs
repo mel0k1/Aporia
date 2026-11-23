@@ -1,24 +1,19 @@
-// SPDX-License-Identifier: MPL-2.0
-
 pub mod bin;
 pub mod file;
 pub mod vm_image;
 
-use bin::{AsterBin, AsterBinType};
-use file::{BundleFile, Initramfs};
 use std::{
     io::{BufRead, BufReader, Write},
     os::unix::net::UnixStream,
+    path::{Path, PathBuf},
     process::{self, ExitStatus},
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
+
+use bin::{AsterBin, AsterBinType};
+use file::{BundleFile, Initramfs};
 use tempfile::NamedTempFile;
 use vm_image::{AsterVmImage, AsterVmImageType};
-
-use std::{
-    path::{Path, PathBuf},
-    time::SystemTime,
-};
 
 use crate::{
     arch::Arch,
@@ -32,28 +27,15 @@ use crate::{
     util::{DirGuard, new_command_checked_exists},
 };
 
-/// Timeout for monitor reads; this is intentionally longer than the daemon
-/// supervision poll interval because monitor responses are socket-based.
 const MONITOR_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
-/// How long to wait for QEMU to create its monitor socket after it is spawned.
-///
-/// QEMU usually creates the socket within tens of milliseconds, but it can take
-/// a second or more on a busy machine, e.g., when several kernels are being
-/// built and booted at the same time.
 const MONITOR_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// The osdk bundle artifact that stores as `bundle` directory.
-///
-/// This `Bundle` struct is used to track a bundle on a filesystem. Every modification to the bundle
-/// would result in file system writes. But the bundle will not be removed from the file system when
-/// the `Bundle` is dropped.
 pub struct Bundle {
     manifest: BundleManifest,
     path: PathBuf,
 }
 
-/// The osdk bundle artifact manifest that stores as `bundle.toml`.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct BundleManifest {
     pub initramfs: Option<Initramfs>,
@@ -80,25 +62,19 @@ pub(crate) fn classify_qemu_exit_status(exit_status: ExitStatus) -> QemuExit {
         return QemuExit::Unknown;
     };
 
-    // For x86 QEMU with `isa-debug-exit`, the guest exit code is encoded as
-    // `(code << 1) | 1`. Do not decode QEMU's own failure exit code `1`.
     if qemu_exit_code == 1 {
         return QemuExit::Unknown;
     }
 
     let kernel_exit_code = qemu_exit_code >> 1;
     match kernel_exit_code {
-        // Corresponds to `ostd::QemuExitCode::Success`.
         0x10 => QemuExit::Success,
-        // Corresponds to `ostd::QemuExitCode::Failed`.
         0x20 => QemuExit::Failed,
-        // Unknown exit code, e.g., a triple fault.
         _ => QemuExit::Unknown,
     }
 }
 
 impl Bundle {
-    /// This function creates a new `Bundle` without adding any files.
     pub fn new(path: impl AsRef<Path>, config: &Config, action: ActionChoice) -> Self {
         std::fs::create_dir_all(path.as_ref()).unwrap();
         let config_initramfs = match action {
@@ -129,8 +105,6 @@ impl Bundle {
         created
     }
 
-    // Load the bundle from the file system. If the bundle does not exist or have inconsistencies,
-    // it will return `None`.
     pub fn load(path: impl AsRef<Path>) -> Option<Self> {
         let manifest_file_path = path.as_ref().join("bundle.toml");
         let manifest_file_content = std::fs::read_to_string(manifest_file_path).ok()?;
@@ -161,7 +135,6 @@ impl Bundle {
     }
 
     pub fn can_run_with_config(&self, config: &Config, action: ActionChoice) -> Result<(), String> {
-        // If built for testing, better not to run it. Vice versa.
         if self.manifest.action != action {
             return Err(format!(
                 "The bundle is built for {:?}",
@@ -178,7 +151,6 @@ impl Bundle {
             ActionChoice::Test => &config.test,
         };
 
-        // Compare the manifest with the run configuration except the initramfs and the boot method.
         if self_action.grub != config_action.grub
             || self_action.qemu != config_action.qemu
             || self_action.build != config_action.build
@@ -187,17 +159,12 @@ impl Bundle {
             return Err("The bundle is not compatible with the run configuration".to_owned());
         }
 
-        // Checkout if the files on disk supports the boot method
         match config_action.boot.method {
             BootMethod::VmmDirect => {
                 if self.manifest.aster_bin.is_none() {
                     return Err("Kernel ELF is required for direct ELF booting".to_owned());
                 };
 
-                // Validate the kernel binary type against the configured boot protocol.
-                // This prevents reusing an incompatible binary (e.g. ELF vs. `bzImage`) when
-                // switching boot methods (for example, from a Grub ISO to `vmm-direct`),
-                // which would otherwise cause boot failures.
                 let aster_bin_type = self.manifest.aster_bin.as_ref().unwrap().typ();
                 let expects_linux = matches!(aster_bin_type, AsterBinType::BzImage(_));
                 let actual_linux = config_action.grub.boot_protocol == BootProtocol::Linux;
@@ -225,7 +192,6 @@ impl Bundle {
             }
         }
 
-        // Compare the initramfs.
         let initramfs_err =
             "The initramfs in the bundle is different from the one in the run configuration"
                 .to_owned();
@@ -253,7 +219,6 @@ impl Bundle {
 
     pub fn run(&self, config: &Config, action: ActionChoice) {
         let exit_status = self.run_qemu_and_wait(config, action);
-        // FIXME: When panicking it sometimes returns success, why?
         match classify_qemu_exit_status(exit_status) {
             QemuExit::Success => {}
             QemuExit::Failed => std::process::exit(1),
@@ -311,7 +276,6 @@ impl Bundle {
             BootMethod::GrubQcow2 => {
                 let vm_image = self.manifest.vm_image.as_ref().unwrap();
                 assert!(matches!(vm_image.typ(), AsterVmImageType::Qcow2(_)));
-                // FIXME: this doesn't work for regular QEMU, but may work for TDX.
                 let bootdev_opts = action
                     .qemu
                     .bootdev_append_options
@@ -415,7 +379,6 @@ impl Bundle {
             let mut monitor_reader = BufReader::new(&mut *qemu_monitor_stream);
             let mut line = String::new();
 
-            // Check VM status every 0.1 seconds and break the loop if the VM is stopped or hanging.
             while monitor_reader.get_mut().write_all(b"info status\n").is_ok() {
                 if signal.received_signal().is_some() {
                     daemon_supervisor.abort(Some(qemu_child), Errno::Interrupted);
@@ -467,7 +430,6 @@ impl Bundle {
         exit_status
     }
 
-    /// Move the vm_image into the bundle.
     pub fn consume_vm_image(&mut self, vm_image: AsterVmImage) {
         if self.manifest.vm_image.is_some() {
             panic!("vm_image already exists");
@@ -476,7 +438,6 @@ impl Bundle {
         self.write_manifest_to_fs();
     }
 
-    /// Move the aster_bin into the bundle.
     pub fn consume_aster_bin(&mut self, aster_bin: AsterBin) {
         if self.manifest.aster_bin.is_some() {
             panic!("aster_bin already exists");
@@ -502,9 +463,6 @@ impl Bundle {
             return;
         };
 
-        // Read the configured QEMU output and check if it failed with a panic.
-        // Setting a QEMU log is required for source line stack trace because piping the output
-        // is less desirable when running QEMU with serial redirected to standard I/O.
         let qemu_log_path = config.work_dir.join(qemu_log_file);
         if let Ok(file) = std::fs::File::open(&qemu_log_path)
             && let Some(aster_bin) = &self.manifest.aster_bin
@@ -512,7 +470,6 @@ impl Bundle {
             crate::util::trace_panic_from_log(file, self.path.join(aster_bin.path()));
         }
 
-        // Find the coverage data information in the QEMU log, and dump it if found.
         if let Some(qemu_monitor_stream) = qemu_monitor_stream
             && let Ok(file) = std::fs::File::open(&qemu_log_path)
         {
@@ -521,13 +478,6 @@ impl Bundle {
     }
 }
 
-/// Connects to the QEMU monitor socket at `socket_path`.
-///
-/// QEMU creates the socket while it starts up, so this function keeps
-/// retrying until a connection succeeds. If QEMU exits or the socket is still
-/// not ready after `MONITOR_CONNECT_TIMEOUT`, it prints which one happened and
-/// returns `Errno::ExecuteCommand`. If a termination signal is received while
-/// waiting, it returns `Errno::Interrupted` so the caller can clean up.
 fn connect_to_qemu_monitor(
     socket_path: &Path,
     qemu_child: &mut process::Child,

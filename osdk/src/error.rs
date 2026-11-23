@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Errno {
@@ -18,7 +16,6 @@ pub enum Errno {
     Interrupted = 13,
 }
 
-/// Print error message to console
 #[macro_export]
 macro_rules! error_msg {
     () => {
@@ -31,7 +28,6 @@ macro_rules! error_msg {
     }};
 }
 
-/// Print warning message to console
 #[macro_export]
 macro_rules! warn_msg {
     () => {

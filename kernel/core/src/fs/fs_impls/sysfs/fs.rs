@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use spin::Once;
 
 use crate::{
@@ -16,7 +14,6 @@ use crate::{
     prelude::*,
 };
 
-/// A file system for exposing kernel information to the user space.
 #[derive(Debug)]
 pub(super) struct SysFs {
     _anon_device_id: AnonDeviceId,
@@ -25,12 +22,11 @@ pub(super) struct SysFs {
     fs_event_subscriber_stats: FsEventSubscriberStats,
 }
 
-const MAGIC_NUMBER: u64 = 0x62656572; // SYSFS_MAGIC
+const MAGIC_NUMBER: u64 = 0x62656572;
 const BLOCK_SIZE: usize = 4096;
 const NAME_MAX: usize = 255;
 
 impl SysFs {
-    /// Returns the `SysFs` singleton.
     pub(super) fn singleton() -> &'static Arc<SysFs> {
         static SINGLETON: Once<Arc<SysFs>> = Once::new();
 
@@ -63,7 +59,6 @@ impl FileSystem for SysFs {
     }
 
     fn sync(&self) -> Result<()> {
-        // `SysFs` is volatile, sync is a no-op
         Ok(())
     }
 

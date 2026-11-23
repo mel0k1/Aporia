@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use itertools::Itertools;
 use proc_macro2::{Ident, TokenStream};
 use quote::{TokenStreamExt, quote};
@@ -7,33 +5,26 @@ use syn::Expr;
 
 use crate::type_flag::TypeFlagDef;
 
-/// A flagSet represent the combination of different flag item.
-/// e.g. [Read, Write], [Read], [] are all flag sets.
-/// The order of flagItem does not matters. So flag sets with same sets of items should be viewed as the same set.
 #[derive(Debug)]
 pub(crate) struct FlagSet {
     items: Vec<FlagItem>,
 }
 
 impl FlagSet {
-    /// create a new empty flag set
     fn new() -> Self {
         FlagSet { items: Vec::new() }
     }
 
-    /// add a flag item
     fn push_item(&mut self, flag_item: FlagItem) {
         self.items.push(flag_item);
     }
 
-    /// the tokens represents the flag set type name
     pub(crate) fn type_name_tokens(&self) -> TokenStream {
         let mut res = quote!(::typeflags_util::Nil);
 
         for item in self.items.iter() {
             let ident = item.ident.clone();
 
-            // insert new item as head
             let new_res = quote! {
                 ::typeflags_util::Cons<#ident, #res>
             };
@@ -43,12 +34,10 @@ impl FlagSet {
         res
     }
 
-    /// the number of items
     pub(crate) fn len(&self) -> usize {
         self.items.len()
     }
 
-    /// the tokens to impl main trait for the current flagset
     pub(crate) fn impl_main_trait_tokens(&self, type_flags_def: &TypeFlagDef) -> TokenStream {
         let trait_ident = type_flags_def.trait_ident();
         let name = self.type_name_tokens();
@@ -59,13 +48,10 @@ impl FlagSet {
         all_tokens
     }
 
-    /// the impl main trait inner content
     fn inner_tokens(&self, type_flags_def: &TypeFlagDef) -> TokenStream {
         let ty = type_flags_def.val_type();
         let item_vals = self.items.iter().map(|item| item.val.clone());
 
-        // quote seems unable to use string for types.
-        // So we hardcode all types here.
         if item_vals.len() == 0 {
             quote!(
                 {
@@ -101,11 +87,8 @@ impl FlagSet {
         true
     }
 
-    /// The token stream inside macro definition. We will generate a token stream for each permutation of items
-    /// since the user may use arbitrary order of items in macro.
     pub(crate) fn macro_item_tokens(&self) -> Vec<TokenStream> {
         let res_type = self.type_name_tokens();
-        // We first calculate the full permutations,
         let item_permutations = self.items.iter().permutations(self.items.len());
         item_permutations
             .map(|flag_items| {
@@ -123,9 +106,7 @@ impl FlagSet {
 
 #[derive(Clone)]
 struct FlagItem {
-    /// the user provided name
     ident: Ident,
-    /// the user-provided val
     val: Expr,
 }
 
@@ -137,7 +118,6 @@ impl core::fmt::Debug for FlagItem {
     }
 }
 
-/// generate all possible flag sets
 pub(crate) fn generate_flag_sets(type_flag_def: &TypeFlagDef) -> Vec<FlagSet> {
     let flag_items = type_flag_def
         .items_iter()

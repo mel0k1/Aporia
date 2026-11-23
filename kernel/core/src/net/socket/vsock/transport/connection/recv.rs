@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 #![short_vis_path::add(vsock)]
 
 use aster_bigtcp::socket::ReceiveBehavior;
@@ -18,27 +16,11 @@ use crate::{
 };
 
 impl Connection {
-    /// Copies queued payload bytes into `writer` and updates receive credit accounting.
     pub(in vsock) fn try_recv(
         &mut self,
         writer: &mut dyn MultiWrite,
         flags: RecvFlags,
     ) -> Result<usize> {
-        // We use a packet-pool approach here so a receive attempt either completes for the chosen
-        // packets or leaves the receive queue unchanged.
-        //
-        // Otherwise, consider this case: we fully receive some packets, remove them from the
-        // queue, and then hit `EFAULT` while receiving the next packet. That would create several
-        // problems:
-        // - We should not return `EFAULT`, because some bytes have already been received.
-        // - We cannot safely return only the bytes from the fully received packets, because
-        //   `writer` would then be left at the wrong position.
-        // - We also cannot return the bytes from the fully received packets plus the partial bytes
-        //   from the faulting packet, because `MultiWrite` does not report how many bytes were
-        //   written before `EFAULT` occurred.
-        //
-        // TODO: Find a better way to report partially written bytes on fault so we can avoid
-        // temporarily staging packets just to preserve correct receive semantics.
         let mut packet_pool = [const { None }; 8];
 
         let Some(mut packets) = self.inner.state.lock().grab_packets_to_recv(
@@ -50,9 +32,6 @@ impl Connection {
             return Ok(0);
         };
 
-        // Packets can only be received from a `&mut connection`. Therefore, releasing the state
-        // lock does not cause race conditions. We need to release the lock in order to copy to
-        // userspace.
         let behavior = flags.receive_behavior();
         let result = packets.copy_to_userspace(writer, behavior);
         let recv_len = *result.as_ref().unwrap_or(&0);
@@ -219,7 +198,6 @@ impl ConnectionState {
             return;
         }
 
-        // No need to report credit updates if the peer cannot send new data.
         if self.shutdown.peer_write_closed || self.shutdown.local_read_closed {
             return;
         }

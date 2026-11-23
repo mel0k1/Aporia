@@ -1,24 +1,11 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::super::types::VcpuRegs;
 use crate::irq::DisabledLocalIrqGuard;
 
-/// Enters or resumes the guest and returns after a VM exit.
-///
-/// # Safety
-///
-/// 1. VMX must be enabled with an exclusively owned current VMCS whose launch
-///    state matches `is_launched`.
-/// 2. The VMCS must isolate guest memory and privileged operations, and restore
-///    the current host's state, including RIP at `vm_exit_handler_virtaddr()`.
-///    All referenced resources must remain alive through the VM exit.
 pub(super) unsafe fn vcpu_run(
     regs: &mut VcpuRegs,
     is_launched: bool,
     _irq_guard: &DisabledLocalIrqGuard,
 ) -> u64 {
-    // SAFETY: The caller ensures the VMX execution contract. The exclusive
-    // reference also provides valid register storage for the assembly routine.
     unsafe { __vcpu_run(regs, u64::from(is_launched)) }
 }
 

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use keyable_arc::KeyableArc;
 
 use super::ns::{self, AbstractHandle};

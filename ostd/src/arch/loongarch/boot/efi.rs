@@ -1,12 +1,10 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use crate::mm::{Paddr, paddr_to_vaddr};
 
 macro_rules! efi_guid {
     ($a:expr, $b:expr, $c:expr, $d:expr) => {{
-        let a = ($a as u32).to_le_bytes(); // u32 -> [u8; 4]
-        let b = ($b as u16).to_le_bytes(); // u16 -> [u8; 2]
-        let c = ($c as u16).to_le_bytes(); // u16 -> [u8; 2]
+        let a = ($a as u32).to_le_bytes();
+        let b = ($b as u16).to_le_bytes();
+        let c = ($c as u16).to_le_bytes();
         let d = $d;
         EfiGuid {
             b: [
@@ -17,7 +15,6 @@ macro_rules! efi_guid {
     }};
 }
 
-/// Reference: <https://github.com/torvalds/linux/blob/master/include/linux/efi.h#L417>
 const LINUX_EFI_INITRD_MEDIA_GUID: EfiGuid = efi_guid!(
     0x5568e427,
     0x68fc,
@@ -25,7 +22,6 @@ const LINUX_EFI_INITRD_MEDIA_GUID: EfiGuid = efi_guid!(
     [0xac, 0x74, 0xca, 0x55, 0x52, 0x31, 0xcc, 0x68]
 );
 
-/// Reference: <https://uefi.org/specs/UEFI/2.10/04_EFI_System_Table.html#devicetree-tables>
 const DEVICE_TREE_GUID: EfiGuid = efi_guid!(
     0xb1b621d5,
     0xf19c,
@@ -39,7 +35,6 @@ struct EfiGuid {
     b: [u8; 16],
 }
 
-/// Reference: <https://uefi.org/specs/UEFI/2.10/04_EFI_System_Table.html#id4>
 #[repr(C)]
 struct EfiTableHeader {
     signature: u64,
@@ -49,18 +44,16 @@ struct EfiTableHeader {
     reserved: u32,
 }
 
-/// Reference: <https://uefi.org/specs/UEFI/2.10/04_EFI_System_Table.html#efi-configuration-table>
 #[repr(C)]
 struct EfiConfigurationTable {
     guid: EfiGuid,
     table: *const core::ffi::c_void,
 }
 
-/// Reference: <https://uefi.org/specs/UEFI/2.10/04_EFI_System_Table.html#id6>
 #[repr(C)]
 pub(super) struct EfiSystemTable {
     hdr: EfiTableHeader,
-    fw_vendor: u64, // physical addr of CHAR16*
+    fw_vendor: u64,
     fw_revision: u32,
     con_in_handle: u64,
     con_in: *const u64,
@@ -74,9 +67,6 @@ pub(super) struct EfiSystemTable {
     tables: *const EfiConfigurationTable,
 }
 
-// SAFETY: The `EfiSystemTable` structure is only accessed in a read-only manner
-// during early EFI initialization. The raw pointers it contains are not written
-// to across threads, so it is safe to mark this type as thread-safe.
 unsafe impl Sync for EfiSystemTable {}
 
 impl EfiSystemTable {
@@ -103,7 +93,6 @@ impl EfiSystemTable {
     }
 }
 
-/// Reference: <https://github.com/torvalds/linux/blob/master/include/linux/efi.h#L1327>
 #[repr(C)]
 pub(super) struct EfiInitrd {
     base: u64,

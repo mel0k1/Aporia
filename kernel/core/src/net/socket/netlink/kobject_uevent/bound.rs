@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::message::UeventMessage;
 use crate::{
     events::IoEvents,
@@ -40,7 +38,6 @@ impl datagram_common::Bound for BoundNetlinkUevent {
         flags: SendFlags,
         _options: Self::SendOptions,
     ) -> Result<usize> {
-        // TODO: Deal with flags
         if !flags.is_all_supported() {
             warn!("unsupported flags: {:?}", flags);
         }
@@ -52,8 +49,6 @@ impl datagram_common::Bound for BoundNetlinkUevent {
             ));
         }
 
-        // FIXME: How to deal with sending message to kernel socket?
-        // Here we simply ignore the message and return the message length.
         Ok(reader.sum_lens())
     }
 
@@ -62,7 +57,6 @@ impl datagram_common::Bound for BoundNetlinkUevent {
         writer: &mut dyn MultiWrite,
         flags: RecvFlags,
     ) -> Result<(RecvOutput, Self::Endpoint)> {
-        // TODO: Deal with other flags.
         if !flags.is_all_supported() {
             warn!("unsupported flags: {:?}", flags);
         }

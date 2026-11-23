@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::sync::Arc;
 
 use aster_systree::EmptyNode;
@@ -21,20 +19,17 @@ use crate::{
     process::posix_thread::AsThreadLocal,
 };
 
-/// A file system for managing cgroups.
 pub(super) struct CgroupFs {
     _anon_device_id: AnonDeviceId,
     sb: SuperBlock,
     fs_event_subscriber_stats: FsEventSubscriberStats,
 }
 
-// Magic number for cgroupfs v2 (taken from Linux)
 const MAGIC_NUMBER: u64 = 0x63677270;
 const BLOCK_SIZE: usize = 4096;
 const NAME_MAX: usize = 255;
 
 impl CgroupFs {
-    /// Returns the `CgroupFs` singleton.
     pub(super) fn singleton() -> &'static Arc<CgroupFs> {
         static SINGLETON: Once<Arc<CgroupFs>> = Once::new();
 
@@ -60,7 +55,6 @@ impl FileSystem for CgroupFs {
     }
 
     fn sync(&self) -> Result<()> {
-        // `CgroupFs` is volatile, sync is a no-op
         Ok(())
     }
 

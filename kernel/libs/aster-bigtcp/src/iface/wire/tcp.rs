@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use int_to_c_enum::TryFromInt;
 use ostd::mm::{Infallible, VmReader, VmWriter};
 use ostd_pod::IntoBytes;
@@ -25,9 +23,6 @@ pub(in crate::iface) fn parse(
     let src_port = u16::from(header.src);
     let dst_port = u16::from(header.dst);
     if src_port == 0 || dst_port == 0 {
-        // In practice, zero port numbers are not valid because none of the operating systems in
-        // production can bind to them. They are reserved by the IANA:
-        // <https://www.iana.org/assignments/service-names-port-numbers/service-names-port-numbers.xhtml>.
         return None;
     }
 
@@ -113,10 +108,6 @@ fn parse_options(mut options: VmReader<Infallible>, repr: &mut TcpRepr<'static>)
             (Some(OptionKind::MaxSegmentSize), _) => return false,
 
             (Some(OptionKind::WindowScale), 3) => {
-                // "Thus, the shift count MUST be limited to 14 (which allows windows of 2^30 = 1
-                // GiB).  If a Window Scale option is received with a shift.cnt value larger than
-                // 14, the TCP SHOULD log the error but MUST use 14 instead of the specified value."
-                // Reference: <https://datatracker.ietf.org/doc/html/rfc7323#section-2.3>.
                 repr.window_scale = Some(options.read_val::<u8>().unwrap().min(14));
             }
             (Some(OptionKind::WindowScale), _) => return false,

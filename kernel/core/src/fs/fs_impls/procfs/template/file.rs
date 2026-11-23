@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 #![short_vis_path::add(procfs)]
 
 use core::time::Duration;
@@ -96,7 +94,6 @@ impl<F: ProcFileOps + 'static> Inode for ProcFile<F> {
     }
 
     fn resize(&self, _self_dentry: &Dentry, _new_size: usize) -> Result<()> {
-        // Resizing files under `/proc` will succeed, but will do nothing.
         Ok(())
     }
 
@@ -119,7 +116,6 @@ impl<F: ProcFileOps + 'static> Inode for ProcFile<F> {
     }
 
     fn seek_end(&self) -> Option<usize> {
-        // Seeking regular files under `/proc` with `SEEK_END` will fail.
         None
     }
 
@@ -134,7 +130,6 @@ impl<F: ProcFileOps + 'static> Inode for ProcFile<F> {
 }
 
 pub(in procfs) trait ProcFileOps: Sync + Send {
-    /// Returns the thread whose credentials own this procfs inode.
     fn owner_thread(&self) -> Option<Arc<Thread>> {
         None
     }
@@ -155,7 +150,6 @@ pub(in procfs) trait ProcFileOps: Sync + Send {
 }
 
 pub(in procfs) trait ProcFileOpsByHandle: Sync + Send {
-    /// Returns the thread whose credentials own this procfs inode.
     fn owner_thread(&self) -> Option<Arc<Thread>> {
         None
     }
@@ -189,12 +183,7 @@ impl<T: ProcFileOpsByHandle> ProcFileOps for T {
     }
 }
 
-/// Reads a string from `reader` and parses it as an `i32`.
 pub(in procfs) fn read_i32_from(reader: &mut VmReader) -> Result<(i32, usize)> {
-    /// Worst case buffer size needed for holding an integer.
-    ///
-    /// The longest possible string is `"-2147483648\n\0"`,
-    /// whose length is 13 bytes.
     const BUF_SIZE_I32: usize = 13;
 
     let (cstr, read_bytes) = reader.read_cstring_until_end(BUF_SIZE_I32 - 1)?;
@@ -208,12 +197,7 @@ pub(in procfs) fn read_i32_from(reader: &mut VmReader) -> Result<(i32, usize)> {
     Ok((val, read_bytes))
 }
 
-/// Reads a string from `reader` and parses it as a `u64`.
 pub(in procfs) fn read_u64_from(reader: &mut VmReader) -> Result<(u64, usize)> {
-    /// Worst case buffer size needed for holding a `u64`.
-    ///
-    /// The longest possible string is `"18446744073709551615\n\0"`,
-    /// whose length is 23 bytes.
     const BUF_SIZE_U64: usize = 23;
 
     let (cstr, read_bytes) = reader.read_cstring_until_end(BUF_SIZE_U64 - 1)?;

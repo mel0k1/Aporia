@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::{boxed::Box, sync::Arc};
 use core::mem::offset_of;
 
@@ -138,12 +136,10 @@ impl VirtioTransport for VirtioMmioTransport {
 
         match self.common_device.read_version().unwrap() {
             VirtioMmioVersion::Legacy => {
-                // The area should be continuous.
                 assert_eq!(
                     driver_daddr - descriptor_daddr,
                     size_of::<Descriptor>() * queue_size as usize
                 );
-                // Descriptor device addresses should be aligned.
                 assert_eq!(descriptor_daddr % PAGE_SIZE, 0);
                 let pfn = (descriptor_daddr / PAGE_SIZE) as u32;
                 field_ptr!(&self.layout, VirtioMmioLayout, legacy_queue_align)
@@ -174,7 +170,6 @@ impl VirtioTransport for VirtioMmioTransport {
                 field_ptr!(&self.layout, VirtioMmioLayout, queue_device_high)
                     .write_once(&((device_daddr >> 32) as u32))
                     .unwrap();
-                // enable queue
                 field_ptr!(&self.layout, VirtioMmioLayout, queue_sel)
                     .write_once(&(idx as u32))
                     .unwrap();
@@ -194,8 +189,6 @@ impl VirtioTransport for VirtioMmioTransport {
     }
 
     fn num_queues(&self) -> u16 {
-        // We use the field `queue_num_max` to get queue size.
-        // If the queue is not exists, the field should be zero
         let mut num_queues = 0;
         const MAX_QUEUES: u32 = 512;
         while num_queues < MAX_QUEUES {
@@ -215,7 +208,6 @@ impl VirtioTransport for VirtioMmioTransport {
     }
 
     fn device_config_mem(&self) -> Option<IoMem> {
-        // offset: 0x100~0x200
         Some(self.common_device.io_mem().slice(0x100..0x200))
     }
 
@@ -224,14 +216,12 @@ impl VirtioTransport for VirtioMmioTransport {
     }
 
     fn read_device_features(&self) -> u64 {
-        // select low
         field_ptr!(&self.layout, VirtioMmioLayout, device_features_select)
             .write_once(&0u32)
             .unwrap();
         let device_feature_low = field_ptr!(&self.layout, VirtioMmioLayout, device_features)
             .read_once()
             .unwrap();
-        // select high
         field_ptr!(&self.layout, VirtioMmioLayout, device_features_select)
             .write_once(&1u32)
             .unwrap();

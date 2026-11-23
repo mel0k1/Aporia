@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 #![expect(unused_variables)]
 
 use core::time::Duration;
@@ -38,15 +36,8 @@ const ROOT_INO: u64 = 1;
 const PTMX_INO: u64 = 2;
 const FIRST_SLAVE_INO: u64 = 3;
 
-/// The max number of pty pairs.
 const MAX_PTY_NUM: usize = 4096;
 
-/// Devpts(device pseudo terminal filesystem) is a virtual filesystem.
-///
-/// It is normally mounted at "/dev/pts" and contains solely devices files which
-/// represent slaves to the multiplexing master located at "/dev/ptmx".
-///
-/// Actually, the "/dev/ptmx" is a symlink to the real device at "/dev/pts/ptmx".
 pub(crate) struct DevPts {
     _anon_device_id: AnonDeviceId,
     sb: SuperBlock,
@@ -70,7 +61,6 @@ impl DevPts {
         })
     }
 
-    /// Create the master and slave pair.
     fn create_master_slave_pair(&self) -> Result<(Box<PtyMaster>, Arc<PtySlaveInode>)> {
         let index = self
             .index_alloc
@@ -89,9 +79,6 @@ impl DevPts {
         Ok((master, slave_inode))
     }
 
-    /// Remove the slave from fs.
-    ///
-    /// This is called when the master is being dropped.
     pub(crate) fn remove_slave(&self, index: u32) -> Option<Arc<dyn Inode>> {
         let (_, removed_slave) = self
             .root
@@ -201,7 +188,6 @@ impl FileOps for RootInode {
 
     fn readdir_at(&self, offset: usize, visitor: &mut dyn DirentVisitor) -> Result<usize> {
         let try_readdir = |offset: &mut usize, visitor: &mut dyn DirentVisitor| -> Result<()> {
-            // Read the 3 special entries.
             if *offset == 0 {
                 visitor.visit(".", self.ino(), self.type_(), *offset)?;
                 *offset += 1;
@@ -215,8 +201,6 @@ impl FileOps for RootInode {
                 *offset += 1;
             }
 
-            // Read the slaves one by one (`*offset >= 3` here). Release the lock before visiting
-            // each slave, since the visitor may write to user space and take a page fault.
             loop {
                 let next_slave = {
                     let slaves = self.slaves.read();
@@ -363,7 +347,6 @@ impl Inode for RootInode {
     fn lookup(&self, name: &str) -> Result<Arc<dyn Inode>> {
         let inode = match name {
             "." | ".." => self.fs().root_inode(),
-            // Call the "open" method of ptmx to create a master and slave pair.
             "ptmx" => self.ptmx.clone(),
             slave => self
                 .slaves
@@ -395,13 +378,6 @@ impl Inode for RootInode {
     }
 
     fn revalidate_exists(&self, _name: &str, _child: &dyn Inode) -> bool {
-        // Slave entries are created by opening `ptmx` and removed when the
-        // master is dropped, bypassing VFS dentry updates. Always retry lookup
-        // so a cached dentry cannot refer to a removed or reused pty index.
-        //
-        // TODO: Add a devpts-to-VFS dentry invalidation/update path for slave
-        // add/remove, similar to Linux devpts dropping slave dentries on pty
-        // teardown. Then this conservative revalidation can be relaxed.
         false
     }
 

@@ -1,8 +1,3 @@
-// Licensed under the Apache License, Version 2.0 or the MIT License.
-// Copyright (C) 2023-2024 Ant Group.
-
-//! This test checks that if cargo-component can control reexported entry points.
-
 mod test_utils;
 
 #[test]

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::{
     num::Wrapping,
     sync::atomic::{AtomicBool, Ordering},
@@ -25,8 +23,6 @@ use crate::{
 };
 
 pub(super) struct Connected {
-    // `addr` should be dropped as soon as the socket file is closed,
-    // so it must not belong to `Inner`.
     addr: Option<UnixSocketAddrBound>,
     inner: Endpoint<Inner>,
 }
@@ -131,14 +127,11 @@ impl Connected {
         let peer_end = self.inner.peer_end();
 
         let mut reader = this_end.reader.lock();
-        // `reader.len()` is an `Acquire` operation. So it can guarantee that the `has_aux`
-        // check below sees the up-to-date value.
         let no_aux_len = reader.len();
 
         let is_pass_cred = this_end.is_pass_cred.load(Ordering::Relaxed);
         let behavior = flags.receive_behavior();
 
-        // Fast path: There are no auxiliary data to receive.
         if !peer_end.has_aux.load(Ordering::Relaxed) {
             let read_len = self.inner.read_with(|| {
                 let head = reader.head();
@@ -179,8 +172,6 @@ impl Connected {
                 ((reader.tail() - read_start).0, None)
             };
 
-            // Unless the auxiliary data we have already received is a subset of the current
-            // auxiliary data, we cannot receive additional bytes.
             if read_tot_len > 0 {
                 let is_subset = match (aux_pos.checked_sub(1), aux_front.as_ref()) {
                     (Some(prev_pos), Some(front)) => {
@@ -202,7 +193,6 @@ impl Connected {
                 }
             }
 
-            // Read the payload bytes of the current auxiliary data.
             let read_res = if !is_empty && (aux_len > 0 || aux_front.is_none()) {
                 self.inner.read_with(|| {
                     let copy_range = read_start..read_start + Wrapping(aux_len);
@@ -222,8 +212,6 @@ impl Connected {
                 aux_pos += 1;
             }
 
-            // Record the current auxiliary data. Break if the read is incomplete or this is a
-            // `SOCK_SEQPACKET` socket.
             if is_seqpacket {
                 if read_len < aux_len {
                     warn!("setting MSG_TRUNC is not supported");
@@ -235,7 +223,6 @@ impl Connected {
             }
         }
 
-        // Consume the payload bytes that we've read.
         if behavior.will_consume_data() {
             let consume_tot_len = read_tot_len + trunc_len;
             reader.commit_read(consume_tot_len);
@@ -245,7 +232,6 @@ impl Connected {
         }
         drop(reader);
 
-        // Consume the auxiliary data that we've read.
         let ctrl_msgs = if aux_pos >= 1 {
             let aux_data = all_aux.get_mut(aux_pos - 1).unwrap();
             debug_assert!((aux_data.start - read_base).0 <= read_tot_len);
@@ -305,7 +291,6 @@ impl Connected {
         let need_pass_cred = this_end.is_pass_cred.load(Ordering::Relaxed)
             || self.inner.peer_end().is_pass_cred.load(Ordering::Relaxed);
 
-        // Fast path: There are no auxiliary data to transmit.
         if aux_data.is_empty() && !is_seqpacket && !need_pass_cred {
             let mut writer = this_end.writer.lock();
             let write_len = self
@@ -317,11 +302,8 @@ impl Connected {
 
         let mut all_aux = this_end.all_aux.lock();
 
-        // No matter we succeed later or not, set the flag first to ensure that the auxiliary
-        // data are always visible to `try_recv`.
         this_end.has_aux.store(true, Ordering::Relaxed);
 
-        // Write the payload bytes.
         let (write_start, write_res) = if !is_empty {
             let mut writer = this_end.writer.lock();
             let write_start = writer.tail();
@@ -346,7 +328,6 @@ impl Connected {
             aux_data.fill_cred();
         }
 
-        // Store the auxiliary data.
         let aux_range = RangedAuxiliaryData {
             data: core::mem::take(aux_data),
             start: write_start,
@@ -422,7 +403,6 @@ impl Drop for Connected {
 struct Inner {
     addr: Once<UnixSocketAddr>,
     state: EndpointState,
-    // Lock order: `reader` -> `all_aux` & `all_aux` -> `writer`
     reader: Mutex<RbConsumer<u8>>,
     writer: Mutex<RbProducer<u8>>,
     all_aux: Mutex<VecDeque<RangedAuxiliaryData>>,
@@ -439,8 +419,8 @@ impl AsRef<EndpointState> for Inner {
 
 struct RangedAuxiliaryData {
     data: AuxiliaryData,
-    start: Wrapping<usize>, // inclusive
-    end: Wrapping<usize>,   // exclusive
+    start: Wrapping<usize>,
+    end: Wrapping<usize>,
 }
 
 pub(in crate::net) const UNIX_STREAM_DEFAULT_BUF_SIZE: usize = 65536;

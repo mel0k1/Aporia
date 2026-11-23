@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::sync::Arc;
 
 use smoltcp::{
@@ -27,7 +25,6 @@ pub struct IpIface<D, E: Ext> {
 }
 
 impl<D: WithDevice, E: Ext> IpIface<D, E> {
-    // TODO: Support interfaces with multiple IPv4/IPv6 addresses or without IPv4 addresses.
     pub fn new(
         driver: D,
         ip_cidr: Ipv4Cidr,

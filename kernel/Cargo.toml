@@ -7,9 +7,6 @@ edition.workspace = true
 aster-core.workspace = true
 ostd.workspace = true
 
-# High-level component crates.
-#
-# Keep this list in sync with the `extern crate` declarations in `src/lib.rs`.
 aster-drm.workspace = true
 aster-simpledrm.workspace = true
 aster-uart.workspace = true

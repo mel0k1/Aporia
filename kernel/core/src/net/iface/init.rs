@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::slice::Iter;
 
 use aster_bigtcp::{
@@ -22,15 +20,12 @@ pub(in crate::net) fn iter_all_ifaces() -> Iter<'static, Arc<Iface>> {
     IFACES.get().unwrap().iter()
 }
 
-// TODO: Support multiple network devices and avoid the hardcoded device name.
 const VIRTIO_DEVICE_NAME: &str = aster_virtio::device::network::DEVICE_NAME;
 
 pub(in crate::net) fn init() {
     IFACES.call_once(|| {
         let mut ifaces = Vec::with_capacity(2);
 
-        // Initialize loopback before virtio
-        // to ensure the loopback interface index is ahead of virtio.
         ifaces.push(new_loopback());
 
         if let Some(iface_virtio) = new_virtio() {
@@ -57,7 +52,7 @@ fn new_loopback() -> Arc<Iface> {
     };
 
     const LOOPBACK_ADDRESS: Ipv4Address = Ipv4Address::new(127, 0, 0, 1);
-    const LOOPBACK_ADDRESS_PREFIX_LEN: u8 = 8; // mask: 255.0.0.0
+    const LOOPBACK_ADDRESS_PREFIX_LEN: u8 = 8;
     const LOOPBACK_IPV6_ADDRESS: Ipv6Address = Ipv6Address::new(0, 0, 0, 0, 0, 0, 0, 1);
     const LOOPBACK_IPV6_PREFIX_LEN: u8 = 128;
 
@@ -75,8 +70,6 @@ fn new_loopback() -> Arc<Iface> {
         }
     }
 
-    // FIXME: These flags are currently hardcoded.
-    // In the future, we should set appropriate values.
     let flags = InterfaceFlags::UP
         | InterfaceFlags::LOOPBACK
         | InterfaceFlags::RUNNING
@@ -103,7 +96,7 @@ fn new_virtio() -> Option<Arc<Iface>> {
     };
 
     const VIRTIO_ADDRESS: Ipv4Address = Ipv4Address::new(10, 0, 2, 15);
-    const VIRTIO_ADDRESS_PREFIX_LEN: u8 = 24; // mask: 255.255.255.0
+    const VIRTIO_ADDRESS_PREFIX_LEN: u8 = 24;
     const VIRTIO_GATEWAY: Ipv4Address = Ipv4Address::new(10, 0, 2, 2);
 
     let virtio_net = aster_network::get_device(VIRTIO_DEVICE_NAME)?;
@@ -124,8 +117,6 @@ fn new_virtio() -> Option<Arc<Iface>> {
         }
     }
 
-    // FIXME: These flags are currently hardcoded.
-    // In the future, we should set appropriate values.
     let flags = InterfaceFlags::UP
         | InterfaceFlags::BROADCAST
         | InterfaceFlags::RUNNING

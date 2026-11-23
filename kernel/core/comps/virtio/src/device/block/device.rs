@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::{boxed::Box, collections::BTreeMap, string::String, sync::Arc, vec::Vec};
 use core::{
     fmt::Debug,
@@ -33,13 +31,11 @@ use crate::{
     transport::{ConfigManager, DeviceTransport},
 };
 
-/// The number of virtio block devices, used to assign minor device numbers.
 static NR_BLOCK_DEVICE: AtomicU32 = AtomicU32::new(0);
 
 #[derive(Debug)]
 pub struct BlockDevice {
     device: Arc<DeviceInner>,
-    /// The software staging queue.
     queue: BioRequestSingleQueue,
     id: DeviceId,
     name: String,
@@ -47,10 +43,6 @@ pub struct BlockDevice {
 }
 
 impl BlockDevice {
-    /// Returns the formatted device name.
-    ///
-    /// The device name starts at "vda". The 26th device is "vdz" and the 27th is "vdaa".
-    /// The last one for two lettered suffix is "vdzz" which is followed by "vdaaa".
     fn formatted_device_name(mut index: u32) -> String {
         const VIRTIO_DISK_PREFIX: &str = "vd";
 
@@ -69,7 +61,6 @@ impl BlockDevice {
         name
     }
 
-    /// Creates a new VirtIO-Block driver and registers it.
     pub(crate) fn init(device_transport: DeviceTransport) -> Result<(), VirtioDeviceError> {
         let device = DeviceInner::init(device_transport)?;
 
@@ -82,8 +73,6 @@ impl BlockDevice {
 
         let block_device = Arc::new(BlockDevice {
             device,
-            // Each bio request includes an additional 1 request and 1 response descriptor,
-            // therefore this upper bound is set to (QUEUE_SIZE - 2).
             queue: BioRequestSingleQueue::with_max_nr_segments_per_bio(
                 (DeviceInner::QUEUE_SIZE - 2) as usize,
             ),
@@ -98,8 +87,6 @@ impl BlockDevice {
         Ok(())
     }
 
-    /// Dequeues a `BioRequest` from the software staging queue and
-    /// processes the request.
     pub fn handle_requests(&self) {
         let request = self.queue.dequeue();
         info!("Handle Request: {:?}", request);
@@ -110,7 +97,6 @@ impl BlockDevice {
         }
     }
 
-    /// Negotiate features for the device specified bits 0~23
     pub(crate) fn negotiate_features(device_features: u64) -> u64 {
         BlockFeatures::negotiated_with_device(device_features).bits()
     }
@@ -156,7 +142,6 @@ struct DeviceInner {
 impl DeviceInner {
     const QUEUE_SIZE: u16 = 64;
 
-    /// Creates and inits the device.
     fn init(mut device_transport: DeviceTransport) -> Result<Arc<Self>, VirtioDeviceError> {
         let config_manager = VirtioBlockConfig::new_manager(device_transport.as_ref());
 
@@ -169,9 +154,6 @@ impl DeviceInner {
         let block_size = if features.contains(BlockFeatures::BLK_SIZE) {
             config_manager.block_size()
         } else {
-            // Fall back to standard sector size SECTOR_SIZE (512 bytes)
-            // Reference:
-            // <https://docs.oasis-open.org/virtio/virtio/v1.2/virtio-v1.2.html#x1-2790004>
             VirtioBlockConfig::sector_size()
         };
         if block_size != VirtioBlockConfig::sector_size() {
@@ -181,9 +163,6 @@ impl DeviceInner {
 
         let num_queues = device_transport.num_queues();
         if num_queues != 1 {
-            // TODO: Support Multi-Queue Block IO Queueing Mechanism
-            // (`BlkFeatures::MQ`) to accelerate multi-processor requests for
-            // block devices. When SMP is enabled on x86, the feature is on.
             ostd::warn!(
                 "Multi-Queue Block IO Queueing Mechanism is not supported yet; using the first queue"
             );
@@ -231,14 +210,9 @@ impl DeviceInner {
         Ok(device)
     }
 
-    /// Handles the IRQ issued from the device.
     fn handle_irq(&self) {
         info!("block device handle IRQ");
-        // When we enter the IRQs handling function,
-        // IRQs have already been disabled,
-        // so there is no need to call `disable_irq`.
         loop {
-            // Pops the complete request
             let complete_request = {
                 let mut queue = self.queue.lock();
                 let Ok((token, _)) = queue.pop_used_with_min_bytes(RESP_SIZE) else {
@@ -247,7 +221,6 @@ impl DeviceInner {
                 self.submitted_requests.lock().remove(&token).unwrap()
             };
 
-            // Handles the response
             let id = complete_request.id as usize;
             let resp_slice =
                 Slice::new(&self.block_responses, id * RESP_SIZE..(id + 1) * RESP_SIZE);
@@ -257,7 +230,6 @@ impl DeviceInner {
             match RespStatus::try_from(resp.status) {
                 Ok(RespStatus::Ok) => {}
                 _ => {
-                    // Completes the bio request with an error
                     complete_request.bio_request.into_bios().for_each(|bio| {
                         bio.complete(BioStatus::IoError);
                     });
@@ -265,7 +237,6 @@ impl DeviceInner {
                 }
             };
 
-            // Synchronize DMA mapping if read from the device
             if let BioType::Read = complete_request.bio_request.type_() {
                 complete_request
                     .bio_request
@@ -279,7 +250,6 @@ impl DeviceInner {
                     });
             }
 
-            // Completes the bio request
             complete_request.bio_request.into_bios().for_each(|bio| {
                 bio.complete(BioStatus::Complete);
             });
@@ -290,7 +260,6 @@ impl DeviceInner {
         info!("block device config space change");
     }
 
-    /// Reads data from the device, this function is non-blocking.
     fn read(&self, bio_request: BioRequest) {
         let id = self.id_allocator.alloc();
         let req_slice = {
@@ -331,7 +300,6 @@ impl DeviceInner {
         };
 
         let num_used_descs = outputs.len() + 1;
-        // FIXME: Split the request if it is too big
         if num_used_descs > Self::QUEUE_SIZE as usize {
             panic!("The request size surpasses the queue size");
         }
@@ -348,7 +316,6 @@ impl DeviceInner {
                 queue.notify();
             }
 
-            // Records the submitted request
             let submitted_request = SubmittedRequest::new(id as u16, bio_request);
             self.submitted_requests
                 .disable_irq()
@@ -358,7 +325,6 @@ impl DeviceInner {
         }
     }
 
-    /// Writes data to the device, this function is non-blocking.
     fn write(&self, bio_request: BioRequest) {
         let id = self.id_allocator.alloc();
         let req_slice = {
@@ -403,7 +369,6 @@ impl DeviceInner {
         };
 
         let num_used_descs = inputs.len() + 1;
-        // FIXME: Split the request if it is too big
         if num_used_descs > Self::QUEUE_SIZE as usize {
             panic!("The request size surpasses the queue size");
         }
@@ -419,7 +384,6 @@ impl DeviceInner {
                 queue.notify();
             }
 
-            // Records the submitted request
             let submitted_request = SubmittedRequest::new(id as u16, bio_request);
             self.submitted_requests
                 .disable_irq()
@@ -429,8 +393,6 @@ impl DeviceInner {
         }
     }
 
-    /// Flushes any cached data from the guest to the persistent storage on the host.
-    /// This will be ignored if the device doesn't support the `VIRTIO_BLK_F_FLUSH` feature.
     fn flush(&self, bio_request: BioRequest) {
         if !self.features.contains(BlockFeatures::FLUSH) {
             bio_request.into_bios().for_each(|bio| {
@@ -460,7 +422,6 @@ impl DeviceInner {
             resp_slice
         };
 
-        // One descriptor for the input `req_slice`, one for the output `resp_slice`.
         let num_used_descs = 2;
         loop {
             let mut queue = self.queue.disable_irq().lock();
@@ -474,7 +435,6 @@ impl DeviceInner {
                 queue.notify();
             }
 
-            // Records the submitted request
             let submitted_request = SubmittedRequest::new(id as u16, bio_request);
             self.submitted_requests
                 .disable_irq()
@@ -485,7 +445,6 @@ impl DeviceInner {
     }
 }
 
-/// A submitted bio request for callback.
 #[derive(Debug)]
 struct SubmittedRequest {
     id: u16,
@@ -498,7 +457,6 @@ impl SubmittedRequest {
     }
 }
 
-/// VirtIOBlock request.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 struct BlockReq {
@@ -509,7 +467,6 @@ struct BlockReq {
 
 const REQ_SIZE: usize = size_of::<BlockReq>();
 
-/// Response of a VirtIOBlock request.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 struct BlockResp {

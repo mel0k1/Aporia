@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 pub(crate) mod driver;
 pub(crate) mod transport;
 
@@ -10,7 +8,6 @@ use ostd::sync::SpinLock;
 
 use self::{driver::NvmePciDriver, transport::NvmePciTransport};
 
-// Transports await functional initialization after PCI driver registration.
 static TRANSPORTS: SpinLock<VecDeque<NvmePciTransport>> = SpinLock::new(VecDeque::new());
 
 fn push_device_transport(transport: NvmePciTransport) {

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::collections::VecDeque;
 use core::sync::atomic::{AtomicBool, Ordering::Relaxed};
 
@@ -10,18 +8,12 @@ use crate::{
     task::atomic_mode::AsAtomicModeGuard,
 };
 
-/// A RCU monitor ensures the completion of _grace periods_ by keeping track
-/// of each CPU's passing _quiescent states_.
 pub(super) struct RcuMonitor {
     is_monitoring: AtomicBool,
     state: SpinLock<State>,
 }
 
 impl RcuMonitor {
-    /// Creates a new RCU monitor.
-    ///
-    /// This function is used to initialize a singleton instance of `RcuMonitor`.
-    /// The singleton instance is globally accessible via the `RCU_MONITOR`.
     pub(super) fn new() -> Self {
         Self {
             is_monitoring: AtomicBool::new(false),
@@ -30,14 +22,10 @@ impl RcuMonitor {
     }
 
     pub(super) unsafe fn finish_grace_period(&self) {
-        // Fast path
         if !self.is_monitoring.load(Relaxed) {
             return;
         }
 
-        // Check if the current GP is complete after passing the quiescent state
-        // on the current CPU. If GP is complete, take the callbacks of the current
-        // GP.
         let callbacks = {
             let mut state = self.state.disable_irq().lock();
             let cpu = state.as_atomic_mode_guard().current_cpu();
@@ -50,10 +38,8 @@ impl RcuMonitor {
                 return;
             }
 
-            // Now that the current GP is complete, take its callbacks
             let current_callbacks = state.current_gp.take_callbacks();
 
-            // Check if we need to watch for a next GP
             if !state.next_callbacks.is_empty() {
                 let callbacks = core::mem::take(&mut state.next_callbacks);
                 state.current_gp.restart(callbacks);
@@ -64,7 +50,6 @@ impl RcuMonitor {
             current_callbacks
         };
 
-        // Invoke the callbacks to notify the completion of GP
         for f in callbacks {
             (f)();
         }

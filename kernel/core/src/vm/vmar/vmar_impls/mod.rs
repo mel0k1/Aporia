@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 mod access_alien;
 mod fork;
 pub(super) mod map;
@@ -32,33 +30,19 @@ use crate::{
     vm::page_cache::Vmo,
 };
 
-/// The upper bound for allocations under the `MAP_32BIT` mmap flag.
 #[cfg(target_arch = "x86_64")]
 const MAP_32BIT_HIGH_LIMIT: Vaddr = 0x8000_0000;
 
-/// The VMAR (used to be Virtual Memory Address Region, but now an orphan
-/// initialism).
-///
-/// A VMAR is the address space of a process.
 pub(crate) struct Vmar {
-    /// VMAR inner
     inner: RwMutex<VmarInner>,
-    /// The attached `VmSpace`
     vm_space: Arc<VmSpace>,
-    /// The RSS counters
     rss_counters: [PerCpuCounter; NUM_RSS_COUNTERS],
-    /// The process VM
     process_vm: ProcessVm,
-    /// The number of handles that this `Vmar` has (see [`super::VmarHandle`])
     num_handles: AtomicUsize,
-    /// Weak self reference
     weak_self: Weak<Self>,
 }
 
 impl Vmar {
-    /// Creates a new VMAR.
-    ///
-    /// This method should only be invoked by [`super::VmarHandle`].
     pub(super) fn new(process_vm: ProcessVm) -> Arc<Self> {
         let inner = VmarInner::new();
         let vm_space = VmSpace::new();
@@ -73,62 +57,45 @@ impl Vmar {
         })
     }
 
-    /// Returns the current RSS count for the given RSS type.
     pub(crate) fn get_rss_counter(&self, rss_type: RssType) -> usize {
         self.rss_counters[rss_type as usize].sum_all_cpus()
     }
 
-    /// Returns the total size of the mappings in bytes.
     pub(crate) fn get_mappings_total_size(&self) -> usize {
         self.inner.read().total_vm
     }
 
-    /// Returns the attached `VmSpace`.
     pub(crate) fn vm_space(&self) -> &Arc<VmSpace> {
         &self.vm_space
     }
 
-    /// Returns the attached `ProcessVm`.
     pub(crate) fn process_vm(&self) -> &ProcessVm {
         &self.process_vm
     }
 
-    /// Returns whether this VMAR has multiple handles.
     pub(crate) fn has_multiple_handles(&self) -> bool {
         self.num_handles.load(Ordering::Relaxed) > 1
     }
 
-    /// Increases the number of handles.
-    ///
-    /// This method should only be invoked by [`super::VmarHandle`].
     pub(super) fn inc_num_handles(&self) {
         let old_num_handles = self.num_handles.fetch_add(1, Ordering::Relaxed);
         debug_assert_ne!(old_num_handles, 0);
     }
 
-    /// Decreases the number of handles.
-    ///
-    /// This method should only be invoked by [`super::VmarHandle`].
     pub(super) fn dec_num_handles(&self) {
         let old_num_handles = self.num_handles.fetch_sub(1, Ordering::Relaxed);
         debug_assert_ne!(old_num_handles, 0);
         if old_num_handles == 1 {
-            // Clear all the mappings. The last process using this VMAR exited
-            // or executed a new program, so this VMAR no longer has a handle.
             self.clear();
         }
     }
 
     fn add_rss_counter(&self, rss_type: RssType, val: isize) {
-        // There are races but updating a remote counter won't cause any problems.
         let cpu_id = CpuId::current_racy();
         self.rss_counters[rss_type as usize].add_on_cpu(cpu_id, val);
     }
 }
 
-/// The type representing categories of Resident Set Size (RSS).
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/include/linux/mm_types_task.h#L26-L32>
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, TryFromInt)]
 pub(crate) enum RssType {
@@ -170,10 +137,6 @@ impl Drop for RssDelta<'_> {
     }
 }
 
-/// A holder for a reverse mapping entry that is to be removed.
-///
-/// This holds the [`Vmo`] object, so the lock guard for reverse mappings can
-/// have a correct lifetime (see [`Self::remove`]).
 #[must_use]
 struct RmapToRemove {
     vmo: Option<Arc<Vmo>>,
@@ -192,13 +155,7 @@ impl RmapToRemove {
 }
 
 struct VmarInner {
-    /// The mapped pages and associated metadata.
-    ///
-    /// When inserting a `VmMapping` into this set, use `insert_try_merge` to
-    /// auto-merge adjacent and compatible mappings, or `insert_without_try_merge`
-    /// if the mapping is known not mergeable with any neighboring mappings.
     vm_mappings: IntervalSet<Vaddr, VmMapping>,
-    /// The total mapped memory in bytes.
     total_vm: usize,
 }
 
@@ -210,12 +167,8 @@ impl VmarInner {
         }
     }
 
-    /// Returns `Ok` if the calling process may expand its mapped
-    /// memory by the passed size.
     fn check_extra_size_fits_rlimit(&self, expand_size: usize) -> Result<()> {
         let Some(process) = Process::current() else {
-            // When building a `Process`, the kernel task needs to build
-            // some `VmMapping`s, in which case this branch is reachable.
             return Ok(());
         };
 
@@ -230,8 +183,6 @@ impl VmarInner {
         Ok(())
     }
 
-    /// Checks whether `addr..addr + size` is covered by a single `VmMapping`,
-    /// and returns the address of the single `VmMapping` if successful.
     fn check_lies_in_single_mapping(&self, addr: Vaddr, size: usize) -> Result<Vaddr> {
         if let Some(vm_mapping) = self
             .vm_mappings
@@ -244,13 +195,6 @@ impl VmarInner {
         }
     }
 
-    /// Inserts a `VmMapping` into the `Vmar`, without attempting to merge with
-    /// neighboring mappings.
-    ///
-    /// The caller must ensure that the given `VmMapping` is not mergeable with
-    /// any neighboring mappings.
-    ///
-    /// Make sure the insertion doesn't exceed address space limit.
     fn insert_without_try_merge(
         &mut self,
         vmar: &Vmar,
@@ -272,13 +216,6 @@ impl VmarInner {
         self.vm_mappings.insert(vm_mapping);
     }
 
-    /// Inserts a `VmMapping` into the `Vmar`, and attempts to merge it with
-    /// neighboring mappings.
-    ///
-    /// This method will try to merge the `VmMapping` with neighboring mappings
-    /// that are adjacent and compatible, in order to reduce fragmentation.
-    ///
-    /// Make sure the insertion doesn't exceed address space limit.
     fn insert_try_merge(
         &mut self,
         vmar: &Vmar,
@@ -324,7 +261,6 @@ impl VmarInner {
         self.vm_mappings.insert(vm_mapping);
     }
 
-    /// Removes a `VmMapping` based on the provided key from the `Vmar`.
     fn remove(&mut self, key: &Vaddr) -> Option<(VmMapping, RmapToRemove)> {
         let vm_mapping = self.vm_mappings.remove(key)?;
         self.total_vm -= vm_mapping.map_size();
@@ -334,13 +270,10 @@ impl VmarInner {
         Some((vm_mapping, rmap_to_remove))
     }
 
-    /// Finds a set of [`VmMapping`]s that intersect with the provided range.
     fn query(&self, range: &Range<Vaddr>) -> impl Iterator<Item = &VmMapping> {
         self.vm_mappings.find(range)
     }
 
-    /// Calculates the total amount of overlap between `VmMapping`s
-    /// and the provided range.
     fn count_overlap_size(&self, range: Range<Vaddr>) -> usize {
         let mut sum_overlap_size = 0;
         for vm_mapping in self.vm_mappings.find(&range) {
@@ -351,9 +284,6 @@ impl VmarInner {
         sum_overlap_size
     }
 
-    /// Allocates a free region for mapping with a specific offset and size.
-    ///
-    /// If the provided range is already occupied, return an error.
     fn alloc_free_region_exact(&mut self, offset: Vaddr, size: usize) -> Result<Range<Vaddr>> {
         if self
             .vm_mappings
@@ -370,10 +300,6 @@ impl VmarInner {
         Ok(offset..(offset + size))
     }
 
-    /// Allocates a free region for mapping with a specific offset and size.
-    ///
-    /// If the provided range is already occupied, this function truncates all
-    /// the mappings that intersect with the range.
     fn alloc_free_region_exact_truncate(
         &mut self,
         vmar: &Vmar,
@@ -403,9 +329,6 @@ impl VmarInner {
                 self.insert_without_try_merge(vmar, right, rmap.as_deref_mut());
             }
 
-            // Note that `rmap` must be dropped before `taken`. Otherwise,
-            // there is a possibility of a deadlock because a device mapping
-            // may attempt to access its reverse mappings in `Drop`.
             drop(rmap);
 
             rss_delta.add(taken.rss_type(), -(taken.unmap(&vmar.vm_space) as isize));
@@ -414,25 +337,12 @@ impl VmarInner {
         range
     }
 
-    /// Allocates a free region for mapping, searching from high address to low address.
-    ///
-    /// If no such region is found, return an error.
     fn alloc_free_region(&mut self, size: usize, align: usize) -> Result<Range<Vaddr>> {
-        // This value represents the highest possible address for a new mapping.
-        // For simplicity, we use a fixed value `2048` here. The value contains the following considerations:
-        // - The stack fixed padding size.
-        // - The stack random padding size.
-        // - The future growth of the stack.
-        // FIXME: This value should consider the process's actual stack configuration, which may
-        // exist in `ResourceLimits`.
         let high_limit = VMAR_CAP_ADDR - INIT_STACK_SIZE - PAGE_SIZE * 2048;
         let low_limit = VMAR_LOWEST_ADDR;
         self.alloc_free_region_in_range(size, align, low_limit, high_limit)
     }
 
-    /// Allocates a free region for mapping that resides below 2 GiB.
-    ///
-    /// This is specifically used for supporting the `MAP_32BIT` mmap flag.
     #[cfg(target_arch = "x86_64")]
     fn alloc_free_region_below_2gib(&mut self, size: usize, align: usize) -> Result<Range<Vaddr>> {
         let high_limit = MAP_32BIT_HIGH_LIMIT.min(VMAR_CAP_ADDR);
@@ -440,9 +350,6 @@ impl VmarInner {
         self.alloc_free_region_in_range(size, align, low_limit, high_limit)
     }
 
-    /// Core logic for `alloc_free_region` and `alloc_free_region_below_2gib`.
-    ///
-    /// Searches for a free region in `[low_limit, high_limit)`, from high to low.
     fn alloc_free_region_in_range(
         &mut self,
         size: usize,
@@ -479,7 +386,6 @@ impl VmarInner {
             }
         }
 
-        // Check the hole between `low_limit` and the lowest mapping.
         if prev_vm_mapping_start > low_limit {
             let hole_start = low_limit;
             let hole_end = prev_vm_mapping_start.min(high_limit);
@@ -491,8 +397,6 @@ impl VmarInner {
         Err(errno!(ENOMEM, "no free region for mapping can be found"))
     }
 
-    /// Splits and unmaps the found mapping if the new size is smaller.
-    /// Enlarges the last mapping if the new size is larger.
     fn resize_mapping(
         &mut self,
         vmar: &Vmar,
@@ -518,7 +422,6 @@ impl VmarInner {
         }
 
         if new_size < old_size {
-            // Shrink the mapping. The old mapping is larger.
             if map_addr.checked_add(old_size).is_none() {
                 return Err(errno!(EINVAL, "the address range overflows"));
             }
@@ -531,7 +434,6 @@ impl VmarInner {
             return Ok(());
         }
 
-        // Expand the mapping. The old mapping is smaller.
         let old_map_end = map_addr + old_size;
         self.alloc_free_region_exact(old_map_end, new_size - old_size)
             .map_err(|_| errno!(ENOMEM, "the range contains pages that are already mapped",))?;

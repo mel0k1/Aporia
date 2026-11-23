@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use aster_util::printer::VmPrinter;
 
 use super::TidDirOps;
@@ -18,8 +16,6 @@ use crate::{
     thread::Thread,
 };
 
-/// A helper function to create the mount point path for a given mount (used by `mounts`,
-/// `mountinfo` and `mountstats`).
 pub(super) fn make_mount_point_path(
     is_resolver_root_mount: bool,
     parent: Option<&Arc<Mount>>,
@@ -37,35 +33,21 @@ pub(super) fn make_mount_point_path(
             "".to_string()
         }
     } else {
-        // No parent means it's the root of the namespace.
         "/".to_string()
     }
 }
 
-/// A single entry in the mountinfo file.
 struct MountInfoEntry<'a> {
-    /// The recyclable mount ID (matches [`Mount::id`]); reused after the
-    /// mount is dropped.
     mount_id: RecyclableMountId,
-    /// The recyclable ID of the parent mount (or self if it has no parent).
     parent_id: RecyclableMountId,
-    /// The major device ID of the filesystem.
     major: u32,
-    /// The minor device ID of the filesystem.
     minor: u32,
-    /// The root of the mount within the filesystem.
     root: &'a str,
-    /// The mount point relative to the process's root directory.
     mount_point: &'a str,
-    /// Per-mount flags.
     mount_flags: PerMountFlags,
-    /// Optional mount propagation fields.
     propagation_info: &'a str,
-    /// The type of the filesystem in the form "type[.subtype]".
     fs_type: &'a str,
-    /// Filesystem-specific information or "none".
     source: &'a str,
-    /// Per-filesystem flags.
     fs_flags: FsFlags,
 }
 
@@ -89,19 +71,13 @@ impl core::fmt::Display for MountInfoEntry<'_> {
     }
 }
 
-/// Represents the inode at `/proc/[pid]/task/[tid]/mountinfo` (and also `/proc/[pid]/mountinfo`).
 pub(super) struct MountInfoFileOps(TidDirOps);
 
 impl MountInfoFileOps {
     pub(super) fn new_inode(dir: &TidDirOps, parent: Weak<dyn Inode>) -> Arc<dyn Inode> {
-        // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/fs/proc/base.c#L3352>
         ProcFile::new(Self(dir.clone()), parent, mkmod!(a+r))
     }
 
-    /// Reads mount information for `/proc/[pid]/mountinfo`.
-    ///
-    /// Provides detailed mount information including mount IDs, parent relationships,
-    /// and device numbers.
     fn read_mount_info(
         &self,
         path_resolver: &PathResolver,

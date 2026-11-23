@@ -1,14 +1,11 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use std::{
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
     time::SystemTime,
 };
 
-use crate::util::hard_link_or_copy;
-
 use super::file::BundleFile;
+use crate::util::hard_link_or_copy;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct AsterVmImage {
@@ -69,7 +66,6 @@ impl AsterVmImage {
         &self.typ
     }
 
-    /// Copy the binary to the `base` directory and convert the path to a relative path.
     pub fn copy_to(self, base: impl AsRef<Path>) -> Self {
         let file_name = self.path.file_name().unwrap();
         let copied_path = base.as_ref().join(file_name);

@@ -1,73 +1,32 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Aligned array helpers for Pod types.
-//!
-//! This module provides type-level utilities
-//! for creating arrays with specific alignment requirements.
-//! It's primarily used internally to support Pod unions
-//! that need to maintain precise memory layouts with guaranteed alignment.
-
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
-/// A transparent wrapper around `[u8; N]` with guaranteed 1-byte alignment.
-///
-/// This type implements the zerocopy traits (`FromBytes`, `IntoBytes`, `Immutable`, `KnownLayout`)
-/// making it safe to transmute to/from byte arrays. It is primarily used internally by the
-/// `ArrayFactory` type system to provide aligned arrays for POD unions.
 #[repr(transparent)]
 #[derive(Clone, Copy, FromBytes, Immutable, IntoBytes, KnownLayout)]
 pub struct U8Array<const N: usize>([u8; N]);
 
 const _: () = assert!(align_of::<U8Array<0>>() == 1);
 
-/// A transparent wrapper around `[u16; N]` with guaranteed 2-byte alignment.
 #[repr(transparent)]
 #[derive(Clone, Copy, FromBytes, Immutable, IntoBytes, KnownLayout)]
 pub struct U16Array<const N: usize>([u16; N]);
 
 const _: () = assert!(align_of::<U16Array<0>>() == 2);
 
-/// A transparent wrapper around `[u32; N]` with guaranteed 4-byte alignment.
 #[repr(transparent)]
 #[derive(Clone, Copy, FromBytes, Immutable, IntoBytes, KnownLayout)]
 pub struct U32Array<const N: usize>([u32; N]);
 
 const _: () = assert!(align_of::<U32Array<0>>() == 4);
 
-/// A transparent wrapper around `[u64; N]` with guaranteed 8-byte alignment.
 #[repr(transparent)]
 #[derive(Clone, Copy, FromBytes, Immutable, IntoBytes, KnownLayout)]
 pub struct U64Array<const N: usize>([u64; N]);
 
 const _: () = assert!(align_of::<U64Array<0>>() == 8);
 
-/// A type-level factory for creating aligned arrays based on alignment requirements.
-///
-/// This zero-sized type uses const generics to select the appropriate underlying array type
-/// (`U8Array`, `U16Array`, `U32Array`, or `U64Array`) based on the alignment requirement `A` and
-/// the number of elements `N`.
-///
-/// # Type Parameters
-///
-/// * `A` - The required alignment in bytes (1, 2, 4, or 8).
-/// * `N` - The number of elements in the array.
-///
-/// # Examples
-///
-/// ```rust
-/// use ostd_pod::array_helper::{ArrayFactory, ArrayManufacture};
-///
-/// // Creates a `U32Array<8>` (8 `u32` elements with 4-byte alignment)
-/// type MyArray = <ArrayFactory<4, 8> as ArrayManufacture>::Array;
-/// ```
 pub enum ArrayFactory<const A: usize, const N: usize> {}
 
-/// Trait that associates an `ArrayFactory` with its corresponding aligned array type.
-///
-/// This trait is implemented for `ArrayFactory<A, N>` where `A` is 1, 2, 4, or 8,
-/// mapping to `U8Array`, `U16Array`, `U32Array`, and `U64Array` respectively.
 pub trait ArrayManufacture {
-    /// The aligned array type produced by this factory.
     type Array: FromBytes + IntoBytes + Immutable;
 }
 
@@ -181,7 +140,6 @@ mod tests {
 
     #[test]
     fn zerocopy_traits() {
-        // Test that the types implement the required zerocopy traits
         fn assert_traits<T: FromBytes + IntoBytes + Immutable + KnownLayout>() {}
 
         assert_traits::<U16Array<4>>();

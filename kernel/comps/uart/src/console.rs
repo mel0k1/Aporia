@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::{sync::Arc, vec::Vec};
 use core::fmt::Debug;
 
@@ -11,7 +9,6 @@ use ostd::{
     sync::{LocalIrqDisabled, SpinLock},
 };
 
-/// A UART console.
 pub(super) struct UartConsole<U: Uart> {
     uart: U,
     callbacks: SpinLock<Vec<&'static ConsoleCallback>, LocalIrqDisabled>,
@@ -24,7 +21,6 @@ impl<U: Uart> Debug for UartConsole<U> {
 }
 
 impl<U: Uart> UartConsole<U> {
-    /// Creates a new UART console.
     pub(super) fn new(uart: U) -> Arc<Self> {
         Arc::new(Self {
             uart,
@@ -32,13 +28,11 @@ impl<U: Uart> UartConsole<U> {
         })
     }
 
-    /// Returns a reference to the UART instance.
     #[cfg_attr(not(target_arch = "riscv64"), expect(dead_code))]
     pub(super) fn uart(&self) -> &U {
         &self.uart
     }
 
-    // Triggers the registered input callbacks.
     pub(super) fn trigger_input_callbacks(&self) {
         let mut buf = [0; 16];
 
@@ -70,28 +64,18 @@ impl<U: Uart + Send + Sync + 'static> AnyConsoleDevice for UartConsole<U> {
     }
 }
 
-/// A trait that abstracts UART devices.
 pub(super) trait Uart {
-    /// Sends a sequence of bytes to UART.
     fn send(&self, buf: &[u8]);
 
-    /// Receives a sequence of bytes from UART and returns the number of received bytes.
     #[must_use]
     fn recv(&self, buf: &mut [u8]) -> usize;
 
-    /// Flushes the received buffer.
-    ///
-    /// This method should be called after setting up the IRQ handlers to ensure new received data
-    /// will trigger IRQs.
     fn flush(&self);
 }
 
-/// A trait that abstracts byte-wise UART device operations.
 pub(super) trait UartMut {
-    /// Sends one byte to UART.
     fn send_byte(&mut self, byte: u8);
 
-    /// Receives one byte from UART.
     fn recv_byte(&mut self) -> Option<u8>;
 }
 
@@ -100,8 +84,6 @@ impl<T: UartMut> Uart for SpinLock<T, LocalIrqDisabled> {
         let mut uart = self.lock();
 
         for byte in buf {
-            // TODO: This is termios-specific behavior and should be part of the TTY implementation
-            // instead of the serial console implementation. See the ONLCR flag for more details.
             if *byte == b'\n' {
                 uart.send_byte(b'\r');
             }

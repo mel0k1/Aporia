@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use fdt_util::AcquireIoMems;
 use ostd::{arch::boot::DEVICE_TREE, io::IoMem, mm::VmIoOnce, warn};
 
@@ -19,8 +17,6 @@ impl Driver for RtcLoongson {
             .find_compatible(&[FDT_COMPATIBLE])?
             .acquire_io_mems([SYS_MAX])?;
 
-        // Initialize the RTC unit
-        // Reference: <https://loongson.github.io/LoongArch-Documentation/Loongson-7A1000-usermanual-EN.html#rtc>
         io_mem.write_once(SYS_TOYTRIM, &0x0u32).unwrap();
         io_mem.write_once(SYS_RTCCTRL, &0x2900u32).unwrap();
 
@@ -28,8 +24,6 @@ impl Driver for RtcLoongson {
     }
 
     fn read_rtc(&self) -> SystemTime {
-        // Read the Time of Year (TOY) counter and the RTC timer counter
-        // Reference: <https://loongson.github.io/LoongArch-Documentation/Loongson-7A1000-usermanual-EN.html#rtc>
         let sys_toyread0: u32 = self.io_mem.read_once(SYS_TOYREAD0).unwrap();
         let sys_toyread1: u32 = self.io_mem.read_once(SYS_TOYREAD1).unwrap();
         let sys_rtcread: u32 = self.io_mem.read_once(SYS_RTCREAD).unwrap();

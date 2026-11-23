@@ -1,12 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! The test suite for Python 3 on Asterinas NixOS.
-//!
-//! Supplements the `Python 3` coverage in `development-tools`.
-//!
-//! See `test/nixos/README.md#documentation-maintenance` for sync requirements
-//! between this test suite and the corresponding "Verified Usage" book section.
-
 use nixos_test_framework::*;
 
 nixos_test_main!();
@@ -17,16 +8,9 @@ fn python3_regrtest(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd("mkdir -p $py_src")?;
     nixos_shell.run_cmd("tar xf /tmp/python3-src.tar.xz --strip-components=1 -C $py_src")?;
 
-    // On NixOS, the Python interpreter's stdlib lives on the read-only `/nix/store`
-    // bind mount. Some `test.support` helpers `unlink()` `.pyc` files across every
-    // `sys.path` entry, which fails with `EROFS` there. The stdlib `sys.path`
-    // entries are derived from `sys.prefix`, so a writable copy of that prefix
-    // moves them off the read-only mount.
     nixos_shell.run_cmd("pyhome=/tmp/pyhome")?;
     nixos_shell
         .run_cmd("cp -dR --preserve=mode $(python3 -c 'import sys; print(sys.prefix)') $pyhome")?;
-    // The packaged interpreter does not ship a usable test package, so overlay
-    // the one from the matching source tarball extracted above.
     nixos_shell.run_cmd(
         "py_testdir=$pyhome/lib/python$(python3 -c 'import sys; print(\"%d.%d\" % sys.version_info[:2])')",
     )?;
@@ -34,12 +18,6 @@ fn python3_regrtest(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd("cp -a $py_src/Lib/test $py_testdir/")?;
     nixos_shell.run_cmd("cp -a $py_src/Tools $pyhome/lib/Tools")?;
 
-    // Printed once by regrtest at the end of every run as `Result: {state}`:
-    //   https://github.com/python/cpython/blob/v3.12.12/Lib/test/libregrtest/main.py#L455-L456
-    // `state` is the literal "SUCCESS" iff no failure/env-change/interrupt/etc.
-    // flag is set; any failure produces a disjoint string ("FAILURE",
-    // "NO TESTS RAN, INTERRUPTED", ...), so this substring match is sufficient:
-    //   https://github.com/python/cpython/blob/v3.12.12/Lib/test/libregrtest/results.py#L55-L69
     const RESULT_SUCCESS: &str = "Result: SUCCESS";
 
     let testcases =

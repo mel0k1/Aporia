@@ -1,8 +1,5 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::ops::RangeInclusive;
 
-/// A two-dimensional size in pixels.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct DrmSize {
     width: u32,
@@ -26,7 +23,6 @@ impl DrmSize {
         self.width == 0 || self.height == 0
     }
 
-    /// Returns whether the size is within the given inclusive limits.
     pub fn is_within(
         &self,
         width_range: RangeInclusive<u32>,
@@ -36,17 +32,6 @@ impl DrmSize {
     }
 }
 
-/// Rectangles are checked by their right/bottom edges:
-///
-/// ```text
-/// (x, y)        width        right = x + width
-///    +-------------------------+
-///    |                         |
-///    |                         | height
-///    |                         |
-///    +-------------------------+
-///                            bottom = y + height
-/// ```
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct DrmRect {
     x: u32,
@@ -95,9 +80,6 @@ impl DrmRect {
         self.y.checked_add(self.size.height())
     }
 
-    /// Returns whether the point is inside the rectangle.
-    ///
-    /// The left/top edges are inclusive and the right/bottom edges are exclusive.
     pub fn contains_point(&self, x: u32, y: u32) -> bool {
         let Some(right) = self.right() else {
             return false;
@@ -109,7 +91,6 @@ impl DrmRect {
         (self.x..right).contains(&x) && (self.y..bottom).contains(&y)
     }
 
-    /// Returns whether `other` is fully contained within `self`.
     pub fn contains_rect(&self, other: &Self) -> bool {
         let Some(self_right) = self.right() else {
             return false;

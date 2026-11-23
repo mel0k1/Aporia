@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use aster_util::printer::VmPrinter;
 
 use super::TidDirOps;
@@ -20,12 +18,10 @@ use crate::{
     vm::vmar::{VMAR_CAP_ADDR, VMAR_LOWEST_ADDR},
 };
 
-/// Represents the inode at `/proc/[pid]/task/[tid]/maps` (and also `/proc/[pid]/maps`).
 pub(super) struct MapsFileOps(TidDirOps);
 
 impl MapsFileOps {
     pub(super) fn new_inode(dir: &TidDirOps, parent: Weak<dyn Inode>) -> Arc<dyn Inode> {
-        // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/fs/proc/base.c#L3343>
         ProcFile::new(Self(dir.clone()), parent, mkmod!(a+r))
     }
 }
@@ -43,8 +39,6 @@ impl ProcFileOpsByHandle for MapsFileOps {
         let Some(process) = self.0.process() else {
             return Err(errno!(ESRCH, "the process does not exist"));
         };
-        // Hold the process VMAR lock while checking access permissions and
-        // taking the VMAR identity snapshot to prevent race conditions.
         let vmar_guard = process.lock_vmar();
 
         process
@@ -62,7 +56,6 @@ impl ProcFileOpsByHandle for MapsFileOps {
     }
 }
 
-/// A file handle opened from `/proc/[pid]/task/[tid]/maps` (and also `/proc/[pid]/maps`).
 struct MapsFileHandle(TidDirOps, VmarSnapshot);
 
 impl Pollable for MapsFileHandle {
@@ -86,11 +79,9 @@ impl FileOps for MapsFileHandle {
         };
         let vmar_guard = process.lock_vmar();
         if !vmar_guard.is_same_as(&self.1) {
-            // The process has executed a new program.
             return Ok(0);
         }
         let Some(vmar) = vmar_guard.as_ref() else {
-            // The process has exited.
             return Ok(0);
         };
 
@@ -98,8 +89,6 @@ impl FileOps for MapsFileHandle {
         let fs_ref = current.as_posix_thread().unwrap().read_fs();
         let path_resolver = fs_ref.as_ref().unwrap().resolver().read();
 
-        // To maintain a consistent lock order and avoid race conditions, we must lock the heap
-        // before querying the VMAR.
         let heap_guard = vmar.process_vm().heap().lock();
         let guard = vmar.query(VMAR_LOWEST_ADDR..VMAR_CAP_ADDR);
         for vm_mapping in guard.iter() {

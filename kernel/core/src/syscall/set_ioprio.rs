@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::sync::atomic::Ordering;
 
 use super::{SyscallReturn, get_ioprio::IoPrioWho};
@@ -39,18 +37,11 @@ pub(super) fn sys_ioprio_set(
 
             Ok(SyscallReturn::Return(0))
         }
-        IoPrioWho::ProcessGroup(_) => {
-            // TODO: Implement process group support
-            Err(errno!(EINVAL))
-        }
-        IoPrioWho::User(_) => {
-            // TODO: Implement user support
-            Err(errno!(EINVAL))
-        }
+        IoPrioWho::ProcessGroup(_) => Err(errno!(EINVAL)),
+        IoPrioWho::User(_) => Err(errno!(EINVAL)),
     }
 }
 
-/// Validates the I/O priority class and checks permission for real-time I/O.
 fn check_ioprio_class(ioprio: u32, ctx: &Context) -> Result<()> {
     let class = IoPrioClass::try_from((ioprio >> IOPRIO_CLASS_SHIFT) & IOPRIO_CLASS_MASK)?;
 
@@ -83,13 +74,10 @@ fn check_ioprio_class(ioprio: u32, ctx: &Context) -> Result<()> {
     Ok(())
 }
 
-// Linux stores the class in bits 13..=15 and the level in bits 0..=2.
-// Bits 3..=12 carry I/O hints and are not part of the level.
 const IOPRIO_CLASS_SHIFT: u32 = 13;
 const IOPRIO_CLASS_MASK: u32 = 0b111;
 const IOPRIO_LEVEL_MASK: u32 = 0b111;
 
-/// Valid I/O priority classes in the Linux ABI.
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, TryFromInt)]
 enum IoPrioClass {

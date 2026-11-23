@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::SyscallReturn;
 use crate::{
     fs,
@@ -117,7 +115,6 @@ fn do_open(
             let new_path = parent.new_child(&tail_name, InodeType::File, open_args.inode_mode)?;
             fs::vfs::notify::on_create(&parent, || tail_name.clone());
 
-            // Don't check access mode for newly created file.
             Arc::new(InodeHandle::new_unchecked_access(
                 new_path,
                 open_args.access_mode,
@@ -140,9 +137,6 @@ fn do_open_tmpfile(
         path_resolver.lookup_no_follow(fs_path)?
     };
 
-    // `O_EXCL` with `O_TMPFILE` is allowed by Linux, but it prevents the tmpfile
-    // from being linked later by `linkat(..., AT_EMPTY_PATH)`.
-    // Reference: <https://man7.org/linux/man-pages/man2/open.2.html>.
     let hard_linkability = if open_args.creation_flags.contains(CreationFlags::O_EXCL) {
         HardLinkability::Unlinkable
     } else {

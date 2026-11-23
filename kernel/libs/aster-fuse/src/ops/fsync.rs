@@ -1,25 +1,12 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! `FUSE_FSYNC` synchronizes an open file handle, and `FUSE_FSYNCDIR`
-//! synchronizes an open directory handle.
-//!
-//! Both request bodies contain [`FsyncReq`]. Successful replies do not carry
-//! a payload.
-
 use bitflags::bitflags;
 use ostd::mm::{Infallible, VmReader, VmWriter};
 
 use crate::{FuseError, FuseFileHandle, FuseOpcode, FuseOperation, FuseResult, ReplyExpectation};
 
-/// Request body shared by `FUSE_FSYNC` and `FUSE_FSYNCDIR`.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.18/source/include/uapi/linux/fuse.h#L860-L864>
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub struct FsyncReq {
-    /// Open file or directory handle to synchronize.
     fh: FuseFileHandle,
-    /// Selects the synchronization behavior.
     fsync_flags: FsyncFlags,
     padding: u32,
 }
@@ -34,20 +21,14 @@ impl FsyncReq {
     }
 }
 
-/// Flags for `FUSE_FSYNC` and `FUSE_FSYNCDIR` requests.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.18/source/include/uapi/linux/fuse.h#L569-L574>
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub struct FsyncFlags(u32);
 
 bitflags! {
     impl FsyncFlags: u32 {
-        /// Sync data only, not metadata.
         const FDATASYNC = 1 << 0;
 
-        // This type accepts all bit patterns,
-        // although only some flags are recognized.
         const _         = !0;
     }
 }

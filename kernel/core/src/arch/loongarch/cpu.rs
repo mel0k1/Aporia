@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::fmt;
 
 use ostd::{
@@ -39,12 +37,6 @@ impl LinuxAbi for UserContext {
     }
 }
 
-/// Represents the context of a signal handler.
-///
-/// This contains the context saved before a signal handler is invoked; it will be restored by
-/// `sys_rt_sigreturn`.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.15.7/source/arch/loongarch/include/uapi/asm/sigcontext.h#L20>
 #[padding_struct]
 #[repr(C)]
 #[repr(align(16))]
@@ -84,9 +76,6 @@ pub(crate) struct SigContext {
     pub s7: usize,
     pub s8: usize,
     pub flags: u32,
-    // In LoongArch, the signal stack layout places the FPU context directly
-    // after the general-purpose registers.
-    // Reference: <https://elixir.bootlin.com/linux/v6.15.7/source/arch/loongarch/kernel/signal.c#L861>
 }
 
 macro_rules! copy_gp_regs {
@@ -141,8 +130,6 @@ impl SigContext {
 }
 
 impl TryFrom<&CpuExceptionInfo> for PageFaultInfo {
-    // [`Err`] indicates that the [`CpuExceptionInfo`] is not a page fault,
-    // with no additional error information.
     type Error = ();
 
     fn try_from(value: &CpuExceptionInfo) -> Result<Self, ()> {
@@ -159,18 +146,11 @@ impl TryFrom<&CpuExceptionInfo> for PageFaultInfo {
     }
 }
 
-/// CPU information to be shown in `/proc/cpuinfo`.
-///
-/// Different CPUs may have different information, such as the core ID. Therefore, [`Self::new`]
-/// should be called on every CPU.
-//
-// TODO: Implement CPU information retrieval on LoongArch platforms.
 pub(crate) struct CpuInformation {
     processor: u32,
 }
 
 impl CpuInformation {
-    /// Constructs the information for the current CPU.
     pub(crate) fn new(guard: &DisabledPreemptGuard) -> Self {
         Self {
             processor: guard.current_cpu().into(),

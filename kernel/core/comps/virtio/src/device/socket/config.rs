@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::mem::offset_of;
 
 use aster_util::safe_ptr::SafePtr;
@@ -25,11 +23,6 @@ impl VirtioVsockConfig {
     }
 
     pub(super) fn read_guest_cid(config_manager: &ConfigManager<Self>) -> u64 {
-        // We have no way to read the 64-bit CID atomically because the virtio specification says
-        // "Drivers MUST NOT assume reads from fields greater than 32 bits wide are atomic." For
-        // now, race conditions do not matter because the high 32 bits are always zeros and are
-        // reserved. Even if the CID changes concurrently, we should also receive a `TransportReset`
-        // event so we will reload the CID later.
         let guest_cid_low = config_manager
             .read_once::<u32>(offset_of!(Self, guest_cid_low))
             .unwrap();

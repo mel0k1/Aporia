@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::format;
 
 use aster_console::AnyConsoleDevice;
@@ -16,7 +14,6 @@ use crate::{
     prelude::*,
 };
 
-/// The driver for serial devices.
 #[derive(Clone)]
 pub(super) struct SerialDriver {
     console: Arc<dyn AnyConsoleDevice>,
@@ -27,7 +24,6 @@ impl SerialDriver {
 }
 
 impl TtyDriver for SerialDriver {
-    // Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/linux/major.h#L18>.
     const DEVICE_MAJOR_ID: u32 = 4;
 
     fn devtmpfs_meta(&self, index: u32) -> Option<DevtmpfsNodeMeta> {
@@ -58,17 +54,12 @@ impl TtyDriver for SerialDriver {
 
 static SERIAL0: Once<Arc<Tty<SerialDriver>>> = Once::new();
 
-/// Returns the `ttyS0` device.
-///
-/// Returns `None` if the device is not found nor initialized.
 pub(super) fn serial0_device() -> Option<&'static Arc<Tty<SerialDriver>>> {
     SERIAL0.get()
 }
 
 pub(super) fn init_in_first_process() -> Result<()> {
     let devices = aster_console::all_devices();
-
-    // Initialize the `ttyS0` device if the serial console is available.
 
     let serial_console = devices
         .iter()

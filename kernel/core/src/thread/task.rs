@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd::{
     arch::cpu::context::UserContext,
     irq::DisabledLocalIrqGuard,
@@ -23,7 +21,6 @@ use crate::{
     vm::vmar::is_userspace_vaddr,
 };
 
-/// create new task with userspace and parent process
 pub(crate) fn create_new_user_task(
     user_ctx: Box<UserContext>,
     thread_ref: Arc<Thread>,
@@ -45,13 +42,8 @@ pub(crate) fn create_new_user_task(
             user_mode.context().syscall_ret(),
         );
 
-        // The `clone` syscall may require the child process to write its thread TID to the
-        // specified address. Make sure that the store operation completes before we return control
-        // to user space in the child process.
         let child_tid_ptr = current_thread_local.set_child_tid().get();
         if is_userspace_vaddr(child_tid_ptr) {
-            // At this point, we can do almost nothing if the address is not valid and the store
-            // operation fails. So we ignore the error here.
             let _ = current_userspace!().write_val(child_tid_ptr, &current_posix_thread.tid());
         }
 
@@ -63,16 +55,13 @@ pub(crate) fn create_new_user_task(
             task: &current_task,
         };
 
-        // The startup method is only executed when the first user thread starts up.
         if ctx.posix_thread.tid() == FIRST_POSIX_TID {
             crate::init::on_first_process_startup(&ctx);
         }
 
         while !current_thread.is_exited() {
-            // Execute the user code
             let return_reason = user_mode.execute(&ctx);
 
-            // Handle user events
             let user_ctx = user_mode.context_mut();
             match return_reason {
                 ReturnReason::UserException => {
@@ -96,25 +85,15 @@ pub(crate) fn create_new_user_task(
                 }
             };
 
-            // Exit if the thread terminates
             if current_thread.is_exited() {
                 break;
             }
 
-            // Handle signals
             handle_pending_signal(user_ctx, &ctx);
 
-            // Handle signals while the thread is stopped
-            // FIXME: Currently, we handle all signals when the process is stopped.
-            // However, when the process is stopped, at least signals with user-provided handlers
-            // should not be handled; these signals should only be handled when the process is continued.
-            // Certain signals, such as SIGKILL, should be handled even if the process is stopped.
-            // We need to further investigate Linux behavior regarding which signals should be handled
-            // when the thread is stopped.
             while !current_thread.is_exited() && ctx.process.is_stopped() {
                 let _ = stop_waiter.pause_until_by(
                     || (!ctx.process.is_stopped()).then_some(()),
-                    // We currently do not support ptrace.
                     PauseReason::StopBySignal,
                 );
                 handle_pending_signal(user_ctx, &ctx);
@@ -125,8 +104,6 @@ pub(crate) fn create_new_user_task(
     let user_task_func = move || user_task_entry(*user_ctx);
 
     TaskOptions::new(move || {
-        // TODO: If a kernel "oops" is caught, we should kill the entire
-        // process rather than just ending the thread.
         let _ = oops::catch_panics_as_oops(user_task_func);
     })
     .data(thread_ref)

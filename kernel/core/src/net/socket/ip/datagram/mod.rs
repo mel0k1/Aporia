@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use aster_bigtcp::wire::IpEndpoint;
 use bound::BoundDatagram;
 use unbound::{BindOptions, UnboundDatagram};
@@ -38,7 +36,6 @@ pub(super) mod observer;
 mod unbound;
 
 pub(crate) struct DatagramSocket {
-    // Lock order: `inner` first, `options` second
     inner: RwMutex<Inner<UnboundDatagram, BoundDatagram>>,
     options: RwLock<OptionSet>,
     timeouts: SocketTimeouts,
@@ -51,7 +48,6 @@ pub(crate) struct DatagramSocket {
 struct OptionSet {
     socket: SocketOptionSet,
     ip: IpOptionSet,
-    // TODO: UDP option set
 }
 
 impl OptionSet {
@@ -133,11 +129,7 @@ impl SocketPrivate for DatagramSocket {
     }
 
     fn protocol_ioctl(&self, raw_ioctl: RawIoctl) -> Result<i32> {
-        // Handle common IPv4/IPv6 ioctl commands.
-        // TODO: Handle IPv6 ioctls once UDP sockets support IPv6.
         ipv4_ioctl(raw_ioctl)
-
-        // Handle ioctl commands that require UDP-specific handling.
     }
 }
 
@@ -190,7 +182,6 @@ impl Socket for DatagramSocket {
         message_header: MessageHeader,
         flags: SendFlags,
     ) -> Result<usize> {
-        // TODO: Deal with flags
         if !flags.is_all_supported() {
             warn!("unsupported flags: {:?}", flags);
         }
@@ -216,11 +207,9 @@ impl Socket for DatagramSocket {
         }
 
         if !control_messages.is_empty() {
-            // TODO: Support sending control message
             warn!("sending control message is not supported");
         }
 
-        // TODO: Block if the send buffer is full
         self.try_send(reader, endpoint.as_ref(), flags)
     }
 
@@ -229,7 +218,6 @@ impl Socket for DatagramSocket {
         writer: &mut dyn MultiWrite,
         flags: RecvFlags,
     ) -> Result<(RecvOutput, MessageHeader)> {
-        // TODO: Deal with flags
         if !flags.is_all_supported() {
             warn!("unsupported flags: {:?}", flags);
         }
@@ -239,8 +227,6 @@ impl Socket for DatagramSocket {
                 self.try_recv(writer, flags)
             })?;
 
-        // TODO: Receive control message
-
         let message_header = MessageHeader::new(Some(peer_addr), Vec::new());
 
         Ok((output, message_header))
@@ -249,7 +235,6 @@ impl Socket for DatagramSocket {
     fn get_option(&self, option: &mut dyn SocketOption) -> Result<()> {
         sock_option_mut!(match option {
             socket_errors @ SocketError => {
-                // TODO: Support socket errors for UDP sockets
                 socket_errors.set(None);
                 return Ok(());
             }
@@ -259,7 +244,6 @@ impl Socket for DatagramSocket {
         let inner = self.inner.read();
         let options = self.options.read();
 
-        // Deal with socket-level options
         match options
             .socket
             .get_option(option, &(&*inner, &self.timeouts))
@@ -268,7 +252,6 @@ impl Socket for DatagramSocket {
             res => return res,
         }
 
-        // Deal with IP-level options
         options.ip.get_option(option)
     }
 
@@ -276,13 +259,11 @@ impl Socket for DatagramSocket {
         let inner = self.inner.read();
         let mut options = self.options.write();
 
-        // Deal with socket-level options
         let need_iface_poll = match options
             .socket
             .set_option(option, &(&*inner, &self.timeouts))
         {
             Err(err) if err.error() == Errno::ENOPROTOOPT => {
-                // Deal with IP-level options
                 options.ip.set_option(option, &*inner)?
             }
             Err(err) => return Err(err),

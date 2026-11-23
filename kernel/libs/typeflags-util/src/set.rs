@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Common types and traits to deal with type-level sets
-
 use core::{marker::PhantomData, ops::BitOr as Or};
 
 use crate::{
@@ -9,10 +5,8 @@ use crate::{
     if_::{If, IfOp},
 };
 
-/// A marker trait for type-level sets.
 pub trait Set {}
 
-/// An non-empty type-level set.
 #[derive(Clone, Copy, Debug)]
 pub struct Cons<T, S: Set>(PhantomData<(T, S)>);
 
@@ -23,14 +17,12 @@ impl<T, S: Set> Cons<T, S> {
     }
 }
 
-/// An empty type-level set.
 #[derive(Clone, Copy, Debug)]
 pub struct Nil;
 
 impl<T, S: Set> Set for Cons<T, S> {}
 impl Set for Nil {}
 
-/// A trait operator to check if `T` is a member of a type set;
 pub trait SetContain<T> {
     type Output;
 }
@@ -50,7 +42,6 @@ where
     type Output = OrOp<SameAsOp<U, T>, SetContainOp<S, T>>;
 }
 
-/// A trait operator to check if a set A includes a set B, i.e., A is a superset of B.
 pub trait SetInclude<S: Set> {
     type Output;
 }

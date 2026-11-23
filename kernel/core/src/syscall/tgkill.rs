@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::SyscallReturn;
 use crate::{
     prelude::*,
@@ -17,12 +15,10 @@ use crate::{
     thread::Tid,
 };
 
-/// Sends a signal to a thread with `tid` as its thread ID, and `tgid` as its thread group ID.
 pub(super) fn sys_tgkill(tgid: Pid, tid: Tid, sig_num: u8, ctx: &Context) -> Result<SyscallReturn> {
     do_sys_tgkill(Some(tgid), tid, sig_num, ctx)
 }
 
-/// Sends a signal to a thread with `tid` as its thread ID.
 pub(super) fn sys_tkill(tid: Tid, sig_num: u8, ctx: &Context) -> Result<SyscallReturn> {
     do_sys_tgkill(None, tid, sig_num, ctx)
 }

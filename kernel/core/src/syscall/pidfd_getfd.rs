@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use crate::{
     fs::file::file_table::{FdFlags, FileTableInsert, RawFileDesc, get_file_fast},
     prelude::*,
@@ -16,7 +14,6 @@ pub(super) fn sys_pidfd_getfd(
     flags: u32,
     ctx: &Context,
 ) -> Result<SyscallReturn> {
-    // The `flags` argument is reserved for future use. Currently, it must be specified as 0.
     if flags != 0 {
         return Err(errno!(EINVAL, "invalid flags"));
     }
@@ -43,8 +40,6 @@ pub(super) fn sys_pidfd_getfd(
 
     let main_thread = process.main_thread();
 
-    // Get the file description corresponding to to the file descriptor `targetfd` in the process
-    // referred to by the PID file.
     let target_file_table = main_thread.as_posix_thread().unwrap().file_table();
     let target_file = target_file_table
         .lock()
@@ -54,7 +49,6 @@ pub(super) fn sys_pidfd_getfd(
         .get_file(targetfd.try_into()?)?
         .clone();
 
-    // Duplicate the file descriptor into the caller's file descriptor table.
     let new_fd = file_table.lock_and_insert(target_file, FdFlags::CLOEXEC)?;
 
     Ok(SyscallReturn::Return(new_fd.into()))

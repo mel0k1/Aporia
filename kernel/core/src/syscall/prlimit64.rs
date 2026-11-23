@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd::mm::VmIo;
 
 use super::SyscallReturn;
@@ -56,7 +54,6 @@ pub(super) fn sys_prlimit64(
         let target_process = pid_table::pid_table_mut()
             .get_process(pid)
             .ok_or_else(|| errno!(ESRCH, "the target process does not exist"))?;
-        // Check permissions
         check_rlimit_perm(&target_process, ctx)?;
         do_prlimit64(&target_process, resource, new_raw, ctx)?
     };
@@ -99,9 +96,6 @@ fn do_prlimit64(
     Ok(old_raw)
 }
 
-/// Checks whether the current process has permission to access
-/// the resource limits of the target process.
-// Reference: <https://man7.org/linux/man-pages/man2/prlimit.2.html>
 fn check_rlimit_perm(target_process: &Process, ctx: &Context) -> Result<()> {
     if lsm_hooks::on_capable(lsm_hooks::CapableContext::new(
         target_process.user_ns().lock().as_ref(),

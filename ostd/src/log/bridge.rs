@@ -1,10 +1,5 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Bridge that forwards `log` crate messages to the OSTD logger.
-
 use super::{Level, LevelFilter, Record, logger::__logger};
 
-/// Syncs the `log` crate's max level with the given OSTD level filter.
 pub(super) fn sync_log_crate_max_level(filter: LevelFilter) {
     ::log::set_max_level(map_level_filter(filter));
 }
@@ -13,10 +8,6 @@ pub(super) struct LogCrateBridge;
 
 impl ::log::Log for LogCrateBridge {
     fn enabled(&self, _metadata: &::log::Metadata) -> bool {
-        // The `log` crate's macros already check static and runtime filters
-        // before calling this method,
-        // and we sync the max level via `sync_log_crate_max_level`.
-        // No extra filtering is needed here.
         true
     }
 

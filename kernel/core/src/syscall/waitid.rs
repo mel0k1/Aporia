@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd::mm::VmIo;
 
 use super::SyscallReturn;
@@ -25,12 +23,10 @@ pub(super) fn sys_waitid(
     _rusage_addr: u64,
     ctx: &Context,
 ) -> Result<SyscallReturn> {
-    // FIXME: what does rusage use for?
     let process_filter = ProcessFilter::from_which_and_id(which, upid as _, ctx)?;
     let wait_options =
         WaitOptions::from_bits(options as u32).ok_or_else(|| errno!(EINVAL, "invalid options"))?;
 
-    // Check for waitid options
     if !wait_options
         .intersects(WaitOptions::WSTOPPED | WaitOptions::WCONTINUED | WaitOptions::WEXITED)
     {
@@ -73,9 +69,6 @@ fn calculate_si_code_and_si_status(wait_status: &WaitStatus) -> (i32, i32) {
     let parse_exit_code = |exit_code: u32| {
         const NORMAL_EXIT_MASK: u32 = 0xff;
 
-        // If the process exits normally, the lowest 8 bits of `status_code`
-        // will be zero. In this case, we return the actual exit code by
-        // shifting the `status_code` right by 8 bits.
         if (exit_code & NORMAL_EXIT_MASK) == 0 {
             (CLD_EXITED, (exit_code >> 8) as i32)
         } else {
@@ -83,7 +76,6 @@ fn calculate_si_code_and_si_status(wait_status: &WaitStatus) -> (i32, i32) {
         }
     };
 
-    // TODO: Add supports for `CLD_DUMPED`.
     match wait_status {
         WaitStatus::Zombie(process) => {
             let exit_code = process.status().exit_code();

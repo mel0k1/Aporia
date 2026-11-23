@@ -1,21 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0 OR MIT
-//
-// The original source code is from [trapframe-rs](https://github.com/rcore-os/trapframe-rs),
-// which is released under the following license:
-//
-// SPDX-License-Identifier: MIT
-//
-// Copyright (c) 2020 - 2024 Runji Wang
-//
-// We make the following new changes:
-// * Implement the `trap_handler` of Asterinas.
-//
-// These changes are released under the following license:
-//
-// SPDX-License-Identifier: MPL-2.0
-
-//! Handles trap.
-
 pub(super) mod gdt;
 pub(super) mod idt;
 pub(super) mod syscall;
@@ -39,30 +21,10 @@ cfg_select! {
     }
 }
 
-/// Trap frame of kernel interrupt
-///
-/// # Trap handler
-///
-/// You need to define a handler function like this:
-///
-/// ```
-/// // SAFETY: The name does not collide with other symbols.
-/// #[unsafe(no_mangle)]
-/// extern "sysv64" fn trap_handler(tf: &mut TrapFrame) {
-///     match tf.trap_num {
-///         3 => {
-///             println!("TRAP: BreakPoint");
-///             tf.rip += 1;
-///         }
-///         _ => panic!("TRAP: {:#x?}", tf),
-///     }
-/// }
-/// ```
 #[expect(missing_docs)]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct TrapFrame {
-    // Pushed by 'trap.S'
     pub rax: usize,
     pub rbx: usize,
     pub rcx: usize,
@@ -82,7 +44,6 @@ pub struct TrapFrame {
     pub trap_num: usize,
     pub error_code: usize,
 
-    // Pushed by CPU
     pub rip: usize,
     pub cs: usize,
     pub rflags: usize,
@@ -90,13 +51,6 @@ pub struct TrapFrame {
     pub ss: usize,
 }
 
-// Be careful: This assertion is a **soundness** requirement.
-//
-// According to the System V AMD64 ABI, the stack pointer should be aligned to
-// at least 16 bytes. The hardware will align the stack pointer to a 16-byte
-// boundary for exceptions and interrupts ("In IA-32e mode, the RSP is aligned
-// to a 16-byte boundary before pushing the stack frame"), so we only need to
-// ensure the size of a `TrapFrame` is also aligned.
 crate::const_assert!(size_of::<TrapFrame>().is_multiple_of(16));
 
 impl TrapFrameApi for TrapFrame {
@@ -109,37 +63,14 @@ impl TrapFrameApi for TrapFrame {
     }
 }
 
-/// Initializes interrupt handling on x86_64.
-///
-/// This function will:
-/// - Switch to a new, CPU-local [GDT].
-/// - Switch to a new, CPU-local [TSS].
-/// - Switch to a new, global [IDT].
-/// - Enable the [`syscall`] instruction.
-///
-/// [GDT]: https://wiki.osdev.org/GDT
-/// [IDT]: https://wiki.osdev.org/IDT
-/// [TSS]: https://wiki.osdev.org/Task_State_Segment
-/// [`syscall`]: https://www.felixcloutier.com/x86/syscall
-///
-/// # Safety
-///
-/// On the current CPU, this function must be called
-/// - only once and
-/// - before any trap can occur.
 pub(crate) unsafe fn init_on_cpu() {
-    // SAFETY: Since there's no traps, no preemption can occur.
     unsafe { gdt::init_on_cpu() };
 
     idt::init_on_cpu();
 
-    // SAFETY:
-    // 1. Since there's no traps, no preemption can occur.
-    // 2. `gdt::init_on_cpu` has been called before.
     unsafe { syscall::init_on_cpu() };
 }
 
-/// Userspace context.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(super) struct RawUserContext {
@@ -149,8 +80,6 @@ pub(super) struct RawUserContext {
     pub(super) error_code: usize,
 }
 
-/// Handle traps (only from kernel).
-// SAFETY: The name does not collide with other symbols.
 #[unsafe(no_mangle)]
 unsafe extern "sysv64" fn trap_handler(f: &mut TrapFrame) {
     fn enable_local_if(cond: bool) {
@@ -165,8 +94,6 @@ unsafe extern "sysv64" fn trap_handler(f: &mut TrapFrame) {
         }
     }
 
-    // The IRQ state before trapping. We need to ensure that the IRQ state
-    // during exception handling is consistent with the state before the trap.
     let was_irq_enabled =
         f.rflags as u64 & x86_64::registers::rflags::RFlags::INTERRUPT_FLAG.bits() > 0;
 
@@ -175,8 +102,6 @@ unsafe extern "sysv64" fn trap_handler(f: &mut TrapFrame) {
         #[cfg(feature = "cvm_guest")]
         Some(CpuException::VirtualizationException) => {
             let ve_info = tdcall::get_veinfo().expect("#VE handler: fail to get VE info\n");
-            // We need to enable interrupts only after `tdcall::get_veinfo` is called
-            // to avoid nested `#VE`s.
             enable_local_if(was_irq_enabled);
             let mut trapframe_wrapper = TrapFrameWrapper(&mut *f);
             handle_virtual_exception(&mut trapframe_wrapper, &ve_info);
@@ -205,7 +130,5 @@ unsafe extern "sysv64" fn trap_handler(f: &mut TrapFrame) {
     }
 }
 
-/// User-space code segment selector value.
 pub const USER_CS_VALUE: usize = gdt::USER_CS.0 as usize;
-/// User-space stack segment selector value.
 pub const USER_SS_VALUE: usize = gdt::USER_SS.0 as usize;

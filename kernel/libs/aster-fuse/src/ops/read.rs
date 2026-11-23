@@ -1,11 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! `FUSE_READ` reads bytes from an open file handle.
-//!
-//! The request body contains [`ReadReq`] with the handle, offset, and maximum
-//! byte count. The reply body is raw file data, and the operation returns the
-//! bytes actually provided by the server.
-
 use bitflags::bitflags;
 use ostd::mm::{Infallible, VmReader, VmWriter};
 
@@ -14,17 +6,11 @@ use crate::{FuseError, FuseFileHandle, FuseOpcode, FuseOperation, FuseResult, Re
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub struct ReadReq {
-    /// File handle to read from.
     fh: FuseFileHandle,
-    /// File or directory offset to start reading from.
     offset: u64,
-    /// Maximum number of bytes to read.
     size: u32,
-    /// FUSE-specific read flags.
     read_flags: ReadFlags,
-    /// Lock owner for lock-aware reads.
     lock_owner: u64,
-    /// POSIX open flags associated with the handle.
     flags: u32,
     padding: u32,
 }
@@ -47,20 +33,14 @@ impl ReadReq {
     }
 }
 
-/// Flags for `FUSE_READ` and `FUSE_READDIR` requests.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.18/source/include/uapi/linux/fuse.h#L536-L539>
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub struct ReadFlags(u32);
 
 bitflags! {
     impl ReadFlags: u32 {
-        /// `lock_owner` is valid and should be used for lock-aware reads.
         const READ_LOCKOWNER = 1 << 1;
 
-        // This type accepts all bit patterns,
-        // although only some flags are recognized.
         const _              = !0;
     }
 }

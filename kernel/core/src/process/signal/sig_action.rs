@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use bitflags::bitflags;
 
 use super::{
@@ -13,10 +11,9 @@ use crate::prelude::*;
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum SigAction {
     #[default]
-    Dfl, // Default action
-    Ign, // Ignore this signal
+    Dfl,
+    Ign,
     User {
-        // User-given handler
         handler_addr: usize,
         flags: SigActionFlags,
         restorer_addr: usize,
@@ -75,11 +72,6 @@ impl SigAction {
         }
     }
 
-    /// Returns whether signals will be ignored.
-    ///
-    /// Signals will be ignored because either
-    ///  * the signal action is explicitly set to ignore the signals, or
-    ///  * the signal action is default and the default action is to ignore the signals.
     pub(crate) fn will_ignore(&self, signum: SigNum) -> bool {
         match self {
             SigAction::Dfl => {
@@ -126,43 +118,24 @@ impl SigActionFlags {
     }
 }
 
-/// The default action to signals
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SigDefaultAction {
-    Term, // Default action is to terminate the process.
-    Ign,  // Default action is to ignore the signal.
-    Core, // Default action is to terminate the process and dump core (see core(5)).
-    Stop, // Default action is to stop the process.
-    Cont, // Default action is to continue the process if it is currently stopped.
+    Term,
+    Ign,
+    Core,
+    Stop,
+    Cont,
 }
 
 impl SigDefaultAction {
     pub(crate) fn from_signum(num: SigNum) -> SigDefaultAction {
         match num {
-            SIGABRT | // = SIGIOT
-            SIGBUS  |
-            SIGFPE  |
-            SIGILL  |
-            SIGQUIT |
-            SIGSEGV |
-            SIGSYS  | // = SIGUNUSED
-            SIGTRAP |
-            SIGXCPU |
-            SIGXFSZ
-                => SigDefaultAction::Core,
-            SIGCHLD |
-            SIGURG  |
-            SIGWINCH
-                => SigDefaultAction::Ign,
-            SIGCONT
-                => SigDefaultAction::Cont,
-            SIGSTOP |
-            SIGTSTP |
-            SIGTTIN |
-            SIGTTOU
-                => SigDefaultAction::Stop,
-            _
-                => SigDefaultAction::Term,
+            SIGABRT | SIGBUS | SIGFPE | SIGILL | SIGQUIT | SIGSEGV | SIGSYS | SIGTRAP | SIGXCPU
+            | SIGXFSZ => SigDefaultAction::Core,
+            SIGCHLD | SIGURG | SIGWINCH => SigDefaultAction::Ign,
+            SIGCONT => SigDefaultAction::Cont,
+            SIGSTOP | SIGTSTP | SIGTTIN | SIGTTOU => SigDefaultAction::Stop,
+            _ => SigDefaultAction::Term,
         }
     }
 }

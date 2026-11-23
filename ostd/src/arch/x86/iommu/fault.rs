@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::vec::Vec;
 use core::{fmt::Debug, ptr::NonNull};
 
@@ -18,7 +16,6 @@ use crate::{
 #[derive(Debug)]
 struct FaultEventRegisters {
     status: VolatileRef<'static, u32, ReadWrite>,
-    /// bit31: Interrupt Mask; bit30: Interrupt Pending.
     _control: VolatileRef<'static, u32, ReadWrite>,
     _data: VolatileRef<'static, u32, ReadWrite>,
     _address: VolatileRef<'static, u32, ReadWrite>,
@@ -33,28 +30,15 @@ impl FaultEventRegisters {
         FaultStatus::from_bits_truncate(self.status.as_ptr().read())
     }
 
-    /// Creates an instance from the IOMMU base address.
-    ///
-    /// # Safety
-    ///
-    /// The caller must ensure that the base address is a valid IOMMU base address and that it has
-    /// exclusive ownership of the IOMMU fault event registers.
     unsafe fn new(base_register_vaddr: NonNull<u8>) -> Self {
-        // SAFETY: The safety is upheld by the caller.
         let (capability, status, mut control, mut data, mut address, upper_address) = unsafe {
             let base = base_register_vaddr;
             (
-                // capability
                 VolatileRef::new_read_only(base.add(0x08).cast::<u64>()),
-                // status
                 VolatileRef::new(base.add(0x34).cast::<u32>()),
-                // control
                 VolatileRef::new(base.add(0x38).cast::<u32>()),
-                // data
                 VolatileRef::new(base.add(0x3c).cast::<u32>()),
-                // address
                 VolatileRef::new(base.add(0x40).cast::<u32>()),
-                // upper_address
                 VolatileRef::new(base.add(0x44).cast::<u32>()),
             )
         };
@@ -63,13 +47,8 @@ impl FaultEventRegisters {
         let length = capability_val.fault_recording_number() as usize + 1;
         let offset = (capability_val.fault_recording_register_offset() as usize) * 16;
 
-        // FIXME: We now trust the hardware. We should instead find a way to check that `length`
-        // and `offset` are reasonable values before proceeding.
-
         let mut recordings = Vec::with_capacity(length);
         for i in 0..length {
-            // SAFETY: The safety is upheld by the caller and the correctness of the capability
-            // value.
             recordings.push(unsafe {
                 VolatileRef::new(base_register_vaddr.add(offset).add(i * 16).cast::<u128>())
             })
@@ -78,7 +57,6 @@ impl FaultEventRegisters {
         let mut fault_irq = IrqLine::alloc().unwrap();
         fault_irq.on_active(iommu_fault_handler);
 
-        // Set page fault interrupt vector and address
         data.as_mut_ptr().write(fault_irq.num() as u32);
         address.as_mut_ptr().write(0xFEE0_0000);
         control.as_mut_ptr().write(0);
@@ -107,7 +85,6 @@ impl FaultRecording {
     }
 
     fn request_type(&self) -> FaultRequestType {
-        // bit 126 and bit 92
         let t1 = ((self.0 & (1 << 126)) >> 125) as u8;
         let t2 = ((self.0 & (1 << 92)) >> 92) as u8;
         let typ = t1 + t2;
@@ -121,7 +98,6 @@ impl FaultRecording {
     }
 
     fn address_type(&self) -> Option<FaultAddressType> {
-        // bit 125:124
         match (self.0 >> 124) & 3 {
             0 => Some(FaultAddressType::UntranslatedRequest),
             1 => Some(FaultAddressType::TranslationRequest),
@@ -132,52 +108,34 @@ impl FaultRecording {
     }
 
     fn source_identifier(&self) -> u16 {
-        // bit 79:64
         ((self.0 & 0xFFFF_0000_0000_0000_0000) >> 64) as u16
     }
 
-    /// Returns the fault information, the meaning of which depends on the fault reason.
-    ///
-    /// If the fault reason is one of the address translation fault conditions, this field contains
-    /// bits 63:12 of the page address of the fault request.
-    ///
-    /// If the fault reason is one of the interrupt-remapping fault conditions other than fault
-    /// reason 0x25, bits 63:48 indicate the interrupt index of the fault request and bits 47:12
-    /// are cleared.
-    ///
-    /// If the fault reason is the interrupt-remapping fault condition caused by a blocked
-    /// Compatibility format interrupt (fault reason 0x25), this field is undefined.
     fn fault_info(&self) -> u64 {
-        // bit 63:12
         ((self.0 & 0xFFFF_FFFF_FFFF_F000) >> 12) as u64
     }
 
     #[expect(dead_code)]
     fn pasid_value(&self) -> u32 {
-        // bit 123:104
         ((self.0 & 0x00FF_FFF0_0000_0000_0000_0000_0000_0000) >> 104) as u32
     }
 
     fn fault_reason(&self) -> u8 {
-        // bit 103:96
         ((self.0 & 0xFF_0000_0000_0000_0000_0000_0000) >> 96) as u8
     }
 
     #[expect(dead_code)]
     fn pasid_present(&self) -> bool {
-        // bit 95
         (self.0 & 0x8000_0000_0000_0000_0000_0000) != 0
     }
 
     #[expect(dead_code)]
     fn execute_permission_request(&self) -> bool {
-        // bit 94
         (self.0 & 0x4000_0000_0000_0000_0000_0000) != 0
     }
 
     #[expect(dead_code)]
     fn privilege_mode_request(&self) -> bool {
-        // bit 93
         (self.0 & 0x2000_0000_0000_0000_0000_0000) != 0
     }
 }
@@ -217,33 +175,19 @@ enum FaultAddressType {
 bitflags! {
     #[derive(Clone, Copy, Debug)]
     pub struct FaultStatus: u32 {
-        /// Primary Fault Overflow, indicates overflow of the fault recording registers.
         const PFO = 1 << 0;
-        /// Primary Pending Fault, indicates there are one or more pending faults logged in the fault recording registers.
         const PPF = 1 << 1;
-        /// Invalidation Queue Error.
         const IQE = 1 << 4;
-        /// Invalidation Completion Error. Hardware received an unexpected or invalid Device-TLB invalidation completion.
         const ICE = 1 << 5;
-        /// Invalidation Time-out Error. Hardware detected a Device-TLB invalidation completion time-out.
         const ITE = 1 << 6;
-        /// Fault Record Index, valid only when PPF field is set. This field indicates the index (from base) of the fault recording register
-        /// to which the first pending fault was recorded when the PPF field was Set by hardware.
         const FRI = (0xFF) << 8;
     }
 }
 
 static FAULT_EVENT_REGS: Once<SpinLock<FaultEventRegisters, LocalIrqDisabled>> = Once::new();
 
-/// Initializes the fault reporting function.
-///
-/// # Safety
-///
-/// The caller must ensure that the base address is a valid IOMMU base address and that it has
-/// exclusive ownership of the IOMMU fault event registers.
 pub(super) unsafe fn init(base_register_vaddr: NonNull<u8>) {
     FAULT_EVENT_REGS
-        // SAFETY: The safety is upheld by the caller.
         .call_once(|| SpinLock::new(unsafe { FaultEventRegisters::new(base_register_vaddr) }));
 }
 
@@ -277,13 +221,11 @@ fn primary_fault_handler(fault_event_regs: &mut FaultEventRegisters) {
             break;
         }
 
-        // Report
         error!(
             "caught page fault, doing nothing. recording: {:x?}",
             recording
         );
 
-        // Clear Fault field
         recording.clear_fault();
         raw_recording.write(recording.0);
     }

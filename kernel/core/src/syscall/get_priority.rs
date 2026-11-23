@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::sync::atomic::Ordering;
 
 use super::SyscallReturn;
@@ -18,14 +16,10 @@ pub(super) fn sys_get_priority(which: i32, who: u32, ctx: &Context) -> Result<Sy
         let mut nice = Nice::MAX.value().get();
         for process in processes.iter() {
             let proc_nice = process.nice().load(Ordering::Relaxed).value().get();
-            // Returns the highest priority (i.e., the lowest numerical value)
-            // enjoyed by the processes.
             if proc_nice < nice {
                 nice = proc_nice;
             }
         }
-        // The system call returns nice values translated to the range 40 to 1,
-        // since a negative return value would be interpreted as an error.
         20 - nice
     };
 
@@ -54,27 +48,21 @@ fn collect_processes(prio_target: PriorityTarget) -> Vec<Arc<Process>> {
             };
             process_group.lock().iter().collect()
         }
-        PriorityTarget::User(uid) => {
-            // Lock order: PID table -> tasks of process
-            pid_table::pid_table_mut()
-                .iter_processes()
-                .filter(|process| {
-                    let main_thread = process.main_thread();
-                    let posix_thread = main_thread.as_posix_thread().unwrap();
-                    uid == posix_thread.credentials().ruid()
-                })
-                .collect()
-        }
+        PriorityTarget::User(uid) => pid_table::pid_table_mut()
+            .iter_processes()
+            .filter(|process| {
+                let main_thread = process.main_thread();
+                let posix_thread = main_thread.as_posix_thread().unwrap();
+                uid == posix_thread.credentials().ruid()
+            })
+            .collect(),
     }
 }
 
 #[derive(Debug)]
 pub(super) enum PriorityTarget {
-    /// Apply to the process of the specified process ID.
     Process(Pid),
-    /// Apply to the processes that belong to the specified process group.
     ProcessGroup(Pgid),
-    /// Apply to the processes that are running under the specified user.
     User(Uid),
 }
 

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::mem::MaybeUninit;
 
 use uefi::boot::AllocateType;
@@ -34,12 +32,5 @@ pub(super) fn alloc_pages(ty: AllocateType, size: usize) -> &'static mut [MaybeU
     )
     .expect("the UEFI allocation fails");
 
-    // SAFETY:
-    // 1. The address is not zero and the size is reasonable (there are less the `isize::MAX` bytes
-    //    and the range won't overflow the address space), as asserted above or guaranteed by the
-    //    implementation of `allocate_pages`.
-    // 2. The memory region is allocated via the UEFI firmware, so it is valid for reading and
-    //    writing. We will not deallocate it, so it live for `'static`.
-    // 3. The type alignment is 1 and the type can contain uninitialized data.
     unsafe { core::slice::from_raw_parts_mut(allocated.as_ptr().cast(), size) }
 }

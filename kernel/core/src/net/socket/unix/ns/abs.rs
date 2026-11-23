@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::{collections::btree_map::Entry, format};
 
 use keyable_arc::KeyableArc;
@@ -44,7 +42,6 @@ impl HandleTable {
         let mut entry = handles.entry(name.clone());
 
         if let Entry::Occupied(ref occupied) = entry {
-            // The handle is in use only if its strong count is greater than zero.
             if occupied.get().strong_count() > 0 {
                 return None;
             }
@@ -72,10 +69,6 @@ impl HandleTable {
             return;
         };
 
-        // Due to race conditions between `AbstractHandle::drop` and `HandleTable::create`, the
-        // entry may be occupied by another handle.
-        //
-        // Therefore, before removing the entry, we must check again if the entry should be removed.
         if occupied.get().strong_count() == 0 {
             occupied.remove();
         }
@@ -88,13 +81,6 @@ impl HandleTable {
     }
 
     fn alloc_ephemeral(&self) -> Option<Arc<AbstractHandle>> {
-        // See "Autobind feature" in the man pages:
-        // <https://man7.org/linux/man-pages/man7/unix.7.html>.
-        //
-        // Note that false negatives are fine here. So we don't mind race conditions.
-        //
-        // TODO: Always starting with the first name is inefficient and leads to contention.
-        // Instead, we should generate some random names and check their availability.
         (0..(1 << 20))
             .map(|num| format!("{:05x}", num))
             .map(|name| Arc::from(name.as_bytes()))

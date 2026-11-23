@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 mod bin;
 mod grub;
 mod qcow2;
@@ -123,7 +121,6 @@ fn get_reusable_existing_bundle(
     Some(existing_bundle)
 }
 
-/// If the source is not since modified and the last build is recent, we can reuse the existing bundle.
 pub fn do_cached_build(
     bundle_path: impl AsRef<Path>,
     osdk_output_directory: impl AsRef<Path>,
@@ -149,7 +146,6 @@ pub fn do_cached_build(
         &rustflags,
     );
 
-    // Check the existing bundle's reusability
     if let Some(existing_bundle) = get_reusable_existing_bundle(&bundle_path, config, action)
         && aster_elf.modified_time() < &existing_bundle.last_modified_time()
     {
@@ -157,7 +153,6 @@ pub fn do_cached_build(
         return existing_bundle;
     }
 
-    // Build a new bundle
     info!("Building a new bundle");
     if bundle_path.as_ref().exists() {
         std::fs::remove_dir_all(&bundle_path).unwrap();
@@ -218,30 +213,18 @@ fn build_kernel_elf(
     let rustc_linker_script_arg = format!("-C link-arg=-T{}.ld", arch);
 
     let mut rustflags = Vec::from(rustflags);
-    // Asterinas does not support PIC yet.
     rustflags.extend([
         &rustc_linker_script_arg,
         "-C relocation-model=static",
         "-C relro-level=off",
-        // Even if we disabled unwinding on panic, we need to specify this to show backtraces.
         "-C force-unwind-tables=yes",
-        // This is to let rustc know that "cfg(ktest)" is our well-known configuration.
-        // See the [Rust Blog](https://blog.rust-lang.org/2024/05/06/check-cfg.html) for details.
         "--check-cfg cfg(ktest)",
-        // The red zone is a small area below the stack pointer for optimization, primarily in
-        // user-space applications. This optimization can be problematic in the kernel, as the CPU
-        // or exception handlers may overwrite kernel data in the red zone. Therefore, we disable
-        // this optimization.
         "-C no-redzone=y",
     ]);
 
     if matches!(arch, Arch::X86_64) {
-        // This is a workaround for <https://github.com/asterinas/asterinas/issues/839>.
-        // It makes running on Intel CPUs after Ivy Bridge (2012) faster, but much slower
-        // on older CPUs.
         rustflags.push("-C target-feature=+ermsb");
     } else if matches!(arch, Arch::RiscV64) {
-        // Enable the Zicbom extension for RISC-V to support cache block operations.
         rustflags.push("-C target-feature=+zicbom");
     }
 
@@ -286,8 +269,6 @@ fn build_kernel_elf(
     env_cflags += " -fPIC";
 
     if features.iter().any(|f| f == "coverage") {
-        // This is a workaround for minicov <https://github.com/Amanieu/minicov/issues/29>,
-        // makes coverage work on x86_64-unknown-none.
         env_cflags += " -D__linux__";
     }
 

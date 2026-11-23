@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::collections::btree_map::BTreeMap;
 use core::ops::Range;
 
@@ -10,7 +8,6 @@ pub(crate) struct RangeAllocator {
     freelist: SpinLock<Option<BTreeMap<usize, FreeRange>>>,
 }
 
-/// An error returned when allocating from a [`RangeAllocator`].
 #[derive(Debug)]
 pub(crate) struct RangeAllocError;
 
@@ -26,7 +23,6 @@ impl RangeAllocator {
         &self.fullrange
     }
 
-    /// Allocates a specific kernel virtual area.
     pub(crate) fn alloc_specific(
         &self,
         allocate_range: &Range<usize>,
@@ -72,9 +68,6 @@ impl RangeAllocator {
         }
     }
 
-    /// Allocates a range specific by the `size`.
-    ///
-    /// This is currently implemented with a simple FIRST-FIT algorithm.
     pub(crate) fn alloc(&self, size: usize) -> Result<Range<usize>, RangeAllocError> {
         let mut lock_guard = self.get_freelist_guard();
         let freelist = lock_guard.as_mut().unwrap();
@@ -106,15 +99,11 @@ impl RangeAllocator {
         }
     }
 
-    /// Frees a `range`.
     pub(crate) fn free(&self, range: Range<usize>) {
         let mut lock_guard = self.freelist.lock();
         let freelist = lock_guard.as_mut().unwrap_or_else(|| {
             panic!("Free a 'KVirtArea' when 'VirtAddrAllocator' has not been initialized.")
         });
-        // 1. get the previous free block, check if we can merge this block with the free one
-        //     - if contiguous, merge this area with the free block.
-        //     - if not contiguous, create a new free block, insert it into the list.
         let mut free_range = range.clone();
 
         if let Some((prev_va, prev_node)) = freelist
@@ -129,7 +118,6 @@ impl RangeAllocator {
 
         freelist.insert(free_range.start, FreeRange::new(free_range.clone()));
 
-        // 2. check if we can merge the current block with the next block, if we can, do so.
         if let Some((next_va, next_node)) = freelist
             .lower_bound_mut(core::ops::Bound::Excluded(&free_range.start))
             .peek_next()

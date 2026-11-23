@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::{boxed::Box, sync::Arc};
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -63,12 +61,10 @@ fn store_overwrite() {
     init_continuous_with_arc(&xarray_arc, n!(100));
 
     let mut locked_xarray = xarray_arc.lock();
-    // Overwrite 20 at index 10.
     let value = Arc::new(20);
     locked_xarray.store(10, value);
     let v = locked_xarray.load(10).unwrap();
     assert_eq!(*v.as_ref(), 20);
-    // Overwrite 40 at index 10.
     let value = Arc::new(40);
     locked_xarray.store(10, value);
     let v = locked_xarray.load(10).unwrap();
@@ -379,12 +375,10 @@ fn load_after_clear() {
     let value = cursor.load().unwrap();
     assert_eq!(*value.as_ref(), 100);
 
-    // Read the old data.
     locked_xarray.clear();
     let value = cursor.load().unwrap();
     assert_eq!(*value.as_ref(), 100);
 
-    // Read the new data.
     cursor.reset();
     assert!(cursor.load().is_none());
 }
@@ -408,7 +402,6 @@ impl<P: NonNullPtr + Send + Sync> Drop for node::XNode<P> {
 
 #[ktest]
 fn no_leakage() {
-    // Drop the nodes created by the previous tests.
     finish_grace_period();
     DROP_COUNT.store(0, Ordering::Relaxed);
     TEST_LEAKAGE.store(true, Ordering::Relaxed);
@@ -417,44 +410,32 @@ fn no_leakage() {
     init_sparse_with_arc(&xarray_arc, (SLOT_SIZE * SLOT_SIZE / 2 + 1) as u32);
     drop(xarray_arc);
 
-    // Drop the nodes created in the test.
     finish_grace_period();
     TEST_LEAKAGE.store(false, Ordering::Relaxed);
 
     let count = DROP_COUNT.load(Ordering::Relaxed);
-    // layer 3: 1
-    // layer 2: 1 + 1
-    // layer 1: 64 + 1
     let expected = 68;
     assert_eq!(count, expected);
 }
 
 #[ktest]
 fn remove_shrinks_empty_nodes() {
-    // Drop the nodes created by the previous tests.
     finish_grace_period();
     DROP_COUNT.store(0, Ordering::Relaxed);
     TEST_LEAKAGE.store(true, Ordering::Relaxed);
 
     let xarray_arc: XArray<Arc<u32>> = XArray::new();
-    // This index requires a tree of height 3, with exactly one node per
-    // layer (a single chain from the root to the leaf).
     let index = (SLOT_SIZE * SLOT_SIZE) as u64;
     xarray_arc.lock().store(index, Arc::new(0));
 
     assert!(xarray_arc.lock().remove(index).is_some());
 
-    // Drop the nodes detached by the `remove` above.
     finish_grace_period();
     TEST_LEAKAGE.store(false, Ordering::Relaxed);
 
-    // All 3 nodes on the chain (root, interior, leaf) should have been
-    // detached and dropped, since removing the only item leaves each of
-    // them empty in turn.
     let count = DROP_COUNT.load(Ordering::Relaxed);
     assert_eq!(count, 3);
 
-    // The `XArray` should now behave like a fresh, empty one.
     assert!(xarray_arc.lock().load(index).is_none());
     xarray_arc.lock().store(0, Arc::new(1));
     let guard = disable_preempt();

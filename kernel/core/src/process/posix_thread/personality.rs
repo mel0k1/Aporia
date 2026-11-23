@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::sync::atomic::Ordering;
 
 use bitflags::bitflags;
@@ -14,12 +12,10 @@ bitflags! {
 }
 
 impl PosixThread {
-    /// Returns the personality value of this thread.
     pub(crate) fn personality(&self) -> u32 {
         self.personality.load(Ordering::Relaxed)
     }
 
-    /// Sets the personality value of this thread.
     pub(crate) fn set_personality(&self, personality: u32) {
         self.personality.store(personality, Ordering::Relaxed);
     }

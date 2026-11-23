@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Block allocation.
 use alloc::vec;
 use core::{
     num::NonZeroUsize,
@@ -21,13 +18,9 @@ use crate::{
     util::BitMap,
 };
 
-/// The bucket name of block validity table.
 const BUCKET_BLOCK_VALIDITY_TABLE: &str = "BVT";
-/// The bucket name of block alloc/dealloc log.
 const BUCKET_BLOCK_ALLOC_LOG: &str = "BAL";
 
-/// Block validity table. Global allocator for `MlsDisk`,
-/// which manages validities of user data blocks.
 pub(super) struct AllocTable {
     bitmap: Mutex<BitMap>,
     next_avail: AtomicUsize,
@@ -37,17 +30,13 @@ pub(super) struct AllocTable {
     num_free: CvarMutex<usize>,
 }
 
-/// Per-TX block allocator in `MlsDisk`, recording validities
-/// of user data blocks within each TX. All metadata will be stored in
-/// `TxLog`s of bucket `BAL` during TX for durability and recovery purpose.
 pub(super) struct BlockAlloc<D> {
-    alloc_table: Arc<AllocTable>, // Point to the global allocator
-    diff_table: Mutex<BTreeMap<Hba, AllocDiff>>, // Per-TX diffs of block validity
-    store: Arc<TxLogStore<D>>,    // Store for diff log from L3
-    diff_log: Mutex<Option<Arc<TxLog<D>>>>, // Opened diff log (currently not in-use)
+    alloc_table: Arc<AllocTable>,
+    diff_table: Mutex<BTreeMap<Hba, AllocDiff>>,
+    store: Arc<TxLogStore<D>>,
+    diff_log: Mutex<Option<Arc<TxLog<D>>>>,
 }
 
-/// Incremental diff of block validity.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 enum AllocDiff {
@@ -58,7 +47,6 @@ enum AllocDiff {
 const DIFF_RECORD_SIZE: usize = size_of::<AllocDiff>() + size_of::<Hba>();
 
 impl AllocTable {
-    /// Create a new `AllocTable` given the total number of blocks.
     pub(super) fn new(nblocks: NonZeroUsize) -> Self {
         Self {
             bitmap: Mutex::new(BitMap::repeat(true, nblocks.get())),
@@ -70,8 +58,6 @@ impl AllocTable {
         }
     }
 
-    /// Allocate a free slot for a new block, returns `None`
-    /// if there are no free slots.
     pub(super) fn alloc(&self) -> Option<Hba> {
         let mut bitmap = self.bitmap.lock();
         let next_avail = self.next_avail.load(Ordering::Acquire);
@@ -87,13 +73,10 @@ impl AllocTable {
         Some(hba as Hba)
     }
 
-    /// Allocate multiple free slots for a bunch of new blocks, returns `None`
-    /// if there are no free slots for all.
     pub(super) fn alloc_batch(&self, count: NonZeroUsize) -> Result<Vec<Hba>> {
         let cnt = count.get();
         let mut num_free = self.num_free.lock().unwrap();
         while *num_free < cnt {
-            // TODO: May not be woken, may require manual triggering of a compaction in L4
             num_free = self.cvar.wait(num_free).unwrap();
         }
         debug_assert!(*num_free >= cnt);
@@ -131,15 +114,12 @@ impl AllocTable {
         Some(hbas)
     }
 
-    /// Recover the `AllocTable` from the latest `BVT` log and a bunch of `BAL` logs
-    /// in the given store.
     pub(super) fn recover<D: BlockSet + 'static>(
         nblocks: NonZeroUsize,
         store: &Arc<TxLogStore<D>>,
     ) -> Result<Self> {
         let tx = store.new_tx();
         let res: Result<_> = tx.context(|| {
-            // Recover the block validity table from `BVT` log first
             let bvt_log_res = store.open_log_in(BUCKET_BLOCK_VALIDITY_TABLE);
             let mut bitmap = match bvt_log_res {
                 Ok(bvt_log) => {
@@ -157,7 +137,6 @@ impl AllocTable {
                 }
             };
 
-            // Iterate each `BAL` log and apply each diff, from older to newer
             let bal_log_ids_res = store.list_logs_in(BUCKET_BLOCK_ALLOC_LOG);
             if let Err(e) = &bal_log_ids_res
                 && e.errno() == NotFound
@@ -226,7 +205,6 @@ impl AllocTable {
         Ok(recov_self)
     }
 
-    /// Persist the block validity table to `BVT` log. GC all existed `BAL` logs.
     pub(super) fn do_compaction<D: BlockSet + 'static>(
         &self,
         store: &Arc<TxLogStore<D>>,
@@ -235,9 +213,8 @@ impl AllocTable {
             return Ok(());
         }
 
-        // Serialize the block validity table
         let bitmap = self.bitmap.lock();
-        const BITMAP_MAX_SIZE: usize = 1792 * BLOCK_SIZE; // TBD
+        const BITMAP_MAX_SIZE: usize = 1792 * BLOCK_SIZE;
         let mut ser_buf = vec![0; BITMAP_MAX_SIZE];
         let ser_len = postcard::to_slice::<BitMap>(&bitmap, &mut ser_buf)
             .map_err(|_| Error::with_msg(InvalidArgs, "serialize block validity table failed"))?
@@ -245,8 +222,6 @@ impl AllocTable {
         ser_buf.resize(align_up(ser_len, BLOCK_SIZE), 0);
         drop(bitmap);
 
-        // Persist the serialized block validity table to `BVT` log
-        // and GC any old `BVT` logs and `BAL` logs
         let tx = store.new_tx();
         let res: Result<_> = tx.context(|| {
             if let Ok(bvt_log_ids) = store.list_logs_in(BUCKET_BLOCK_VALIDITY_TABLE) {
@@ -275,7 +250,6 @@ impl AllocTable {
         Ok(())
     }
 
-    /// Mark a specific slot deallocated.
     pub(super) fn set_deallocated(&self, nth: usize) {
         let mut num_free = self.num_free.lock().unwrap();
         self.bitmap.lock().set(nth, true);
@@ -289,7 +263,6 @@ impl AllocTable {
 }
 
 impl<D: BlockSet + 'static> BlockAlloc<D> {
-    /// Create a new `BlockAlloc` with the given global allocator and store.
     pub(super) fn new(alloc_table: Arc<AllocTable>, store: Arc<TxLogStore<D>>) -> Self {
         Self {
             alloc_table,
@@ -299,7 +272,6 @@ impl<D: BlockSet + 'static> BlockAlloc<D> {
         }
     }
 
-    /// Record a diff of `Alloc`.
     pub(super) fn alloc_block(&self, block_id: Hba) -> Result<()> {
         let mut diff_table = self.diff_table.lock();
         let replaced = diff_table.insert(block_id, AllocDiff::Alloc);
@@ -310,7 +282,6 @@ impl<D: BlockSet + 'static> BlockAlloc<D> {
         Ok(())
     }
 
-    /// Record a diff of `Dealloc`.
     pub(super) fn dealloc_block(&self, block_id: Hba) -> Result<()> {
         let mut diff_table = self.diff_table.lock();
         let replaced = diff_table.insert(block_id, AllocDiff::Dealloc);
@@ -321,21 +292,10 @@ impl<D: BlockSet + 'static> BlockAlloc<D> {
         Ok(())
     }
 
-    /// Prepare the block validity diff log.
-    ///
-    /// # Panics
-    ///
-    /// This method must be called within a TX. Otherwise, this method panics.
     pub(super) fn prepare_diff_log(&self) -> Result<()> {
-        // Do nothing for now
         Ok(())
     }
 
-    /// Persist the metadata in diff table to the block validity diff log.
-    ///
-    /// # Panics
-    ///
-    /// This method must be called within a TX. Otherwise, this method panics.
     pub(super) fn update_diff_log(&self) -> Result<()> {
         let diff_table = self.diff_table.lock();
         if diff_table.is_empty() {
@@ -364,7 +324,6 @@ impl<D: BlockSet + 'static> BlockAlloc<D> {
         diff_log.append(BufRef::try_from(&diff_buf[..]).unwrap())
     }
 
-    /// Update the metadata in diff table to the in-memory block validity table.
     pub(super) fn update_alloc_table(&self) {
         let diff_table = self.diff_table.lock();
         let alloc_table = &self.alloc_table;

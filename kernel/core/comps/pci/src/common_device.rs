@@ -1,16 +1,9 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! PCI device common definitions or functions.
-
 use crate::{
     capability::{RawCapabilities, msix::RawCapabilityMsix, vendor::CapabilityVndrData},
     cfg_space::{AddrLen, Bar, Command, PciBridgeCfgOffset, PciCommonCfgOffset, Status},
     device_info::{PciDeviceId, PciDeviceLocation},
 };
 
-/// PCI common device.
-///
-/// This type contains a range of information and functions common to PCI devices.
 #[derive(Debug)]
 pub struct PciCommonDevice {
     device_id: PciDeviceId,
@@ -21,60 +14,49 @@ pub struct PciCommonDevice {
 }
 
 impl PciCommonDevice {
-    /// Returns the PCI device ID.
     pub fn device_id(&self) -> &PciDeviceId {
         &self.device_id
     }
 
-    /// Returns the PCI device location.
     pub fn location(&self) -> &PciDeviceLocation {
         &self.location
     }
 
-    /// Returns a reference to the PCI Base Address Register (BAR) manager.
     pub fn bar_manager(&self) -> &BarManager {
         &self.bar_manager
     }
 
-    /// Returns the PCI device type.
     pub fn device_type(&self) -> PciDeviceType {
         self.header_type.device_type()
     }
 
-    /// Checks whether the device is a multi-function device.
     pub fn has_multi_funcs(&self) -> bool {
         self.header_type.has_multi_funcs()
     }
 
-    /// Reads the PCI command.
     pub fn read_command(&self) -> Command {
         Command::from_bits_truncate(self.location.read16(PciCommonCfgOffset::Command as u16))
     }
 
-    /// Writes the PCI command.
     pub fn write_command(&self, command: Command) {
         self.location
             .write16(PciCommonCfgOffset::Command as u16, command.bits())
     }
 
-    /// Reads the PCI status.
     pub fn read_status(&self) -> Status {
         Status::from_bits_truncate(self.location.read16(PciCommonCfgOffset::Status as u16))
     }
 
-    /// Returns the raw MSI-X capability, if present.
     pub(crate) fn raw_msix_capability(&self) -> Option<&RawCapabilityMsix> {
         self.capabilities.msix()
     }
 
-    /// Gets access to the vendor-specific capability data.
     pub fn iter_vndr_capability(&self) -> impl Iterator<Item = CapabilityVndrData<'_>> {
         self.capabilities.iter_vndr_data(self)
     }
 
     pub(super) fn new(location: PciDeviceLocation) -> Option<Self> {
         if location.read16(0) == 0xFFFF {
-            // No device.
             return None;
         }
 
@@ -103,9 +85,6 @@ impl PciCommonDevice {
             capabilities,
         };
 
-        // While setting up the BARs, we need to ensure that
-        // "Decode (I/O or memory) of the appropriate address space is disabled via the Command
-        // Register before sizing a Base Address register."
         let command_val = device.read_command() | Command::BUS_MASTER;
         device.write_command(command_val - (Command::MEMORY_SPACE | Command::IO_SPACE));
         device.bar_manager = BarManager::new(device.header_type.device_type(), location);
@@ -117,11 +96,6 @@ impl PciCommonDevice {
     }
 }
 
-/// The header type field of a PCI device struct in the PCI configuration space.
-///
-/// A header type is comprised of two pieces of information:
-/// 1. The device type ([`PciDeviceType`]);
-/// 2. Whether the device has multiple functions (`bool`).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct PciHeaderType {
     device_type: PciDeviceType,
@@ -129,11 +103,6 @@ struct PciHeaderType {
 }
 
 impl PciHeaderType {
-    /// Converts a byte into a header type.
-    ///
-    /// According to the PCI specification, the encoding of a header type is as follows:
-    /// - Bit 0-6 encodes the raw value of `PciDeviceType`;
-    /// - Bit 7 indicates whether the PCI device has multiple functions.
     fn try_from_raw(raw: u8) -> Option<Self> {
         let device_type = PciDeviceType::try_from_raw(raw & 0x7F)?;
         let has_multi_funcs = (raw & 0x80) != 0;
@@ -144,34 +113,24 @@ impl PciHeaderType {
         })
     }
 
-    /// Returns the device type.
     fn device_type(self) -> PciDeviceType {
         self.device_type
     }
 
-    /// Returns whether the device has multiple functions.
     fn has_multi_funcs(self) -> bool {
         self.has_multi_funcs
     }
 }
 
-/// Represents the type of PCI device, determined by the device's header type.
-///
-/// Used to distinguish between general devices, PCI-to-PCI bridges, and PCI-to-Cardbus bridges.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PciDeviceType {
-    /// General PCI device (header type 0x00).
     GeneralDevice,
-    /// PCI-to-PCI bridge (header type 0x01).
-    /// Contains the primary, secondary, and subordinate bus numbers.
     PciToPciBridge(u8, u8, u8),
-    /// PCI-to-Cardbus bridge (header type 0x02).
     PciToCardbusBridge,
 }
 
 impl PciDeviceType {
-    /// Converts a raw header type value into a `PciDeviceType`.
     pub fn try_from_raw(raw: u8) -> Option<Self> {
         match raw {
             0x00 => Some(PciDeviceType::GeneralDevice),
@@ -182,24 +141,19 @@ impl PciDeviceType {
     }
 }
 
-/// Base Address Register (BAR) manager.
 #[derive(Debug)]
 pub struct BarManager {
-    /// There are at most 6 BARs in PCI device.
     bars: [Option<Bar>; 6],
 }
 
 impl BarManager {
-    /// Gains access to the BAR space and returns `None` if that BAR is absent.
     pub fn bar(&self, idx: u8) -> Option<&Bar> {
         self.bars[idx as usize].as_ref()
     }
 
-    /// Parses the BAR space by PCI device location.
     fn new(device_type: PciDeviceType, location: PciDeviceLocation) -> Self {
         let mut bars = [None, None, None, None, None, None];
 
-        // Determine the maximum number of BARs based on the device type.
         let max = match device_type {
             PciDeviceType::GeneralDevice => 6,
             PciDeviceType::PciToPciBridge(_, _, _) => 2,
@@ -216,7 +170,6 @@ impl BarManager {
             if let Bar::Memory(memory_bar) = &bar
                 && memory_bar.address_length() == AddrLen::Bits64
             {
-                // 64-bit BAR occupies two BAR slots.
                 idx_step += 1;
             }
 

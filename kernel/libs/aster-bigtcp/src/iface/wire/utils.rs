@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd::mm::{Infallible, VmReader};
 use ostd_pod::IntoBytes;
 use smoltcp::wire::IpRepr;
@@ -95,9 +93,6 @@ fn do_checksum(mut reader: VmReader<Infallible>) -> u16 {
         if of { c + 1 } else { c }
     }
 
-    // We can compute the checksum in native endianness. For more details,
-    // see <https://datatracker.ietf.org/doc/html/rfc1071>.
-
     while reader.remain() >= size_of::<u64>() * 4 {
         let a0 = reader.read_val::<u64>().unwrap();
         let a1 = reader.read_val::<u64>().unwrap();
@@ -159,8 +154,6 @@ mod test {
 
     #[ktest]
     fn checksum_matches_rfc_1071() {
-        // See <https://datatracker.ietf.org/doc/html/rfc1071#section-3>.
-
         let rfc_example = [0x00, 0x01, 0xf2, 0x03, 0xf4, 0xf5, 0xf6, 0xf7];
         let sum = super::Checksum::new()
             .with_reader(VmReader::from(&rfc_example[..]))

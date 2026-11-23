@@ -1,10 +1,7 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::fmt::Debug;
 
 use crate::process::signal::{c_types::siginfo_t, sig_num::SigNum, signals::Signal};
 
-/// A signal that carries raw [`siginfo_t`] information.
 #[derive(Clone, Copy)]
 pub(crate) struct RawSignal {
     info: siginfo_t,
@@ -21,9 +18,6 @@ impl Debug for RawSignal {
 }
 
 impl RawSignal {
-    /// Creates a signal that carries raw [`siginfo_t`] information.
-    ///
-    /// The caller must ensure that the `info.si_signo` is a valid signal number.
     pub(crate) fn new(info: siginfo_t) -> Self {
         Self { info }
     }

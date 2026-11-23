@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use proc_macro2::{Ident, TokenStream};
 use quote::{TokenStreamExt, quote};
 
@@ -34,7 +32,6 @@ pub(super) fn expand_type_flag(type_flags_def: &TypeFlagDef) -> TokenStream {
     all_tokens
 }
 
-/// import crate typeflags_util
 pub(super) fn import_util() -> TokenStream {
     quote!(
         #[macro_use]
@@ -42,7 +39,6 @@ pub(super) fn import_util() -> TokenStream {
     )
 }
 
-/// define the main trait and all items
 pub(super) fn trait_and_items_def(type_flags_def: &TypeFlagDef) -> TokenStream {
     let mut tokens = TokenStream::new();
     tokens.append_all(type_flags_def.trait_def_tokens());
@@ -52,7 +48,6 @@ pub(super) fn trait_and_items_def(type_flags_def: &TypeFlagDef) -> TokenStream {
     tokens
 }
 
-/// impl SameAs trait for each struct
 pub(super) fn impl_same_as(type_flags_def: &TypeFlagDef) -> TokenStream {
     let mut all_tokens = TokenStream::new();
     let items_num = type_flags_def.item_num();
@@ -61,7 +56,6 @@ pub(super) fn impl_same_as(type_flags_def: &TypeFlagDef) -> TokenStream {
         let item1 = type_flags_def.get_item(i).unwrap();
         for j in 0..items_num {
             if i == j {
-                // We don't need to impl SameAs for the same type
                 continue;
             }
             let item2 = type_flags_def.get_item(j).unwrap();
@@ -86,7 +80,6 @@ pub(super) fn impl_set_extend(type_flags_def: &TypeFlagDef, flag_sets: &[FlagSet
         .collect();
 
     for flag_set in flag_sets {
-        // We don't need to impl set extend trait for Nil
         if flag_set.len() == 0 {
             continue;
         }
@@ -94,7 +87,6 @@ pub(super) fn impl_set_extend(type_flags_def: &TypeFlagDef, flag_sets: &[FlagSet
             let type_ident = type_ident.clone();
             let flag_set_tokens = flag_set.type_name_tokens();
             if flag_set.contains_type(&type_ident) {
-                // the flagset contains the type
                 let impl_extend_tokens = quote!(
                     impl ::typeflags_util::SetExtend<#type_ident> for #flag_set_tokens {
                         type Output = #flag_set_tokens;
@@ -102,7 +94,6 @@ pub(super) fn impl_set_extend(type_flags_def: &TypeFlagDef, flag_sets: &[FlagSet
                 );
                 all_tokens.append_all(impl_extend_tokens)
             } else {
-                // the flagset does not contains the type
                 let output_set = extent_one_type(&type_ident, flag_set, flag_sets).unwrap();
                 let output_set_tokens = output_set.type_name_tokens();
                 let impl_extend_tokens = quote!(
@@ -128,7 +119,6 @@ fn extent_one_type<'a>(
     })
 }
 
-/// export the declarive macro
 pub(super) fn export_declarive_macro(
     type_flags_def: &TypeFlagDef,
     flag_sets: &[FlagSet],

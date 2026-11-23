@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use aster_bigtcp::{
     errors::udp::{RecvError, SendError},
     wire::IpEndpoint,
@@ -92,8 +90,6 @@ impl datagram_common::Bound for BoundDatagram {
         let result = self
             .bound_socket
             .send(reader.sum_lens(), *remote, |socket_buffer| {
-                // FIXME: If copy failed, we should not send any packet.
-                // But current smoltcp API seems not to support this behavior.
                 reader
                     .read(&mut VmWriter::from(socket_buffer))
                     .inspect_err(|e| {

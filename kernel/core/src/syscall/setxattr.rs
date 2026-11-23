@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::borrow::Cow;
 
 use super::SyscallReturn;
@@ -150,11 +148,6 @@ fn setxattr(
             ));
         }
 
-        // With only the initial user namespace and no ID-mapped mounts, valid V2/V3 values use
-        // the same representation in the caller and filesystem namespaces.
-        //
-        // FIXME: Convert V2/V3 root IDs when user namespaces or ID-mapped mounts are supported.
-        // Reference: <https://elixir.bootlin.com/linux/v7.1/source/security/commoncap.c#L550>.
         let mut value_reader = VmReader::from(raw_value).to_fallible();
         path.set_xattr(xattr_name, &mut value_reader, flags, ctx)?;
     }
@@ -162,7 +155,6 @@ fn setxattr(
     Ok(())
 }
 
-/// The context to describe the target file for xattr operations.
 pub(super) enum XattrFileCtx<'a> {
     Path(CString),
     PathNoFollow(CString),

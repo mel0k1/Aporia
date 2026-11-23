@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use std::{
     fs::{File, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
@@ -61,7 +59,6 @@ pub fn make_install_bzimage(
         };
         setup_install_dir.join("bin").join("linux-bzimage-setup")
     };
-    // Make the `bzImage`-compatible kernel image and place it in the boot directory.
     let install_path = install_dir.as_ref().join(target_name);
     info!("Building bzImage");
     println!("install_path: {:?}", install_path);
@@ -97,7 +94,6 @@ pub fn make_stripped_boot_elf(
     };
 
     if strip {
-        // We use rust-strip to reduce the kernel image size.
         let status = new_command_checked_exists("rust-strip")
             .arg(elf.path())
             .arg("-o")
@@ -119,7 +115,6 @@ pub fn make_stripped_boot_elf(
             },
         }
     } else {
-        // Copy the ELF file.
         hard_link_or_copy(elf.path(), &result_elf_path).unwrap();
     }
 
@@ -134,11 +129,6 @@ pub fn make_stripped_boot_elf(
 
 pub fn make_elf_for_qemu(elf: AsterBin) -> AsterBin {
     if elf.arch() == Arch::X86_64 {
-        // Because QEMU denies a x86_64 multiboot ELF file (GRUB2 accept it, btw),
-        // modify `em_machine` to pretend to be an x86 (32-bit) ELF image,
-        //
-        // https://github.com/qemu/qemu/blob/950c4e6c94b15cd0d8b63891dddd7a8dbf458e6a/hw/i386/multiboot.c#L197
-        // Set EM_386 (0x0003) to em_machine.
         let mut file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -166,14 +156,6 @@ pub fn make_aarch64_image(install_path: impl AsRef<Path>, aster_elf: &AsterBin) 
             .join(elf_name.to_string() + ".qemu_bin")
     };
 
-    // QEMU treats ELF kernels as non-Linux [1], where the initrd will not be loaded [2] and the
-    // device tree address will not be passed [3]. Therefore, we remove the ELF information and use
-    // the Linux AArch64 boot protocol [4] to boot the raw image instead.
-    //
-    // [1]: https://github.com/qemu/qemu/blob/499039798cdad7d86b787fec0eaf1da4151c0f05/hw/arm/boot.c#L920
-    // [2]: https://github.com/qemu/qemu/blob/499039798cdad7d86b787fec0eaf1da4151c0f05/hw/arm/boot.c#L1010
-    // [3]: https://github.com/qemu/qemu/blob/499039798cdad7d86b787fec0eaf1da4151c0f05/hw/arm/boot.c#L1091
-    // [4]: https://docs.kernel.org/arch/arm64/booting.html
     let status = new_command_checked_exists("rust-objcopy")
         .arg("-O")
         .arg("binary")
@@ -240,15 +222,11 @@ fn install_setup_with_arch(
         cmd.arg("--version").arg(env!("CARGO_PKG_VERSION"));
     }
     cmd.arg("--target").arg(arch);
-    // Custom json target requires this cargo flag.
-    // See https://doc.rust-lang.org/cargo/reference/unstable.html#target-spec-json
     if arch.ends_with(".json") {
         cmd.arg("-Zjson-target-spec");
     }
     cmd.arg("-Zbuild-std=core,alloc,compiler_builtins");
     cmd.arg("-Zbuild-std-features=compiler-builtins-mem");
-    // Specify the build target directory to avoid cargo running
-    // into a deadlock reading the workspace files.
     cmd.arg("--target-dir").arg(target_dir.as_os_str());
 
     let status = cmd.status().unwrap();

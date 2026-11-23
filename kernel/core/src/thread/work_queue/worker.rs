@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 #![expect(dead_code)]
 
 use ostd::{
@@ -14,10 +12,6 @@ use crate::{
     thread::{AsThread, kernel_thread::ThreadOptions},
 };
 
-/// A worker thread. A `Worker` will attempt to retrieve unfinished
-/// work items from its corresponding `WorkerPool`. If there are none,
-/// it will go to sleep and be rescheduled when a new work item is
-/// added to the `WorkerPool`.
 pub(super) struct Worker {
     worker_pool: Weak<WorkerPool>,
     bound_task: Arc<Task>,
@@ -34,13 +28,10 @@ enum WorkerStatus {
     Idle,
     Running,
     Exited,
-    /// This state only occurs when destructing the `WorkerPool`,
-    /// where workers will exit after processing the remaining work items.
     Destroying,
 }
 
 impl Worker {
-    /// Creates a new `Worker` to the given `worker_pool`.
     pub(super) fn new(worker_pool: Weak<WorkerPool>, bound_cpu: CpuId) -> Arc<Self> {
         Arc::new_cyclic(|worker_ref| {
             let weal_worker = worker_ref.clone();
@@ -76,8 +67,6 @@ impl Worker {
         thread.run();
     }
 
-    /// The thread function bound to normal workers.
-    /// It pulls a work item from the work queue and sleeps if there is no more pending items.
     fn run_worker_loop(self: &Arc<Self>) {
         loop {
             let worker_pool = self.worker_pool.upgrade();

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use smoltcp::wire::{ArpHardware, ArpRepr, EthernetAddress, EthernetProtocol, Ipv4Address};
 
 use crate::{

@@ -1,13 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-/// Imports all generic syscall entries.
-///
-/// This macro is intended solely for internal use within [macro@define_syscalls_with_generic_syscall_table].
-///
-/// The primary reason for this macro's existence is to facilitate code formatting.
-/// The macro, [macro@define_syscalls_with_generic_syscall_table],
-/// contains non-standard syntax that rustfmt cannot process.
-/// By moving these use statements into this dedicated macro, they can be correctly formatted.
 macro_rules! import_generic_syscall_entries {
     () => {
         use $crate::syscall::{
@@ -184,30 +174,11 @@ macro_rules! import_generic_syscall_entries {
 
 pub(super) use import_generic_syscall_entries;
 
-/// Defines syscalls by combining architecture-specific definitions with the generic syscall table.
-///
-/// Generic syscalls refer to syscalls whose numbers are standardized across multiple architectures.
-/// By using this macro, you only need to define the arch-specific syscalls;
-/// the generic ones are integrated automatically.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.18/source/include/uapi/asm-generic/unistd.h>.
-///
-/// # Examples
-///
-/// Define architecture-specific syscalls `example1` and `example2` with generic syscalls:
-///
-/// ```rust
-/// define_syscalls_with_generic_syscall_table! {
-///     SYS_EXAMPLE1 = 500 => sys_example1(args[..0]);
-///     SYS_EXAMPLE2 = 501 => sys_example2(args[..1], &user_ctx);
-/// }
-/// ```
 macro_rules! define_syscalls_with_generic_syscall_table {
     ( $( $name: ident = $num: literal => $handler: ident $args: tt );* $(;)? ) => {
         generic::import_generic_syscall_entries!();
 
         $crate::syscall::impl_syscall_nums_and_dispatch_fn! {
-            // Generic syscalls
             SYS_SETXATTR = 5                 => sys_setxattr(args[..5]);
             SYS_LSETXATTR = 6                => sys_lsetxattr(args[..5]);
             SYS_FSETXATTR = 7                => sys_fsetxattr(args[..5]);
@@ -416,7 +387,6 @@ macro_rules! define_syscalls_with_generic_syscall_table {
             SYS_EPOLL_PWAIT2 = 441           => sys_epoll_pwait2(args[..6]);
             SYS_FCHMODAT2 = 452              => sys_fchmodat2(args[..4]);
             SYS_LISTMOUNT = 458              => sys_listmount(args[..4]);
-            // Architecture-specific syscalls
             $( $name = $num => $handler $args );*
         }
     };

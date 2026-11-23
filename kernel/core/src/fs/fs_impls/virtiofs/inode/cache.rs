@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Inode cache for `virtiofs`.
-
 #![short_vis_path::add(virtiofs)]
 
 use aster_fuse::{EntryReply, FuseNodeId};
@@ -11,7 +7,6 @@ use hashbrown::HashMap;
 use super::{VirtioFs, VirtioFsInode};
 use crate::prelude::*;
 
-/// In-memory inode cache keyed by FUSE node ID.
 pub(in virtiofs) struct InodeCache {
     inodes: RwMutex<HashMap<FuseNodeId, Weak<VirtioFsInode>>>,
 }
@@ -22,7 +17,6 @@ impl InodeCache {
         Self { inodes }
     }
 
-    /// Looks up an inode by FUSE node ID and validates its generation.
     pub(in virtiofs) fn lookup_inode(
         &self,
         lookup_reply: EntryReply,
@@ -31,8 +25,6 @@ impl InodeCache {
     ) -> Result<Arc<VirtioFsInode>> {
         let nodeid = lookup_reply.nodeid();
 
-        // An `EntryReply` carries a new lookup reference even when the inode is
-        // already cached, so cache hits still need to commit the reply.
         if let Some(inode) = self
             .inodes
             .read()
@@ -40,17 +32,10 @@ impl InodeCache {
             .and_then(Weak::upgrade)
             .filter(|inode| inode.generation() == lookup_reply.generation())
         {
-            // Reusing a cached inode can still fail while committing the
-            // returned attributes, because a size or mtime change may require
-            // page-cache resize or invalidation. There is no local recovery
-            // path for those page-cache errors, so propagate them to the
-            // lookup caller.
             inode.update_from_entry_reply(&lookup_reply, request_attr_version)?;
             return Ok(inode);
         }
 
-        // Recheck after taking the write lock because another thread may have
-        // inserted the inode while this lookup waited for exclusive access.
         let mut inode_cache = self.inodes.write();
         if let Some(inode) = inode_cache
             .get(&nodeid)
@@ -58,8 +43,6 @@ impl InodeCache {
             .filter(|inode| inode.generation() == lookup_reply.generation())
         {
             drop(inode_cache);
-            // See the first cache-hit path above for why committing a fresh
-            // `EntryReply` to a cached inode may still fail.
             inode.update_from_entry_reply(&lookup_reply, request_attr_version)?;
             return Ok(inode);
         }
@@ -70,7 +53,6 @@ impl InodeCache {
         Ok(inode)
     }
 
-    /// Inserts an inode by FUSE node ID.
     pub(in virtiofs) fn insert_inode(&self, inode: &Arc<VirtioFsInode>) {
         self.inodes
             .write()

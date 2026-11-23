@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 #![no_std]
 #![deny(unsafe_code)]
 
@@ -15,7 +13,6 @@ use ostd::{
 
 #[ostd::main]
 fn main() {
-    // VMX lifecycle operations need a task context with interrupts enabled.
     TaskOptions::new(|| {
         run_guest();
         poweroff(ExitCode::Success);
@@ -34,7 +31,6 @@ fn run_guest() {
         Err(err) => panic!("Failed to initialize VMX: {err:?}"),
     };
 
-    // Prepares the guest code by writing to the guest memory space.
     let guest_mem = GuestPhysMemSpace::new().expect("EPT is required for guest memory");
     let frame = FrameAllocOptions::new().alloc_frame().unwrap();
     frame.write_bytes(0, GUEST_CODE).unwrap();
@@ -47,7 +43,6 @@ fn run_guest() {
         );
     }
 
-    // Creates the data structure that maintains the CPU state of the guest.
     let mut context = GuestContext::new(
         VcpuRegs::new(),
         VcpuSregs::new_real_mode(),
@@ -56,7 +51,6 @@ fn run_guest() {
     .unwrap();
 
     loop {
-        // Runs the guest until an exit requires handling by the host.
         let exit = match guest_mode
             .execute(&mut context, &guest_mem, &DummyGuestHooks)
             .unwrap()
@@ -65,7 +59,6 @@ fn run_guest() {
             GuestReturnReason::KernelEvent => continue,
         };
 
-        // Decodes the VM exit reason to handle guest serial output or halt.
         match exit.exit_reason {
             reason
                 if reason == VmxExitReason::IO_INSTRUCTION as u32
@@ -84,5 +77,4 @@ fn run_guest() {
     println!("Guest halted; returned to host.");
 }
 
-// The Makefile assembles and links `guest_hello.S` as a flat binary at GPA 0.
 const GUEST_CODE: &[u8] = include_bytes!("../guest_hello");

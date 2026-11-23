@@ -1,17 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! The PVH boot protocol supporting module.
-//!
-//! PVH is the direct boot protocol implemented by most modern virtual machine
-//! monitors (e.g., Cloud Hypervisor, Firecracker, QEMU). The VMM enters the
-//! kernel in 32-bit protected mode with paging disabled and passes the
-//! physical address of an [`HvmStartInfoV0`] structure in `EBX`. The entry point
-//! itself is advertised through the PVH ELF note (see `note.S`).
-//!
-//! Reference:
-//! <https://xenbits.xen.org/docs/unstable/misc/pvh.html>
-//! <https://github.com/xen-project/xen/blob/staging-4.19/xen/include/public/arch-x86/hvm/start_info.h>
-
 use core::ffi::CStr;
 
 use int_to_c_enum::TryFromInt;
@@ -29,88 +15,52 @@ use crate::{
 #[cfg(feature = "pvh_boot")]
 core::arch::global_asm!(include_str!("note.S"));
 
-/// The magic value of [`HvmStartInfoV0::magic`], which is "xEn3" in ASCII.
 const HVM_START_MAGIC_VALUE: u32 = 0x336e_c578;
 
-/// The start-of-day structure (version 0) that a PVH-capable VMM passes to the guest.
-///
-/// Version 1 extends this with memory-map fields; access them via
-/// [`HvmStartInfoV1`] only after checking `version >= 1`.
 #[repr(C, packed)]
 struct HvmStartInfoV0 {
-    /// Magic value; must equal [`HVM_START_MAGIC_VALUE`].
     magic: u32,
-    /// Structure version. The memory-map fields are only present in version 1
-    /// and later.
     version: u32,
-    /// Flags; currently unused.
     flags: u32,
-    /// Number of entries in the module list.
     nr_modules: u32,
-    /// Physical address of the module list (an array of [`HvmModlistEntry`]).
     modlist_paddr: u64,
-    /// Physical address of the NUL-terminated kernel command line.
     cmdline_paddr: u64,
-    /// Physical address of the RSDP.
     rsdp_paddr: u64,
 }
 
-/// Version 1 extension of [`HvmStartInfoV0`], which adds memory-map fields.
 #[repr(C, packed)]
 struct HvmStartInfoV1 {
     v0: HvmStartInfoV0,
-    // The following fields are only present in version 1 and later.
-    /// Physical address of the memory map (an array of [`HvmMemmapTableEntry`]).
     memmap_paddr: u64,
-    /// Number of entries in the memory map.
     memmap_entries: u32,
-    /// Reserved.
     _reserved: u32,
 }
 
-/// An entry of the module list pointed to by [`HvmStartInfoV0::modlist_paddr`].
 #[repr(C, packed)]
 struct HvmModlistEntry {
-    /// Physical address of the module.
     paddr: u64,
-    /// Size of the module in bytes.
     size: u64,
-    /// Physical address of the module's NUL-terminated command line.
     cmdline_paddr: u64,
-    /// Reserved.
     _reserved: u64,
 }
 
-/// An entry of the memory map pointed to by [`HvmStartInfoV1::memmap_paddr`].
 #[repr(C, packed)]
 struct HvmMemmapTableEntry {
-    /// Start address of the region.
     addr: u64,
-    /// Size of the region in bytes.
     size: u64,
-    /// Region type; see [`HvmMemmapType`].
     typ: u32,
-    /// Reserved.
     _reserved: u32,
 }
 
-/// The type of a PVH memory map entry.
 #[repr(u32)]
 #[derive(Debug, TryFromInt)]
 enum HvmMemmapType {
-    /// Usable RAM.
     Ram = 1,
-    /// Memory reserved by the VMM.
     Reserved = 2,
-    /// ACPI tables; the memory can be reclaimed once they are parsed.
     Acpi = 3,
-    /// Non-volatile memory that must be preserved across sleep.
     Nvs = 4,
-    /// Memory that cannot be used.
     Unusable = 5,
-    /// Memory that has been disabled.
     Disabled = 6,
-    /// Persistent memory.
     Pmem = 7,
 }
 
@@ -140,8 +90,6 @@ impl HvmStartInfoV0 {
             return &[];
         }
 
-        // SAFETY: `modlist_paddr` points to an array of at least `nr_modules`
-        // valid entries by the contract with the VMM.
         unsafe {
             core::slice::from_raw_parts(
                 paddr_to_vaddr(self.modlist_paddr as Paddr) as *const HvmModlistEntry,
@@ -157,8 +105,6 @@ impl HvmStartInfoV1 {
             return None;
         }
 
-        // SAFETY: `memmap_paddr` points to an array of `memmap_entries` valid
-        // entries by the contract with the VMM.
         Some(unsafe {
             core::slice::from_raw_parts(
                 paddr_to_vaddr(self.memmap_paddr as Paddr) as *const HvmMemmapTableEntry,
@@ -178,10 +124,6 @@ impl ToEarlyBootInfo for HvmStartInfoV0 {
             return None;
         }
 
-        // SAFETY:
-        // 1. The command line is safe to read because of the contract with the VMM.
-        // 2. We reserve the command-line region in `finish_memory_regions`, so it will live as an
-        //    immutable reference for `'static`.
         let cmdline =
             unsafe { CStr::from_ptr(paddr_to_vaddr(self.cmdline_paddr as Paddr) as *const _) };
 
@@ -189,18 +131,12 @@ impl ToEarlyBootInfo for HvmStartInfoV0 {
     }
 
     fn initramfs(&self) -> Option<&'static [u8]> {
-        // The PVH protocol does not tag module kinds, so the first module is
-        // treated as the initramfs by convention.
         let module = self.modules().first()?;
 
         if module.paddr == 0 || module.size == 0 {
             return None;
         }
 
-        // SAFETY:
-        // 1. The initramfs is safe to read because of the contract with the loader.
-        // 2. We reserve the initramfs region in `memory_regions`, so it will live as an
-        //    immutable reference for `'static`.
         Some(unsafe {
             core::slice::from_raw_parts(
                 paddr_to_vaddr(module.paddr as Paddr) as *const u8,
@@ -222,7 +158,6 @@ impl ToEarlyBootInfo for HvmStartInfoV0 {
     }
 
     fn framebuffer_arg(&self) -> Option<BootloaderFramebufferArg> {
-        // PVH does not provide a bootloader framebuffer.
         None
     }
 
@@ -240,10 +175,7 @@ impl ToEarlyBootInfo for HvmStartInfoV0 {
             None
         };
 
-        // The memory-map fields are only valid in version 1 and later.
         if self.version >= 1 {
-            // SAFETY: `version >= 1` guarantees the V1 fields are present in the
-            // VMM-provided structure.
             let v1 = unsafe { &*(self as *const HvmStartInfoV0 as *const HvmStartInfoV1) };
             if let Some(memmap) = v1.memory_map() {
                 for entry in memmap {
@@ -265,28 +197,14 @@ impl ToEarlyBootInfo for HvmStartInfoV0 {
     }
 }
 
-/// The entry point of the Rust code portion of Asterinas (with PVH parameters).
-///
-/// # Safety
-///
-/// - This function must be called only once at a proper timing in the BSP's boot assembly code.
-/// - The caller must follow C calling conventions and put the right arguments in registers.
-/// - If this function is called, entry points of other boot protocols must never be called.
-// SAFETY: The name does not collide with other symbols.
 #[unsafe(no_mangle)]
 unsafe extern "sysv64" fn __pvh_entry(start_info_ptr: *const HvmStartInfoV0) -> ! {
-    // SAFETY: We get the start-of-day structure from the VMM, so by contract the pointer is valid
-    // and the underlying memory is initialized. The V0 fields are always present regardless of
-    // the version number.
     let start_info = unsafe { &*start_info_ptr };
 
-    // This is to avoid creating an unaligned reference when `assert_eq!` borrows its arguments.
     let magic = start_info.magic;
     assert_eq!(magic, HVM_START_MAGIC_VALUE);
 
     EARLY_INFO.call_once(|| start_info.to_early_boot_info());
 
-    // SAFETY: The safety is guaranteed by the safety preconditions and the fact that we call it
-    // once after setting up necessary resources.
     unsafe { start_kernel() };
 }

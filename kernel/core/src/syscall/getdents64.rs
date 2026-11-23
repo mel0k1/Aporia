@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::marker::PhantomData;
 
 use align_ext::AlignExt;
@@ -36,7 +34,7 @@ pub(super) fn sys_getdents(
     }
     let user_space = ctx.user_space();
     let writer = user_space.writer(buf_addr, buf_len)?;
-    let mut reader = DirentBufferReader::<Dirent>::new(writer); // Use the non-64-bit reader
+    let mut reader = DirentBufferReader::<Dirent>::new(writer);
     let _ = inode_handle.readdir(&mut reader)?;
     let read_len = reader.read_len();
     fs::vfs::notify::on_access(&file);
@@ -69,18 +67,12 @@ pub(super) fn sys_getdents64(
     Ok(SyscallReturn::Return(read_len as _))
 }
 
-/// The DirentSerializer can decide how to serialize the data.
 trait DirentSerializer {
-    /// Create a DirentSerializer.
     fn new(ino: u64, offset: u64, type_: InodeType, name: CString) -> Self;
-    /// Get the length of a directory entry.
     fn len(&self) -> usize;
-    /// Try to serialize a directory entry into buffer.
     fn serialize(&self, writer: &mut VmWriter) -> Result<()>;
 }
 
-/// The Buffered DirentReader to visit the dir entry.
-/// The DirentSerializer T decides how to serialize the data.
 struct DirentBufferReader<'a, T: DirentSerializer> {
     writer: VmWriter<'a>,
     read_len: usize,

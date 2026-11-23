@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd::sync::Waiter;
 
 use super::{
@@ -26,10 +24,8 @@ pub(super) fn sys_rt_sigsuspend(
     let sigmask = sigmask_ptr.read_val()?;
     ctx.save_and_set_sig_mask(sigmask);
 
-    // Wait until receiving any signal
     let waiter = Waiter::new_pair().0;
     waiter.pause_until(|| None::<()>)?;
 
-    // This syscall should always return `Err(EINTR)`. This path should never be reached.
     unreachable!("rt_sigsuspend always return EINTR");
 }

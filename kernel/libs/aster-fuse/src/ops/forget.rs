@@ -1,10 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! `FUSE_FORGET` releases lookup references held for an inode.
-//!
-//! The request body contains [`ForgetReq`] for the inode named by the request
-//! header. `FUSE_FORGET` is a one-way notification; the server sends no reply.
-
 use ostd::mm::{Infallible, VmReader, VmWriter};
 
 use crate::{FuseError, FuseOpcode, FuseOperation, FuseResult, ReplyExpectation};
@@ -12,7 +5,6 @@ use crate::{FuseError, FuseOpcode, FuseOperation, FuseResult, ReplyExpectation};
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub struct ForgetReq {
-    /// Number of lookup references being released.
     nlookup: u64,
 }
 

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::{
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     time::Duration,
@@ -249,8 +247,6 @@ impl Backlog {
         self.pollee.notify(SHUT_READ_EVENTS);
         self.connect_wait_queue.wake_all();
 
-        // Drop pending connections after releasing the lock, since dropping them may release
-        // the last references to files queued with `SCM_RIGHTS`.
         drop(old_conns);
     }
 
@@ -281,9 +277,6 @@ impl Backlog {
         is_seqpacket: bool,
     ) -> Result<Connected, (Error, Init)> {
         if is_seqpacket != self.is_seqpacket {
-            // FIXME: According to the Linux implementation, we should avoid this error by
-            // maintaining two socket tables for SOCK_STREAM sockets and SOCK_SEQPACKET sockets
-            // separately.
             return Err((
                 errno!(
                     ECONNREFUSED,
@@ -331,7 +324,6 @@ impl Backlog {
         Ok(client_conn)
     }
 
-    /// Blocks until the backlogs are free and the `try_connect` succeeds, or until interrupted.
     pub(super) fn block_connect<F>(
         &self,
         timeout: Option<Duration>,

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd::mm::VmIo;
 
 use crate::{
@@ -43,8 +41,6 @@ pub(super) fn sys_pidfd_send_signal(
     let signal = if let Some(sig_num) = sig_num {
         let siginfo = read_siginfo_from_user(info_ptr, sig_num, ctx)?;
 
-        // Only check `si_code` permissions when the user explicitly provided a siginfo.
-        // When `info_ptr` is `NULL`, the kernel generates the siginfo, so no restriction applies.
         if info_ptr != 0 {
             let is_self = match &target {
                 SignalTarget::Thread { tid, tgid: _ } => *tid == ctx.posix_thread.tid(),
@@ -93,8 +89,6 @@ fn read_siginfo_from_user(info_ptr: Vaddr, sig_num: SigNum, ctx: &Context) -> Re
         }
         Ok(si)
     } else {
-        // If `info_ptr` is NULL, the kernel constructs a default `siginfo_t` structure
-        // whose fields match the values that are implicitly supplied when a signal is sent using the kill(2).
         Ok(UserSignal::new_kill(sig_num, ctx).to_info())
     }
 }
@@ -104,7 +98,6 @@ fn get_target_from_pidfd(
     flags: PidfdSendSignalFlags,
     ctx: &Context,
 ) -> Result<SignalTarget> {
-    // Helper closures to create signal targets.
     let thread_target = |tid: Tid, tgid: Pid| SignalTarget::Thread { tid, tgid };
     let process_target = |pid: Pid| SignalTarget::Process { pid };
     let group_target = |pgid: Pgid| SignalTarget::ProcessGroup { pgid };
@@ -131,8 +124,6 @@ fn get_target_from_pidfd(
             let mut file_table = ctx.thread_local.borrow_file_table_mut();
             let file = get_file_fast!(&mut file_table, pidfd.try_into()?);
 
-            // FIXME: On Linux, a pidfd can be also obtained by opening a `/proc/pid` directory.
-            // Reference: <https://man7.org/linux/man-pages/man2/pidfd_send_signal.2.html>
             let Some(pid_file) = file.downcast_ref::<PidFile>() else {
                 return Err(errno!(EBADF, "the file is not a PID file"));
             };
@@ -142,19 +133,11 @@ fn get_target_from_pidfd(
             };
 
             match flags {
-                PidfdSendSignalFlags::Default => {
-                    // FIXME: On Linux, a pidfd can refer to either a process or a thread.
-                    // We currently only support pidfds that refer to processes.
-                    process_target(process.pid())
-                }
-                PidfdSendSignalFlags::Thread => {
-                    // FIXME: On Linux, the signal can be sent to any thread.
-                    // We currently only support the main thread.
-                    thread_target(
-                        process.main_thread().as_posix_thread().unwrap().tid(),
-                        process.pid(),
-                    )
-                }
+                PidfdSendSignalFlags::Default => process_target(process.pid()),
+                PidfdSendSignalFlags::Thread => thread_target(
+                    process.main_thread().as_posix_thread().unwrap().tid(),
+                    process.pid(),
+                ),
                 PidfdSendSignalFlags::ThreadGroup => process_target(process.pid()),
                 PidfdSendSignalFlags::ProcessGroup => group_target(process.pid()),
             }
@@ -170,7 +153,6 @@ enum SignalTarget {
     ProcessGroup { pgid: Pgid },
 }
 
-// Reference: <https://elixir.bootlin.com/linux/v6.18/source/include/uapi/linux/pidfd.h#L19>.
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, TryFromInt)]
 enum PidfdSendSignalFlags {
@@ -180,6 +162,5 @@ enum PidfdSendSignalFlags {
     ProcessGroup = 0x4,
 }
 
-// Reference: <https://elixir.bootlin.com/linux/v6.18/source/include/uapi/linux/fcntl.h#L110>.
 const PIDFD_SELF_THREAD: i32 = -10000;
 const PIDFD_SELF_THREAD_GROUP: i32 = -10001;

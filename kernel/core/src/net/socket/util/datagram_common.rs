@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::{RecvFlags, RecvOutput, SendFlags};
 use crate::{
     events::IoEvents,
@@ -146,9 +144,6 @@ where
         }
     }
 
-    // If you're looking for `try_send`, there isn't one. Use `select_remote_and_bind` below and
-    // call `Bound::try_send` directly.
-
     pub(crate) fn check_io_events(&self) -> IoEvents {
         match self {
             Inner::Unbound(unbound_datagram) => unbound_datagram.check_io_events(),
@@ -157,19 +152,6 @@ where
     }
 }
 
-/// Selects the remote endpoint and binds if the socket is not bound.
-///
-/// The remote endpoint specified in the system call (e.g., `sendto`) argument is preferred,
-/// otherwise the connected endpoint of the socket is used. If there are no remote endpoints
-/// available, this method will fail with [`EDESTADDRREQ`].
-///
-/// If the remote endpoint is specified but the socket is not bound, this method will try to
-/// bind the socket to an ephemeral endpoint.
-///
-/// If the above steps succeed, `op` will be called with the bound socket and the selected
-/// remote endpoint.
-///
-/// [`EDESTADDRREQ`]: crate::error::Errno::EDESTADDRREQ
 pub(crate) fn select_remote_and_bind<UnboundSocket, BoundSocket, B, F, R>(
     inner_mutex: &RwMutex<Inner<UnboundSocket, BoundSocket>>,
     remote: Option<&UnboundSocket::Endpoint>,
@@ -184,21 +166,16 @@ where
 {
     let mut inner = inner_mutex.read();
 
-    // Not really a loop, since we always break on the first iteration. But we need to use
-    // `loop` here because we want to use `break` later.
     #[expect(clippy::never_loop)]
     let bound_datagram = loop {
-        // Fast path: The socket is already bound.
         if let Inner::Bound(bound_datagram) = &*inner {
             break bound_datagram;
         }
 
-        // Slow path: Try to bind the socket to an ephemeral endpoint.
         drop(inner);
         bind_ephemeral()?;
         inner = inner_mutex.read();
 
-        // Now the socket must be bound.
         if let Inner::Bound(bound_datagram) = &*inner {
             break bound_datagram;
         }

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::marker::PhantomData;
 
 use ostd::{
@@ -19,12 +17,10 @@ cpu_local_cell! {
     static DISABLE_SOFTIRQ_COUNT: u8 = 0;
 }
 
-/// Returns whether softirq is enabled on local CPU.
 pub(super) fn is_softirq_enabled() -> bool {
     DISABLE_SOFTIRQ_COUNT.load() == 0
 }
 
-/// A guard for disabled local softirqs.
 pub struct DisableLocalBottomHalfGuard {
     preempt: DisabledPreemptGuard,
 }
@@ -38,17 +34,10 @@ impl AsAtomicModeGuard for DisableLocalBottomHalfGuard {
 impl Drop for DisableLocalBottomHalfGuard {
     fn drop(&mut self) {
         let in_task_context = InterruptLevel::current().is_task_context();
-        // Once the guard is dropped, we will process pending items within
-        // the current thread's context if softirq is going to be enabled.
-        // This behavior is similar to how Linux handles pending softirqs.
         if DISABLE_SOFTIRQ_COUNT.load() == 1 && in_task_context {
-            // Preemption and softirq are not really enabled at the moment,
-            // so we can guarantee that we'll process any pending softirqs for the current CPU.
             let irq_guard = disable_local();
             let irq_guard = process_all_pending(irq_guard);
 
-            // To avoid race conditions, we should decrease the softirq count first,
-            // then drop the IRQ guard.
             DISABLE_SOFTIRQ_COUNT.sub_assign(1);
             drop(irq_guard);
             return;
@@ -60,8 +49,6 @@ impl Drop for DisableLocalBottomHalfGuard {
 
 #[must_use]
 fn disable_local_bottom_half() -> DisableLocalBottomHalfGuard {
-    // When disabling softirq, we must also disable preemption
-    // to avoid the task to be scheduled to other CPUs.
     let preempt = disable_preempt();
     DISABLE_SOFTIRQ_COUNT.add_assign(1);
     DisableLocalBottomHalfGuard { preempt }
@@ -73,7 +60,6 @@ impl GuardTransfer for DisableLocalBottomHalfGuard {
     }
 }
 
-/// A guardian that disables bottom half while holding a lock.
 pub enum BottomHalfDisabled {}
 
 impl SpinGuardian for BottomHalfDisabled {
@@ -89,11 +75,6 @@ impl SpinGuardian for BottomHalfDisabled {
     }
 }
 
-/// A guard for disabled local softirqs when there is a pre-existing preempt guard.
-///
-/// Note the difference between this guard and [`DisableLocalBottomHalfGuard`]:
-/// the former keeps a reference to a [`DisabledPreemptGuard`] guard,
-/// while the latter _owns_ one.
 pub(super) struct DisableLocalBottomHalfGuardInPreempt<'a> {
     phantom_data: PhantomData<&'a DisabledPreemptGuard>,
 }

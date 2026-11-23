@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use aster_bigtcp::{
     errors::BindError,
     iface::BindPortConfig,
@@ -56,12 +54,6 @@ pub(super) fn get_ephemeral_endpoint(remote_endpoint: &IpEndpoint) -> Result<IpE
     Ok(IpEndpoint::new(source, 0))
 }
 
-/// Maps an unspecified `connect` destination to the loopback address.
-///
-/// Linux treats `connect` to an unspecified address as connecting to localhost.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v7.0/source/net/ipv4/route.c#L2803-L2812>.
-/// Reference: <https://elixir.bootlin.com/linux/v7.0/source/net/ipv6/tcp_ipv6.c#L171-L181>.
 pub(super) fn map_unspecified_to_localhost(mut endpoint: IpEndpoint) -> IpEndpoint {
     endpoint.addr = match endpoint.addr {
         IpAddress::Ipv4(address) if address.is_unspecified() => Ipv4Address::LOCALHOST.into(),

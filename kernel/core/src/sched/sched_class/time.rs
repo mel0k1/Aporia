@@ -1,12 +1,7 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::mem;
 
 use spin::Once;
 
-/// Returns the numerator and denominator of the ratio R:
-///
-///     R = 10^9 (ns in a sec) / TSC clock frequency
 fn tsc_factors() -> (u64, u64) {
     static FACTORS: Once<(u64, u64)> = Once::new();
     *FACTORS.call_once(|| {
@@ -28,10 +23,8 @@ fn tsc_factors() -> (u64, u64) {
     })
 }
 
-/// The base time slice allocated for every thread, measured in nanoseconds.
 pub(crate) const BASE_SLICE_NS: u64 = 750_000;
 
-/// The minimum scheduling period, measured in nanoseconds.
 pub(crate) const MIN_PERIOD_NS: u64 = 6_000_000;
 
 fn consts() -> (u64, u64) {
@@ -42,12 +35,10 @@ fn consts() -> (u64, u64) {
     })
 }
 
-/// Returns the base time slice allocated for every thread, measured in TSC clock units.
 pub(crate) fn base_slice_clocks() -> u64 {
     consts().0
 }
 
-/// Returns the minimum scheduling period, measured in TSC clock units.
 pub(crate) fn min_period_clocks() -> u64 {
     consts().1
 }

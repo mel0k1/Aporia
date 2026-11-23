@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use ostd::{cpu::CpuId, mm::VmIo};
 
 use super::SyscallReturn;
@@ -11,11 +9,7 @@ pub(super) fn sys_getcpu(
     _tcache: Vaddr,
     ctx: &Context,
 ) -> Result<SyscallReturn> {
-    // The third argument `tcache` is unused since Linux 2.6.24, so we ignore it.
-
-    // The system call itself is inherently racy, so using `current_racy` here should be fine.
     let current_cpu: u32 = CpuId::current_racy().into();
-    // TODO: Support NUMA.
     let current_node = 0u32;
 
     debug!(
@@ -25,7 +19,6 @@ pub(super) fn sys_getcpu(
         current_node,
     );
 
-    // `cpu` and `node` can be NULL, so we need to check before writing.
     if cpu != 0 {
         ctx.user_space().write_val(cpu, &current_cpu)?;
     }

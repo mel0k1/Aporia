@@ -46,7 +46,7 @@ def render_dropped(dropped):
            "> Listed here so they aren't lost.", ""]
     for c in dropped:
         if not c.get("line"):
-            loc = "`%s`" % c["path"]                                  # file-level / commit message
+            loc = "`%s`" % c["path"]
         elif c.get("start_line") and c["start_line"] != c["line"]:
             loc = "`%s` lines %s-%s" % (c["path"], c["start_line"], c["line"])
         else:
@@ -56,23 +56,20 @@ def render_dropped(dropped):
 
 
 def parse(text, diff):
-    # strip YAML frontmatter (first --- ... --- pair)
     lines = text.split("\n")
     if lines and lines[0].strip() == "---":
         for i in range(1, len(lines)):
             if lines[i].strip() == "---":
                 text = "\n".join(lines[i + 1:]); break
 
-    # review body = `# Summary` .. first `## ` (persona); keep consolidated-fix blockquotes
     summary = ""
     m = re.search(r'^# Summary\s*$', text, re.M)
     if m:
         rest = text[m.end():]
         m2 = re.search(r'^## ', rest, re.M)
         summary = (rest[:m2.start()] if m2 else rest).strip()
-        summary = re.sub(r'\n*-{3,}\s*$', '', summary).strip()   # drop a trailing --- rule
+        summary = re.sub(r'\n*-{3,}\s*$', '', summary).strip()
 
-    # comments: each `### `path` line N` (or `lines N-M`, or bare path = file-level)
     heading = re.compile(r'^###\s+`([^`]+)`(?:\s+lines?\s+(\d+)(?:-(\d+))?)?\s*$', re.M)
     hits = list(heading.finditer(text))
     comments = []
@@ -82,9 +79,9 @@ def parse(text, diff):
         kept = []
         for ln in seg.split("\n"):
             s = ln.strip()
-            if s.startswith("##"):       # reached the next persona section
+            if s.startswith("##"):
                 break
-            if s.startswith(">"):         # the quoted diff block — GitHub shows the diff already
+            if s.startswith(">"):
                 continue
             kept.append(ln)
         body = "\n".join(kept).strip()
@@ -99,31 +96,25 @@ def parse(text, diff):
             c["subject_type"] = "file"
         comments.append(c)
 
-    # RIGHT-side line numbers present in the PR diff (added + context); GitHub drops the rest.
-    # File boundaries are keyed off `diff --git`, and lines are counted ONLY inside a hunk, so
-    # that (a) an added line whose own text starts with `+++ `/`--- ` is treated as content, not
-    # a file header, and (b) the inter-file `diff --git`/`index` lines are not miscounted as
-    # context for the previous file.
     postable, cur, newno, in_hunk = {}, None, 0, False
     for ln in (diff or "").split("\n"):
         if ln.startswith("diff --git "):
-            cur, in_hunk = None, False       # leaving the previous file; next `+++ b/` sets cur
+            cur, in_hunk = None, False
         elif ln.startswith("@@"):
             m = re.search(r'\+(\d+)', ln); newno = int(m.group(1)) if m else 0
             in_hunk = True
         elif not in_hunk and ln.startswith("+++ b/"):
             cur = ln[6:]; postable.setdefault(cur, set())
         elif not in_hunk and ln.startswith("+++ "):
-            cur = None                       # e.g. `+++ /dev/null` (deleted file: no RIGHT side)
+            cur = None
         elif in_hunk and cur is not None:
             if ln.startswith("+"):
                 postable[cur].add(newno); newno += 1
             elif ln.startswith("-"):
                 pass
-            elif not ln.startswith("\\"):    # context line (incl. blank); ignore "\ No newline"
+            elif not ln.startswith("\\"):
                 postable[cur].add(newno); newno += 1
 
-    # with no diff, nothing is dropped (postable empty -> treat all as kept)
     have_diff = bool(postable)
     kept_c, dropped = [], []
     for c in comments:
@@ -143,9 +134,6 @@ if __name__ == "__main__":
     rf = os.environ.get("REVIEW_FILE")
     if not rf:
         sys.stderr.write("parse_review.py: REVIEW_FILE is required\n"); sys.exit(2)
-    # Prefer DIFF_FILE (a path)
-    # — a large PR diff overflows the exec arg list if passed inline via DIFF.
-    # DIFF (inline) remains for the model-free tests.
     df = os.environ.get("DIFF_FILE")
     diff = open(df).read() if df else os.environ.get("DIFF", "")
     print(json.dumps(parse(open(rf).read(), diff)))

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use aster_rights::ReadOp;
@@ -14,38 +12,24 @@ use crate::{
     time::clocks::RealTimeCoarseClock,
 };
 
-// The following constant values are derived from the default values in Linux.
-
-/// Maximum number of semaphore sets.
 pub(crate) const SEMMNI: usize = 32000;
-/// Maximum number of semaphores per semaphore ID.
 pub(crate) const SEMMSL: usize = 32000;
-/// Maximum number of semaphores in all semaphore sets.
 #[expect(dead_code)]
 pub(crate) const SEMMNS: usize = SEMMNI * SEMMSL;
-/// Maximum number of operations for semop.
 pub(crate) const SEMOPM: usize = 500;
-/// Maximum semaphore value.
 pub(crate) const SEMVMX: i32 = 32767;
-/// Maximum value that can be recorded for semaphore adjustment (SEM_UNDO).
 #[expect(dead_code)]
 pub(crate) const SEMAEM: i32 = SEMVMX;
 
 #[derive(Debug)]
 pub(crate) struct SemaphoreSet {
-    /// Number of semaphores in the set
     num_sems: usize,
-    /// Inner
     inner: Mutex<SemSetInner>,
-    /// Semaphore permission
     permission: IpcPermission,
-    /// Creation time or last modification via `semctl`
     sem_ctime: AtomicU64,
-    /// Last `semop` time
     sem_otime: AtomicU64,
 }
 
-// Reference: <https://elixir.bootlin.com/linux/v6.18/source/include/uapi/asm-generic/ipcbuf.h#L22>.
 #[padding_struct]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
@@ -63,9 +47,6 @@ struct IpcPerm {
     _unused2: u64,
 }
 
-// In Linux, most popular 64-bit architectures except x86_64 adopt the same
-// layout of `semid_ds`.
-// Reference: <https://elixir.bootlin.com/linux/v6.16.9/A/ident/semid64_ds>.
 #[cfg(target_arch = "x86_64")]
 #[padding_struct]
 #[repr(C)]
@@ -96,11 +77,8 @@ pub(crate) struct SemidDs {
 
 #[derive(Debug)]
 pub(super) struct SemSetInner {
-    /// Semaphores
     pub(super) sems: Box<[Semaphore]>,
-    /// Pending alter operations.
     pub(super) pending_alter: LinkedList<PendingOp>,
-    /// Pending zeros operations.
     pub(super) pending_const: LinkedList<PendingOp>,
 }
 
@@ -121,8 +99,6 @@ impl SemSetInner {
 }
 
 impl SemaphoreSet {
-    /// Counts the number of pending operations waiting for the semaphore at `sem_num` to become
-    /// zero.
     pub(crate) fn pending_zero_count(&self, sem_num: usize) -> Result<usize> {
         if sem_num >= self.num_sems {
             return Err(errno!(EINVAL, "the semaphore number is out of bounds"));
@@ -142,8 +118,6 @@ impl SemaphoreSet {
         Ok(count_const + count_alter)
     }
 
-    /// Counts the number of pending operations waiting for the semaphore at `sem_num` to be able to
-    /// decrease by a certain amount.
     pub(crate) fn pending_decrease_count(&self, sem_num: usize) -> Result<usize> {
         if sem_num >= self.num_sems {
             return Err(errno!(EINVAL, "the semaphore number is out of bounds"));

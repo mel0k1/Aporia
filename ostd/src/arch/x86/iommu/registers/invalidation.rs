@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Invalidation-related registers
-
 use core::ptr::NonNull;
 
 use volatile::{
@@ -30,25 +26,14 @@ pub(super) struct InvalidationRegisters {
 }
 
 impl InvalidationRegisters {
-    /// Creates an instance from the IOMMU base address.
-    ///
-    /// # Safety
-    ///
-    /// The caller must ensure that the base address is a valid IOMMU base address and that it has
-    /// exclusive ownership of the IOMMU invalidation registers.
     pub(super) unsafe fn new(base: NonNull<u8>) -> Self {
         let offset = {
-            // SAFETY: The safety is upheld by the caller.
             let extended_capability =
                 unsafe { VolatileRef::new_read_only(base.add(0x10).cast::<u64>()) };
             let extend_cap = ExtendedCapability::new(extended_capability.as_ptr().read());
             extend_cap.iotlb_register_offset() as usize * 16
         };
 
-        // FIXME: We now trust the hardware. We should instead find a way to check that `offset`
-        // are reasonable values before proceeding.
-
-        // SAFETY: The safety is upheld by the caller and the correctness of the capability value.
         unsafe {
             Self {
                 _queue_head: VolatileRef::new_read_only(base.add(0x80).cast::<u64>()),

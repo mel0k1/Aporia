@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::{
     net::Ipv4Addr,
     sync::atomic::{AtomicBool, Ordering},
@@ -32,25 +30,7 @@ use crate::{
 
 pub(super) struct InitStream {
     bound_port: Option<BoundTcpPort>,
-    /// Indicates if the last `connect()` is considered to be done.
-    ///
-    /// If `connect()` is called but we're still in the `InitStream`, this means that the
-    /// connection is refused.
-    ///
-    ///  * If the connection is refused synchronously, the error code is returned by the
-    ///    `connect()` system call, and after that we always consider the `connect()` to be already
-    ///    done.
-    ///
-    ///  * If the connection is refused asynchronously (e.g., non-blocking sockets or interrupted
-    ///    `connect()`), the last `connect()` is not considered to have been done until another
-    ///    `connect()`, which checks and resets the boolean value and returns an appropriate error
-    ///    code.
     is_connect_done: bool,
-    /// Indicates whether the socket error is `ECONNREFUSED`.
-    ///
-    /// This boolean value is set to true when the connection is refused and set to false when the
-    /// error code is reported via `getsockopt(SOL_SOCKET, SO_ERROR)`, `send()`, `recv()`, or
-    /// `connect()`.
     is_conn_refused: AtomicBool,
 }
 
@@ -89,8 +69,6 @@ impl InitStream {
             return Err(errno!(EINVAL, "the socket is already bound to an address"));
         }
 
-        // When we support `IPV6_V6ONLY` and if it is set, we should also reject IPv4-mapped
-        // IPv6 addresses.
         if IpAddressFamily::from(endpoint.addr) != family {
             return Err(errno!(
                 EAFNOSUPPORT,
@@ -120,8 +98,6 @@ impl InitStream {
             "`finish_last_connect()` should be called before calling `connect()`"
         );
 
-        // When we support `IPV6_V6ONLY` and if it is set, we should also reject IPv4-mapped
-        // IPv6 addresses.
         if IpAddressFamily::from(remote_endpoint.addr) != family {
             return Err((
                 errno!(
@@ -132,12 +108,6 @@ impl InitStream {
             ));
         }
 
-        // FIXME: This is a temporary compatibility workaround for some gVisor test cases.
-        // Remove it once IPv4-mapped IPv6 TCP is supported.
-        // gVisor expects that connecting to `::ffff:0.0.0.0` returns `ECONNREFUSED`
-        // when there's no listener on that address.
-        // Linux handles `::ffff:0.0.0.0` via the IPv4 TCP path and routes it to `127.0.0.1`.
-        // IPv4-mapped loopback addresses also use the IPv4 TCP path.
         let is_ipv4_mapped_localhost = matches!(
             remote_endpoint.addr,
             IpAddress::Ipv6(address)
@@ -222,8 +192,6 @@ impl InitStream {
         observer: StreamObserver,
     ) -> Result<ListenStream, (Error, Self)> {
         if !self.is_connect_done {
-            // See the comments of `is_connect_done`.
-            // `listen()` is also not allowed until the second `connect()`.
             return Err((
                 errno!(
                     EINVAL,
@@ -234,8 +202,6 @@ impl InitStream {
         }
 
         let Some(bound_port) = self.bound_port else {
-            // FIXME: The socket should be bound to INADDR_ANY (i.e., 0.0.0.0) with an ephemeral
-            // port. However, INADDR_ANY is not yet supported, so we need to return an error first.
             warn!("listen() without bind() is not implemented");
             return Err((
                 errno!(EINVAL, "listen() without bind() is not implemented"),
@@ -250,12 +216,7 @@ impl InitStream {
     }
 
     pub(super) fn try_recv(&self) -> Result<(usize, SocketAddr)> {
-        // FIXME: Linux does not return addresses for `recvfrom` on connection-oriented sockets.
-        // This is a placeholder that has no Linux equivalent. (Note also that in this case
-        // `getpeeraddr` will simply fail with `ENOTCONN`).
         const UNSPECIFIED_SOCKET_ADDR: SocketAddr = SocketAddr::IPv4(Ipv4Addr::UNSPECIFIED, 0);
-
-        // Below are some magic checks to make our behavior identical to Linux.
 
         if self.is_connect_done {
             return Err(errno!(ENOTCONN, "the socket is not connected"));
@@ -283,7 +244,6 @@ impl InitStream {
     }
 
     pub(super) fn check_io_events(&self) -> IoEvents {
-        // Linux adds OUT and HUP events for a newly created socket
         let mut events = IoEvents::OUT | IoEvents::HUP;
 
         if self.is_conn_refused.load(Ordering::Relaxed) {

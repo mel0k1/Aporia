@@ -1,11 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Virtio-fs request queue management.
-//!
-//! This module defines [`FsRequestQueue`], which submits [`FuseRequest`] values
-//! to a virtqueue, tracks in-flight requests, and completes replies outside the
-//! IRQ-disabled queue lock.
-
 use alloc::{sync::Arc, vec::Vec};
 use core::mem;
 
@@ -23,15 +15,8 @@ use spin::Once;
 use super::request::FuseRequest;
 use crate::queue::VirtQueue;
 
-/// Maximum virtqueue descriptors used by one FUSE request.
-///
-/// A request may contain a request header, multiple read/write payload buffers,
-/// a reply header, and a write reply payload. Operation-specific limits reserve
-/// descriptors for these fixed parts and keep one request from exhausting a
-/// queue.
 pub(crate) const MAX_DMA_BUFS_PER_REQUEST: usize = 64;
 
-/// A virtio-fs request queue and its in-flight request state.
 pub(super) struct FsRequestQueue {
     inner: SpinLock<FsRequestQueueInner, LocalIrqDisabled>,
     wait_queue: WaitQueue,
@@ -50,7 +35,6 @@ struct CompletedFuseRequest {
 }
 
 impl FsRequestQueue {
-    /// Creates a request queue backed by a virtqueue.
     pub(super) fn new(queue: VirtQueue) -> Arc<Self> {
         Arc::new(Self {
             inner: SpinLock::new(FsRequestQueueInner {
@@ -63,7 +47,6 @@ impl FsRequestQueue {
         })
     }
 
-    /// Initializes the deferred completion handler for this queue.
     pub(super) fn init_completion_taskless(self: &Arc<Self>) {
         let queue_weak = Arc::downgrade(self);
 
@@ -84,7 +67,6 @@ impl FsRequestQueue {
         });
     }
 
-    /// Submits a FUSE request to the virtqueue.
     pub(super) fn add_request(&self, request: FuseRequest) -> Result<(), FuseError> {
         let num_dma_bufs = request.num_dma_bufs();
         debug_assert!(num_dma_bufs <= MAX_DMA_BUFS_PER_REQUEST);
@@ -128,7 +110,6 @@ impl FsRequestQueue {
         Ok(())
     }
 
-    /// Moves completed virtqueue descriptors into the pending-completion list.
     pub(super) fn drain_completed_requests(&self) {
         let mut inner = self.inner.lock();
         let mut has_freed_descs = false;
@@ -147,7 +128,6 @@ impl FsRequestQueue {
         }
     }
 
-    /// Schedules deferred completion processing for this queue.
     pub(super) fn schedule_completion_taskless(&self) {
         self.taskless.get().unwrap().schedule();
     }

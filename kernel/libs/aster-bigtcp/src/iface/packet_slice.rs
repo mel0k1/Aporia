@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::ops::Range;
 
 use ostd::mm::{Infallible, VmReader, VmWriter};

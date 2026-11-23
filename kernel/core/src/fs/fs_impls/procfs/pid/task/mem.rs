@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::TidDirOps;
 use crate::{
     events::IoEvents,
@@ -17,12 +15,10 @@ use crate::{
     thread::Thread,
 };
 
-/// Represents the inode at `/proc/[pid]/task/[tid]/mem` (and also `/proc/[pid]/mem`).
 pub(super) struct MemFileOps(TidDirOps);
 
 impl MemFileOps {
     pub(super) fn new_inode(dir: &TidDirOps, parent: Weak<dyn Inode>) -> Arc<dyn Inode> {
-        // Reference: <https://elixir.bootlin.com/linux/v6.16.5/source/fs/proc/base.c#L3347>
         ProcFile::new(Self(dir.clone()), parent, mkmod!(u+rw))
     }
 }
@@ -40,8 +36,6 @@ impl ProcFileOpsByHandle for MemFileOps {
         let Some(process) = self.0.process() else {
             return Err(errno!(ESRCH, "the process does not exist"));
         };
-        // Hold the process VMAR lock while checking access permissions and
-        // taking the VMAR identity snapshot to prevent race conditions.
         let vmar_guard = process.lock_vmar();
 
         process
@@ -59,7 +53,6 @@ impl ProcFileOpsByHandle for MemFileOps {
     }
 }
 
-/// A file handle opened from `/proc/[pid]/task/[tid]/mem` (and also `/proc/[pid]/mem`).
 struct MemFileHandle(TidDirOps, VmarSnapshot);
 
 impl Pollable for MemFileHandle {
@@ -77,16 +70,13 @@ impl FileOps for MemFileHandle {
         _status_flags: StatusFlags,
     ) -> Result<usize> {
         let Some(process) = self.0.process() else {
-            // The process does not exist.
             return Ok(0);
         };
         let vmar_guard = process.lock_vmar();
         if !vmar_guard.is_same_as(&self.1) {
-            // The process has executed a new program.
             return Ok(0);
         }
         let Some(vmar) = vmar_guard.as_ref() else {
-            // The process has exited.
             return Ok(0);
         };
 
@@ -104,16 +94,13 @@ impl FileOps for MemFileHandle {
         _status_flags: StatusFlags,
     ) -> Result<usize> {
         let Some(process) = self.0.process() else {
-            // The process does not exist.
             return Ok(0);
         };
         let vmar_guard = process.lock_vmar();
         if !vmar_guard.is_same_as(&self.1) {
-            // The process has executed a new program.
             return Ok(0);
         }
         let Some(vmar) = vmar_guard.as_ref() else {
-            // The process has exited.
             return Ok(0);
         };
 

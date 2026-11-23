@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::{boxed::Box, string::ToString, sync::Arc, vec::Vec};
 use core::fmt::Debug;
 
@@ -27,13 +25,10 @@ use crate::{
 
 pub struct NetworkDevice {
     config_manager: ConfigManager<VirtioNetConfig>,
-    // For smoltcp use
     caps: DeviceCapabilities,
     mac_addr: EthernetAddress,
     send_queue: VirtQueue,
     recv_queue: VirtQueue,
-    // Since the virtio net header remains consistent for each sending packet,
-    // we store it to avoid recreating the header repeatedly.
     header: VirtioNetHdr,
     tx_buffers: Vec<Option<TxBuffer>>,
     rx_buffers: SlotVec<RxBuffer>,
@@ -42,7 +37,6 @@ pub struct NetworkDevice {
     poll_stat: PollStatistics,
 }
 
-/// Structure to track the number of packets sent and received during a single polling process.
 struct PollStatistics {
     sent_packet: usize,
     received_packet: usize,
@@ -116,12 +110,10 @@ impl NetworkDevice {
             poll_stat: PollStatistics::new(),
         };
 
-        /// Interrupt handler if network device config space changes
         fn config_space_change(_: &TrapFrame) {
             debug!("network device config space change");
         }
 
-        /// Interrupt handlers if network device receives/sends some packet
         fn handle_send_event(_: &TrapFrame) {
             aster_network::raise_send_softirq();
         }
@@ -153,7 +145,6 @@ impl NetworkDevice {
         Ok(())
     }
 
-    /// Adds a `RxBuffer` to the receive queue.
     fn add_rx_buffer(&mut self, rx_buffer: RxBuffer) -> Result<(), queue::AddBufsError> {
         let token = self.recv_queue.add_output_bufs(&[&rx_buffer])?;
         assert!(self.rx_buffers.put_at(token as usize, rx_buffer).is_none());
@@ -161,19 +152,14 @@ impl NetworkDevice {
         self.poll_stat.received_packet += 1;
 
         if self.poll_stat.received_packet == QUEUE_SIZE as _ {
-            // If we know there are no free buffers for receiving,
-            // we will notify the receive queue as soon as possible.
             self.notify_receive_queue();
         }
 
         Ok(())
     }
 
-    /// Receives a packet from network.
     fn receive(&mut self) -> Result<RxPacket<LinkLayer>, NetError> {
         if self.new_rx_buffer.is_none() {
-            // FIXME: Ideally, we can reuse the returned buffer without creating new buffer.
-            // But this requires locking device to be compatible with smoltcp interface.
             let rx_pool = RX_BUFFER_POOL.get().unwrap();
             let new_rx_buffer = RxBuffer::alloc(rx_pool).map_err(|_| NetError::NoMemory)?;
 
@@ -195,7 +181,6 @@ impl NetworkDevice {
         Ok(packet.peel(size_of::<VirtioNetHdr>()))
     }
 
-    /// Sends a packet to network.
     fn send(&mut self, packet: TxPacket<LinkLayer>) -> Result<(), NetError> {
         if !self.can_send() {
             return Err(NetError::Busy);
@@ -210,8 +195,6 @@ impl NetworkDevice {
         self.poll_stat.sent_packet += 1;
 
         if self.send_queue.available_desc() == 0 {
-            // If the send queue is full,
-            // we will notify the send queue as soon as possible.
             self.notify_send_queue();
         }
 
@@ -222,11 +205,6 @@ impl NetworkDevice {
 
         self.free_processed_tx_buffers();
 
-        // If the send queue is not full, we can free the send buffers during the next sending process.
-        // Therefore, there is no need to free the used buffers in the IRQ handlers.
-        // This allows us to temporarily disable the send queue interrupt.
-        // Conversely, if the send queue is full, the send queue interrupt should remain enabled
-        // to free the send buffers as quickly as possible.
         if !self.can_send() {
             self.send_queue.enable_callback();
         } else {
@@ -276,14 +254,8 @@ fn init_caps(features: &NetworkFeatures, config: &VirtioNetConfig) -> DeviceCapa
     caps.medium = Medium::Ethernet;
 
     if features.contains(NetworkFeatures::VIRTIO_NET_F_MTU) {
-        // If `VIRTIO_NET_F_MTU` is negotiated, the MTU is decided by the device.
         caps.max_transmission_unit = config.mtu as usize;
     } else {
-        // We do not support these features,
-        // so this asserts that they are _not_ negotiated.
-        //
-        // Without these features, the MTU is 1514 bytes per the virtio-net specification
-        // (see "5.1.6.3 Setting Up Receive Buffers" and "5.1.6.2 Packet Transmission").
         assert!(
             !features.contains(NetworkFeatures::VIRTIO_NET_F_GUEST_TSO4)
                 && !features.contains(NetworkFeatures::VIRTIO_NET_F_GUEST_TSO6)
@@ -292,10 +264,6 @@ fn init_caps(features: &NetworkFeatures, config: &VirtioNetConfig) -> DeviceCapa
         caps.max_transmission_unit = 1514;
     }
 
-    // We do not support checksum offloading.
-    // So the features must not be negotiated,
-    // and we must deliver fully checksummed packets to the device
-    // and validate all checksums for packets from the device.
     assert!(
         !features.contains(NetworkFeatures::VIRTIO_NET_F_CSUM)
             && !features.contains(NetworkFeatures::VIRTIO_NET_F_GUEST_CSUM)

@@ -1,16 +1,8 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! A simpledrm driver backed by the bootloader-provided framebuffer.
-//!
-//! It obtains framebuffer information from `aster-framebuffer` and registers
-//! the resulting DRM device with `aster-drm`.
-
 #![no_std]
 #![deny(unsafe_code)]
 
 extern crate alloc;
 
-// Set this crate's log prefix for `ostd::log`.
 macro_rules! __log_prefix {
     () => {
         "simpledrm: "
@@ -87,12 +79,6 @@ impl SimpleDrmDevice {
         let pixel_format = match boot_framebuffer.pixel_format() {
             PixelFormat::BgrReserved => DrmPixelFormat::XRGB8888,
             format => {
-                // TODO: Derive the exact DRM format once framebuffer initialization
-                // preserves the complete boot framebuffer layout.
-                // See `aster_framebuffer::framebuffer::init` for boot framebuffer initialization.
-                //
-                // Until then, advertise XRGB8888 so simpledrm remains available for
-                // KMS query tests. This may not match the actual framebuffer layout.
                 ostd::warn!(
                     "Boot framebuffer format {:?} has no DRM mapping; assuming XRGB8888",
                     format
@@ -237,8 +223,6 @@ impl DrmKmsOps for SimpleDrmDevice {
         let resolution = DrmSize::new(width, height);
 
         let display_mode = DrmDisplayMode::from_size(resolution, SIMPLEDRM_VREFRESH_HZ)?;
-        // `simpledrm` only has the boot framebuffer's pixel geometry here,
-        // so it relies on the shared physical-size fallback path.
         let display_info =
             DrmDisplayInfo::from_dpi(resolution, SIMPLEDRM_ASSUMED_DPI, SubpixelOrder::Unknown)?;
         Ok(DrmConnectorProbeState::new(
@@ -254,10 +238,6 @@ impl DrmKmsOps for SimpleDrmDevice {
         framebuffer: Option<&DrmFramebuffer>,
         source_rect: DrmRect,
     ) -> Result<()> {
-        // simpledrm has a single CRTC backed by the boot framebuffer, so the CRTC index is unused.
-        // With no framebuffer, there is nothing to copy to the firmware framebuffer.
-        // simpledrm cannot turn off the firmware display, so the last image remains visible
-        // while the DRM core clears its state.
         if let Some(framebuffer) = framebuffer {
             self.flush_framebuffer(framebuffer, source_rect)?;
         }

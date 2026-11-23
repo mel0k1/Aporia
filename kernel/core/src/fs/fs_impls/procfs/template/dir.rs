@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Reusable procfs directory inode templates and `readdir` helpers.
-
 #![short_vis_path::add(procfs)]
 
 use alloc::borrow::Cow;
@@ -28,11 +24,6 @@ use crate::{
     thread::Thread,
 };
 
-/// Wraps directory-specific procfs operations as a VFS inode.
-///
-/// `ProcDir` owns the directory implementation object,
-/// tracks parent linkage for `.` and `..`,
-/// and forwards inode methods that are common to all procfs directories.
 pub(in procfs) struct ProcDir<D: ProcDirOps> {
     inner: D,
     this: Weak<ProcDir<D>>,
@@ -41,7 +32,6 @@ pub(in procfs) struct ProcDir<D: ProcDirOps> {
 }
 
 impl<D: ProcDirOps> ProcDir<D> {
-    /// Creates the root procfs directory inode.
     pub(in procfs) fn new_root(
         dir: D,
         fs: Weak<dyn FileSystem>,
@@ -60,7 +50,6 @@ impl<D: ProcDirOps> ProcDir<D> {
         })
     }
 
-    /// Creates a non-root procfs directory inode under `parent`.
     pub(in procfs) fn new(dir: D, parent: Weak<dyn Inode>, mode: InodeMode) -> Arc<Self> {
         let common = {
             let fs = parent.upgrade().unwrap().fs();
@@ -89,7 +78,6 @@ impl<D: ProcDirOps> ProcDir<D> {
         self.parent.as_ref().and_then(|p| p.upgrade())
     }
 
-    /// Returns the directory-specific procfs operations.
     pub(in procfs) fn inner(&self) -> &D {
         &self.inner
     }
@@ -115,7 +103,6 @@ impl<D: ProcDirOps + 'static> FileOps for ProcDir<D> {
     }
 
     fn readdir_at(&self, offset: usize, visitor: &mut dyn DirentVisitor) -> Result<usize> {
-        /// Returns the always-present `.` and `..` entries for a procfs directory.
         fn special_entries<D: ProcDirOps + 'static>(
             dir: &ProcDir<D>,
         ) -> impl Iterator<Item = (&'static str, Arc<dyn Inode>, usize)> {
@@ -254,32 +241,17 @@ impl<D: ProcDirOps + 'static> Inode for ProcDir<D> {
     }
 
     fn seek_end(&self) -> Option<usize> {
-        // Seeking directories under `/proc` with `SEEK_END` will start from zero.
         Some(0)
     }
 }
 
 pub(in procfs) trait ProcDirOps: Sync + Send + Sized {
-    /// Returns the thread whose credentials own this procfs inode.
     fn owner_thread(&self) -> Option<Arc<Thread>> {
         None
     }
 
-    /// Looks up a child inode in `this_dir` by name.
     fn lookup_child(&self, this_dir: &ProcDir<Self>, name: &str) -> Result<Arc<dyn Inode>>;
 
-    /// Visits readdir entries whose continuation offsets are strictly greater than `offset`.
-    ///
-    /// Build entries with helpers from the [`readdir`] submodule and forward to
-    /// [`readdir::visit_readdir_entries`]. Common patterns:
-    ///
-    /// - Static or sequential children: [`readdir::sequential_readdir_entries`]
-    ///   or the [`readdir::visit_listed_entries`] convenience wrapper.
-    /// - Children identified by a stable integer key: [`readdir::keyed_readdir_entries`].
-    /// - Mixed children: invoke [`readdir::visit_readdir_entries`] more than
-    ///   once per call, once per group. See `RootDirOps`.
-    ///
-    /// The default implementation reports no entries.
     fn visit_entries_from_offset<'a, F>(&'a self, _offset: usize, _visit_fn: F) -> Result<()>
     where
         F: FnMut(ReaddirEntry<'a>) -> Result<()>,
@@ -287,41 +259,23 @@ pub(in procfs) trait ProcDirOps: Sync + Send + Sized {
         Ok(())
     }
 
-    /// Returns the dentry cache revalidation policy for this directory.
     fn revalidation_policy(&self) -> RevalidationPolicy {
         RevalidationPolicy::empty()
     }
 
-    /// Checks whether a positive lookup result still exists.
-    ///
-    /// This method is only consulted when [`Self::revalidation_policy`] includes
-    /// `REVALIDATE_EXISTS`.
     #[must_use]
     fn revalidate_exists(&self, _name: &str, _child: &dyn Inode) -> bool {
         true
     }
 
-    /// Checks whether a negative lookup result is still absent.
-    ///
-    /// This method is only consulted when [`Self::revalidation_policy`] includes
-    /// `REVALIDATE_ABSENT`.
     #[must_use]
     fn revalidate_absent(&self, _name: &str) -> bool {
         true
     }
 }
 
-/// A statically declared procfs child entry.
-///
-/// The tuple stores the exported filename,
-/// the inode type reported to [`FileOps::readdir_at`],
-/// and the constructor used by lookup paths to instantiate the inode.
 pub(in procfs) type StaticDirEntry<Fp> = (&'static str, InodeType, Fp);
 
-/// Looks up a statically declared child from a `StaticDirEntry` table.
-///
-/// The `constructor_adaptor` receives the stored constructor payload
-/// and can bind any per-directory context that is needed at the call site.
 pub(in procfs) fn lookup_child_from_table<Fp, F>(
     name: &str,
     table: &[StaticDirEntry<Fp>],
@@ -337,7 +291,6 @@ where
         .map(|(_, _, child_constructor)| (constructor_adaptor)(*child_constructor))
 }
 
-/// Converts a static procfs child table into listed entries.
 pub(in procfs) fn listed_entries_from_table<'a, Fp>(
     table: &'a [StaticDirEntry<Fp>],
 ) -> impl Iterator<Item = ListedEntry<'a>> + 'a
@@ -350,43 +303,15 @@ where
 }
 
 mod readdir {
-    //! `readdir` resumption types and strategies.
-    //!
-    //! When user space calls `getdents`, it passes an offset and expects the
-    //! kernel to emit entries strictly past it. Each emitted entry carries a
-    //! continuation offset that user space remembers for the next call.
-    //!
-    //! # Vocabulary
-    //!
-    //! - **Offset** - the cursor passed to `FileOps::readdir_at`. Maps to
-    //!   `dirent::d_off`. Offsets `1` and `2` are reserved for `.` and `..`.
-    //!
-    //! - **Key** - an integer that uniquely identifies one dynamic child
-    //!   (PID, TID, FD). Comes from kernel state, not iteration order.
-    //!
-    //! - **Continuation offset** - the offset stored in [`ReaddirEntry`].
-    //!   Computed by [`sequential_readdir_entries`] from index or
-    //!   [`keyed_readdir_entries`] from key:
-    //!
-    //!   ```text
-    //!   continuation_offset = first_entry_offset + index + 1   // sequential_*
-    //!   continuation_offset = first_entry_offset + key   + 1   // keyed_*
-    //!   ```
 
     use super::*;
 
-    /// A listed entry that is currently visible in a procfs directory.
-    ///
-    /// Unlike [`ReaddirEntry`], this type does not carry a continuation offset.
-    /// It is intended for higher-level directory descriptions,
-    /// while [`ReaddirEntry`] derives offsets from the iteration strategy.
     pub(in procfs) struct ListedEntry<'a> {
         pub(super) name: Cow<'a, str>,
         pub(super) type_: InodeType,
     }
 
     impl<'a> ListedEntry<'a> {
-        /// Creates a listed entry with the given filename and inode type.
         pub(in procfs) fn new(name: impl Into<Cow<'a, str>>, type_: InodeType) -> Self {
             Self {
                 name: name.into(),
@@ -394,16 +319,11 @@ mod readdir {
             }
         }
 
-        /// Returns the filename of the listed entry.
         pub(in procfs) fn name(&self) -> &str {
             self.name.as_ref()
         }
     }
 
-    /// A directory entry emitted by [`ProcDirOps::visit_entries_from_offset`].
-    ///
-    /// The `next_offset` is the continuation offset that should be used as the
-    /// starting point of the next [`FileOps::readdir_at`] call.
     pub(in procfs) struct ReaddirEntry<'a> {
         pub(super) name: Cow<'a, str>,
         pub(super) ino: u64,
@@ -412,7 +332,6 @@ mod readdir {
     }
 
     impl<'a> ReaddirEntry<'a> {
-        /// Creates an entry with an explicit continuation offset.
         pub(super) fn new(
             name: impl Into<Cow<'a, str>>,
             ino: u64,
@@ -428,22 +347,8 @@ mod readdir {
         }
     }
 
-    /// A placeholder inode number for procfs entries.
-    ///
-    /// [`FileOps::readdir_at`] reports procfs entries without instantiating child inodes first,
-    /// so the inode number returned here is only a placeholder.
-    /// Lookup still creates the real child inode on demand when the path is opened.
-    //
-    // TODO: Adopt deterministic inode numbers derived from stable entity identity
-    // (for example, PID) as the long-term fix for `d_ino`/`st_ino` consistency.
     pub(super) const PLACEHOLDER_DIRENT_INO: u64 = 2;
 
-    /// Builds sequential directory entries whose continuation offsets increase by one.
-    ///
-    /// This helper is appropriate for directories whose visible children already
-    /// have a deterministic iteration order.
-    /// It reserves offsets `1` and `2` for `.` and `..`,
-    /// so callers typically pass `2` as `first_entry_offset`.
     pub(in procfs) fn sequential_readdir_entries<'a, I>(
         offset: usize,
         first_entry_offset: usize,
@@ -463,17 +368,6 @@ mod readdir {
             })
     }
 
-    /// Builds directory entries whose offsets are derived from stable integer keys.
-    ///
-    /// This is useful for procfs directories such as `/proc`, `/proc/[pid]/task`,
-    /// and `/proc/[pid]/fd`, where Linux uses identifiers like PID, TID, or FD to
-    /// keep iteration stable across mutations.
-    ///
-    /// Names are produced only after the corresponding key passes the offset check.
-    /// The resulting continuation offset for key `k` is `first_entry_offset + k + 1`,
-    /// so callers should provide non-negative keys in increasing order.
-    /// Keys do not need to be dense,
-    /// but each key must stay stable for the duration of one directory snapshot.
     pub(in procfs) fn keyed_readdir_entries<'a, I, F>(
         offset: usize,
         first_entry_offset: usize,
@@ -494,7 +388,6 @@ mod readdir {
         })
     }
 
-    /// Visits the given [`ReaddirEntry`] values in order, calling `visit_fn` for each one.
     pub(in procfs) fn visit_readdir_entries<'a, I, F>(entries: I, mut visit_fn: F) -> Result<()>
     where
         I: IntoIterator<Item = ReaddirEntry<'a>>,
@@ -507,7 +400,6 @@ mod readdir {
         Ok(())
     }
 
-    /// Visits listed entries using sequential continuation offsets.
     pub(in procfs) fn visit_listed_entries<'a, I, F>(
         offset: usize,
         listed: I,

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use core::{fmt::Debug, marker::PhantomData, mem::ManuallyDrop, ops::Range};
 
 use super::util::{
@@ -17,25 +15,15 @@ use crate::{
     },
 };
 
-/// [`DmaDirection`] limits the data flow direction of [`DmaStream`] and
-/// prevents users from reading and writing to [`DmaStream`] unexpectedly.
 pub trait DmaDirection: 'static + Debug + private::Sealed {
-    /// Whether the CPU can read data from the device.
     const CAN_READ_FROM_DEVICE: bool;
-    /// Whether the CPU can write data to the device.
     const CAN_WRITE_TO_DEVICE: bool;
 }
 
 mod private {
-    /// To avoid users implement `DmaDirection` and triggers unreachable code in
-    /// functions like [`crate::arch::mm::sync_dma_range`], or bypasses checks
-    /// in [`crate::mm::io::util::HasVmReaderWriter`].
     pub trait Sealed {}
 }
 
-/// Data flows to the device.
-///
-/// From the perspective of the kernel, this memory region is writable.
 #[derive(Debug)]
 pub enum ToDevice {}
 
@@ -45,9 +33,6 @@ impl DmaDirection for ToDevice {
     const CAN_WRITE_TO_DEVICE: bool = true;
 }
 
-/// Data flows from the device.
-///
-/// From the perspective of the kernel, this memory region is read-only.
 #[derive(Debug)]
 pub enum FromDevice {}
 
@@ -57,7 +42,6 @@ impl DmaDirection for FromDevice {
     const CAN_WRITE_TO_DEVICE: bool = false;
 }
 
-/// Data flows both from and to the device.
 #[derive(Debug)]
 pub enum FromAndToDevice {}
 
@@ -67,16 +51,6 @@ impl DmaDirection for FromAndToDevice {
     const CAN_WRITE_TO_DEVICE: bool = true;
 }
 
-/// A DMA memory object with streaming access.
-///
-/// The kernel must synchronize the data by [`sync_from_device`]/[`sync_to_device`]
-/// when interacting with the device.
-///
-/// For whether the associated methods can be used in IRQs, refer to
-/// [module-level docs](crate::mm::dma#usage-in-irqs).
-///
-/// [`sync_from_device`]: DmaStream::sync_from_device
-/// [`sync_to_device`]: DmaStream::sync_to_device
 #[derive(Debug)]
 pub struct DmaStream<D: DmaDirection = FromAndToDevice> {
     inner: Inner,
@@ -93,27 +67,6 @@ enum Inner {
 }
 
 impl<D: DmaDirection> DmaStream<D> {
-    /// Allocates a region of physical memory for streaming DMA access.
-    ///
-    /// The memory of the newly-allocated DMA buffer is initialized to zeros.
-    /// This method is only available when `D` is [`ToDevice`] or
-    /// [`FromAndToDevice`], as zeroing requires write access to the buffer.
-    ///
-    /// The `is_cache_coherent` argument specifies whether the target device
-    /// that the DMA mapping is prepared for can access the main memory in a
-    /// CPU cache coherent way or not.
-    ///
-    /// This method [requires](crate::mm::dma#usage-in-irqs) the caller to
-    /// have IRQs enabled.
-    ///
-    /// # Comparison with [`DmaStream::map`]
-    ///
-    /// This method is semantically equivalent to allocating a [`USegment`] via
-    /// [`FrameAllocOptions::alloc_segment`] and then mapping it with
-    /// [`DmaStream::map`]. However, [`DmaStream::alloc`] combines these two
-    /// operations and can be more efficient in certain scenarios, particularly
-    /// in confidential VMs, where the overhead of bounce buffers can be
-    /// avoided.
     pub fn alloc(nframes: usize, is_cache_coherent: bool) -> Result<Self, Error> {
         const { assert!(D::CAN_WRITE_TO_DEVICE) };
 
@@ -123,14 +76,6 @@ impl<D: DmaDirection> DmaStream<D> {
         })
     }
 
-    /// Allocates a region of physical memory for streaming DMA access
-    /// without initialization.
-    ///
-    /// This method is the same as [`DmaStream::alloc`]
-    /// except that it skips zeroing the memory of newly-allocated DMA region.
-    ///
-    /// This method [requires](crate::mm::dma#usage-in-irqs) the caller to
-    /// have IRQs enabled.
     pub fn alloc_uninit(nframes: usize, is_cache_coherent: bool) -> Result<Self, Error> {
         debug_assert!(irq::is_local_enabled());
 
@@ -150,7 +95,6 @@ impl<D: DmaDirection> DmaStream<D> {
             (Inner::Kva(kva, paddr), paddr..paddr + nframes * PAGE_SIZE)
         };
 
-        // SAFETY: The physical address range is untyped DMA memory before `drop`.
         let map_daddr = unsafe { prepare_dma(&paddr_range) };
 
         Ok(Self {
@@ -161,14 +105,6 @@ impl<D: DmaDirection> DmaStream<D> {
         })
     }
 
-    /// Establishes DMA stream mapping for a given [`USegment`].
-    ///
-    /// The `is_cache_coherent` argument specifies whether the target device
-    /// that the DMA mapping is prepared for can access the main memory in a
-    /// CPU cache coherent way or not.
-    ///
-    /// This method [requires](crate::mm::dma#usage-in-irqs) the caller to
-    /// have IRQs enabled.
     pub fn map(segment: USegment, is_cache_coherent: bool) -> Result<Self, Error> {
         debug_assert!(irq::is_local_enabled());
 
@@ -187,7 +123,6 @@ impl<D: DmaDirection> DmaStream<D> {
 
         let paddr_range = paddr..paddr + size;
 
-        // SAFETY: The physical address range is untyped DMA memory before `drop`.
         let map_daddr = unsafe { prepare_dma(&paddr_range) };
 
         Ok(Self {
@@ -198,28 +133,12 @@ impl<D: DmaDirection> DmaStream<D> {
         })
     }
 
-    /// Synchronizes the streaming DMA mapping data from the device.
-    ///
-    /// This method should be called when the data of the streaming DMA mapping
-    /// has been updated by the device side. Before the CPU side starts to read
-    /// (e.g., using [`read_bytes`]), it must call the [`Self::sync_from_device`]
-    /// method first.
-    ///
-    /// [`read_bytes`]: crate::mm::VmIo::read_bytes
     pub fn sync_from_device(&self, byte_range: Range<usize>) -> Result<(), Error> {
         const { assert!(D::CAN_READ_FROM_DEVICE) };
 
         self.sync_impl(byte_range, true)
     }
 
-    /// Synchronizes the streaming DMA mapping data to the device.
-    ///
-    /// This method should be called when the data of the streaming DMA mapping
-    /// has been updated by the CPU side (e.g., using [`write_bytes`]). Before
-    /// the CPU side notifies the device side to read, it must call the
-    /// [`Self::sync_to_device`] method first.
-    ///
-    /// [`write_bytes`]: crate::mm::VmIo::write_bytes
     pub fn sync_to_device(&self, byte_range: Range<usize>) -> Result<(), Error> {
         const { assert!(D::CAN_WRITE_TO_DEVICE) };
 
@@ -236,7 +155,6 @@ impl<D: DmaDirection> DmaStream<D> {
             self.sync_via_copying(byte_range.clone(), false, seg, kva);
         }
 
-        // SAFETY: We've checked that the range is inbound.
         unsafe { self.sync_cache(byte_range.clone(), is_from_device) };
 
         if is_from_device && let Inner::Both(kva, _, seg) = &self.inner {
@@ -246,9 +164,6 @@ impl<D: DmaDirection> DmaStream<D> {
         Ok(())
     }
 
-    /// # Safety
-    ///
-    /// The caller must ensure that `byte_range` is inbound.
     unsafe fn sync_cache(&self, byte_range: Range<usize>, is_from_device: bool) {
         if self.is_cache_coherent {
             return;
@@ -261,7 +176,6 @@ impl<D: DmaDirection> DmaStream<D> {
             }
             Inner::Kva(kva, _) | Inner::Both(kva, _, _) => {
                 if !can_sync_dma() {
-                    // The KVA is mapped as uncachable.
                     return;
                 }
                 kva.range()
@@ -269,11 +183,6 @@ impl<D: DmaDirection> DmaStream<D> {
         };
         let range = va_range.start + byte_range.start..va_range.start + byte_range.end;
 
-        // SAFETY:
-        // 1. The range is inbound, so the virtual address range and the DMA
-        //    direction correspond to a DMA region (they're part of `self`).
-        // 2. `can_sync_dma()` is either checked above (for `Inner::Kva` and
-        //    `Inner::Both`) or when constructing `self` (for `Inner::Segment`).
         unsafe { crate::arch::mm::sync_dma_range(range, is_from_device) };
     }
 
@@ -288,19 +197,11 @@ impl<D: DmaDirection> DmaStream<D> {
         let limit = byte_range.len();
 
         let (mut reader, mut writer) = if is_from_device {
-            // SAFETY:
-            //  - The memory range points to untyped memory.
-            //  - The KVA is alive in this scope.
-            //  - Using `VmReader` and `VmWriter` is the only way to access the KVA.
             let kva_reader =
                 unsafe { VmReader::from_kernel_space(kva.start() as *const u8, kva.size()) };
 
             (kva_reader, seg.writer())
         } else {
-            // SAFETY:
-            //  - The memory range points to untyped memory.
-            //  - The KVA is alive in this scope.
-            //  - Using `VmReader` and `VmWriter` is the only way to access the KVA.
             let kva_writer =
                 unsafe { VmWriter::from_kernel_space(kva.start() as *mut u8, kva.size()) };
 
@@ -322,7 +223,6 @@ impl<D: DmaDirection> Split for DmaStream<D> {
         let (inner, map_daddr, is_cache_coherent) = {
             let this = ManuallyDrop::new(self);
             (
-                // SAFETY: `this.inner` will never be used or dropped later.
                 unsafe { core::ptr::read(&this.inner as *const Inner) },
                 this.map_daddr,
                 this.is_cache_coherent,
@@ -368,7 +268,6 @@ impl<D: DmaDirection> Split for DmaStream<D> {
 
 impl<D: DmaDirection> Drop for DmaStream<D> {
     fn drop(&mut self) {
-        // SAFETY: The physical address range was prepared in `map`.
         unsafe { unprepare_dma(&self.paddr_range(), self.map_daddr) };
     }
 }
@@ -377,7 +276,7 @@ impl<D: DmaDirection> HasPaddr for DmaStream<D> {
     fn paddr(&self) -> Paddr {
         match &self.inner {
             Inner::Segment(segment) => segment.paddr(),
-            Inner::Kva(_, paddr) | Inner::Both(_, paddr, _) => *paddr, // the mapped PA, not the buffer's PA
+            Inner::Kva(_, paddr) | Inner::Both(_, paddr, _) => *paddr,
         }
     }
 }
@@ -410,19 +309,12 @@ impl<D: DmaDirection> HasVmReaderWriter for DmaStream<D> {
         }
         match &self.inner {
             Inner::Segment(seg) | Inner::Both(_, _, seg) => Ok(seg.reader()),
-            Inner::Kva(kva, _) => {
-                // SAFETY:
-                //  - Although the memory range points to typed memory, the range is for DMA
-                //    and the access is not by linear mapping.
-                //  - The KVA is alive during the lifetime `'_`.
-                //  - Using `VmReader` and `VmWriter` is the only way to access the KVA.
-                unsafe {
-                    Ok(VmReader::from_kernel_space(
-                        kva.start() as *const u8,
-                        kva.size(),
-                    ))
-                }
-            }
+            Inner::Kva(kva, _) => unsafe {
+                Ok(VmReader::from_kernel_space(
+                    kva.start() as *const u8,
+                    kva.size(),
+                ))
+            },
         }
     }
 
@@ -432,19 +324,12 @@ impl<D: DmaDirection> HasVmReaderWriter for DmaStream<D> {
         }
         match &self.inner {
             Inner::Segment(seg) | Inner::Both(_, _, seg) => Ok(seg.writer()),
-            Inner::Kva(kva, _) => {
-                // SAFETY:
-                //  - Although the memory range points to typed memory, the range is for DMA
-                //    and the access is not by linear mapping.
-                //  - The KVA is alive during the lifetime `'_`.
-                //  - Using `VmReader` and `VmWriter` is the only way to access the KVA.
-                unsafe {
-                    Ok(VmWriter::from_kernel_space(
-                        kva.start() as *mut u8,
-                        kva.size(),
-                    ))
-                }
-            }
+            Inner::Kva(kva, _) => unsafe {
+                Ok(VmWriter::from_kernel_space(
+                    kva.start() as *mut u8,
+                    kva.size(),
+                ))
+            },
         }
     }
 }

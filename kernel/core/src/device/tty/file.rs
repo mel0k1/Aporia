@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use inherit_methods_macro::inherit_methods;
 
 use super::{Tty, TtyDriver};

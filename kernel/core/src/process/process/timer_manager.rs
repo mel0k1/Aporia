@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::{
     boxed::Box,
     sync::{Arc, Weak},
@@ -32,25 +30,15 @@ use crate::{
     },
 };
 
-/// Updates the CPU time recorded in the CPU clocks of current Process.
-///
-/// This function will be invoked at the system timer interrupt, and
-/// invoke the callbacks of expired timers which are based on the updated
-/// CPU clock.
 fn update_cpu_time() {
-    // Retrieve some info about the timer interrupt
     let is_kernel_interrupted = {
         let interrupt_level = InterruptLevel::current();
         let InterruptLevel::L1(cpu_priv_at_irq) = interrupt_level else {
-            // We are at the interrupt level 2.
-            // This means that bottom half of IRQ handling is interrupted.
-            // We should not count this time slice on the head of the current task.
             return;
         };
         cpu_priv_at_irq == PrivilegeLevel::Kernel
     };
 
-    // Retrieve some info about the current task
     let Some(current_thread) = Thread::current() else {
         return;
     };
@@ -58,15 +46,10 @@ fn update_cpu_time() {
         return;
     };
     let Some(process) = posix_thread.weak_process().upgrade() else {
-        // FIXME: A POSIX thread should have a process but we can have a
-        // `None` here.
         return;
     };
 
     let timer_manager = process.timer_manager();
-    // Based on whether the timer interrupt occurs in kernel mode or user mode,
-    // the function will add the duration of one timer interrupt interval to the
-    // corresponding CPU clocks.
     if is_kernel_interrupted {
         posix_thread.prof_clock().kernel_clock().add_jiffies(1);
         process.prof_clock().kernel_clock().add_jiffies(1);
@@ -87,24 +70,15 @@ fn update_cpu_time() {
     posix_thread.process_expired_timers();
 }
 
-/// Registers a function to update the CPU clock in processes and
-/// threads during the system timer interrupt.
 pub(super) fn init_on_each_cpu() {
     timer::register_callback_on_cpu(update_cpu_time);
 }
 
-/// Represents timer resources and utilities for a POSIX process.
 pub(crate) struct PosixTimerManager {
-    /// A real-time countdown timer, measuring in wall clock time.
     alarm_timer: Arc<Timer>,
-    /// A timer based on user CPU clock.
     virtual_timer: Arc<Timer>,
-    /// A timer based on the profiling clock.
     prof_timer: Arc<Timer>,
-    /// An ID allocator to allocate unique timer IDs.
     id_allocator: Mutex<IdAlloc>,
-    /// A container managing all POSIX timers created by `timer_create()` syscall
-    /// within the process context.
     posix_timers: Mutex<Vec<Option<Arc<Timer>>>>,
 }
 
@@ -136,9 +110,6 @@ impl PosixTimerManager {
         const MAX_NUM_OF_POSIX_TIMERS: usize = 10000;
         const { assert!(MAX_NUM_OF_POSIX_TIMERS <= timer_t::MAX as usize) };
 
-        // The `alarm_timer`, `virtual_timer`, and `prof_timer` raise `SIGALRM`,
-        // `SIGVTALRM`, and `SIGPROF`, respectively.
-        // Reference: <https://man7.org/linux/man-pages/man2/setitimer.2.html>.
         let alarm_timer = RealTimeClock::timer_manager()
             .create_timer(create_process_timer_callback(process_ref, SIGALRM));
         let virtual_timer = TimerManager::new(prof_clock.user_clock().clone())
@@ -155,47 +126,36 @@ impl PosixTimerManager {
         }
     }
 
-    /// Gets the alarm timer of the corresponding process.
     pub(crate) fn alarm_timer(&self) -> &Arc<Timer> {
         &self.alarm_timer
     }
 
-    /// Gets the virtual timer of the corresponding process.
     pub(crate) fn virtual_timer(&self) -> &Arc<Timer> {
         &self.virtual_timer
     }
 
-    /// Gets the profiling timer of the corresponding process.
     pub(crate) fn prof_timer(&self) -> &Arc<Timer> {
         &self.prof_timer
     }
 
-    /// Creates a timer based on the profiling CPU clock of the current process.
     pub(crate) fn create_prof_timer<F: TimerFn>(&self, func: F) -> Arc<Timer<F>> {
         self.prof_timer.timer_manager().create_timer(func)
     }
 
-    /// Creates a timer based on the user CPU clock of the current process.
     pub(crate) fn create_virtual_timer<F: TimerFn>(&self, func: F) -> Arc<Timer<F>> {
         self.virtual_timer.timer_manager().create_timer(func)
     }
 
-    /// Adds a POSIX timer to the managed `posix_timers`, and allocate a timer ID for this timer.
-    /// Returns the timer ID, or `None` if allocation failed.
     pub(crate) fn add_posix_timer(&self, posix_timer: Arc<Timer>) -> Option<timer_t> {
         let mut timers = self.posix_timers.lock();
-        // Holding the lock of `posix_timers` is required to operate the `id_allocator`.
         let timer_id = self.id_allocator.lock().alloc()?;
         if timers.len() <= timer_id {
             timers.resize(timer_id + 1, None);
         }
-        // The ID allocated is not used by any other timers so this index in `timers`
-        // must be `None`.
         timers[timer_id] = Some(posix_timer);
         Some(timer_id as timer_t)
     }
 
-    /// Finds a POSIX timer by the input `timer_id`.
     pub(crate) fn find_posix_timer(&self, timer_id: timer_t) -> Option<Arc<Timer>> {
         let timer_id = timer_id as usize;
         let timers = self.posix_timers.lock();
@@ -206,7 +166,6 @@ impl PosixTimerManager {
         timers[timer_id].clone()
     }
 
-    /// Removes the POSIX timer with the ID `timer_id`.
     pub(crate) fn remove_posix_timer(&self, timer_id: timer_t) -> Option<Arc<Timer>> {
         let timer_id = timer_id as usize;
         let mut timers = self.posix_timers.lock();
@@ -216,7 +175,6 @@ impl PosixTimerManager {
 
         let timer = timers[timer_id].take();
         if timer.is_some() {
-            // Holding the lock of `posix_timers` is required to operate the `id_allocator`.
             self.id_allocator.lock().free(timer_id);
         }
         timer

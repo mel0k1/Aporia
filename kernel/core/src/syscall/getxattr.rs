@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::{
     SyscallReturn,
     setxattr::{
@@ -105,10 +103,6 @@ fn getxattr(
         let converted_len = convert_file_cap(&mut raw_value[..raw_value_len])?;
 
         if value_len == 0 {
-            // TODO: In general, if the user-provided buffer length is zero, return the
-            // attribute's length without copying its contents to userspace. Currently, this
-            // behavior is only handled for `security.capability`; other attributes are not yet
-            // supported.
             return Ok(converted_len);
         }
         if value_len < converted_len {
@@ -124,13 +118,6 @@ fn getxattr(
     path.get_xattr(xattr_name, &mut value_writer)
 }
 
-/// Converts a file-capability xattr under the currently supported identity
-/// user-namespace mapping.
-///
-/// FIXME: Apply filesystem-user-namespace and ID-mapped-mount UID mappings when
-/// those features are supported.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v7.1/source/security/commoncap.c#L420>.
 fn convert_file_cap(raw_value: &mut [u8]) -> Result<usize> {
     let (revision, flags) = FileCapabilities::parse_header(raw_value)?;
 

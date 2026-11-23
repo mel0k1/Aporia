@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::{boxed::Box, collections::btree_map::BTreeMap, sync::Arc, vec::Vec};
 
 use aster_softirq::BottomHalfDisabled;
@@ -34,7 +32,6 @@ pub(super) struct TcpBacklog<E: Ext> {
     pub(super) connected: Vec<TcpConnection<E>>,
 }
 
-/// States needed by [`TcpListenerBg`].
 pub struct TcpListenerInner<E: Ext> {
     pub(super) backlog: SpinLock<TcpBacklog<E>, BottomHalfDisabled>,
     listener_key: ListenerKey,
@@ -65,9 +62,6 @@ impl<E: Ext> Inner<E> for TcpListenerInner<E> {
 pub(crate) type TcpListenerBg<E> = SocketBg<TcpListenerInner<E>, E>;
 
 impl<E: Ext> TcpListener<E> {
-    /// Listens at a specified endpoint.
-    ///
-    /// Polling the iface is _not_ required after this method succeeds.
     pub fn new_listen(
         bound: BoundTcpPort<E>,
         max_conn: usize,
@@ -116,9 +110,6 @@ impl<E: Ext> TcpListener<E> {
         Ok(listener)
     }
 
-    /// Accepts a TCP connection.
-    ///
-    /// Polling the iface is _not_ required after this method succeeds.
     pub fn accept(&self) -> Option<(TcpConnection<E>, IpEndpoint)> {
         let accepted = {
             let mut backlog = self.0.inner.backlog.lock();
@@ -126,35 +117,21 @@ impl<E: Ext> TcpListener<E> {
         };
 
         let remote_endpoint = {
-            // The lock on `accepted` cannot be locked after locking `self`, otherwise we might get
-            // a deadlock due to inconsistent lock order problems.
             let mut socket = accepted.0.inner.lock();
 
             socket.listener = None;
 
-            // A queued connection may have been reset, which clears smoltcp's internal endpoint tuple.
-            // Use the saved connection key so that it can still be accepted.
             accepted.0.connection_key().remote_endpoint()
         };
 
         Some((accepted, remote_endpoint))
     }
 
-    /// Returns whether there is a TCP connection to accept.
-    ///
-    /// It's the caller's responsibility to deal with race conditions when using this method.
     pub fn can_accept(&self) -> bool {
         !self.0.inner.backlog.lock().connected.is_empty()
     }
 
-    /// Closes the listener.
-    ///
-    /// Polling the iface is _always_ required after this method succeeds.
-    ///
-    /// Note that this method must be called before dropping the TCP listener to avoid resource
-    /// leakage.
     pub fn close(&self) {
-        // A TCP listener can be removed immediately.
         self.0.bound.iface().common().remove_tcp_listener(&self.0);
 
         let (connecting, connected) = {
@@ -165,8 +142,6 @@ impl<E: Ext> TcpListener<E> {
             )
         };
 
-        // The lock on `connecting`/`connected` cannot be locked after locking `self`, otherwise we
-        // might get a deadlock due to inconsistent lock order problems.
         connecting.values().for_each(|socket| socket.reset());
         connected.iter().for_each(|socket| socket.reset());
     }
@@ -193,7 +168,6 @@ impl<E: Ext> TcpListenerBg<E> {
 }
 
 impl<E: Ext> TcpListenerBg<E> {
-    /// Tries to process an incoming packet and returns whether the packet is processed.
     pub(crate) fn process(
         self: &Arc<Self>,
         iface: &mut PollableIfaceMut<E>,
@@ -210,9 +184,6 @@ impl<E: Ext> TcpListenerBg<E> {
             return (TcpProcessResult::NotProcessed, None);
         }
 
-        // FIXME: According to the Linux implementation, `max_conn` is the upper bound of
-        // `connected.len()`. We currently limit it to `connected.len() + connecting.len()` for
-        // simplicity.
         if backlog.connected.len() + backlog.connecting.len() >= backlog.max_conn {
             return (TcpProcessResult::Processed, None);
         }

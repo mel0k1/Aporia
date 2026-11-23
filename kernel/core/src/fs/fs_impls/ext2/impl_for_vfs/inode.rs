@@ -1,12 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! VFS inode trait implementations for the ext2 [`Inode`](super::super::Inode).
-//!
-//! Wires the ext2 `Inode` into the VFS layer by implementing the `InodeIo`
-//! and `Inode` traits. The implementation converts VFS requests into
-//! ext2-internal operations, including symlink results and the inode's VFS
-//! extension slot.
-
 use core::time::Duration;
 
 use aster_block::bio::BioStatus;
@@ -204,7 +195,6 @@ impl Inode for Ext2Inode {
 
         let new_inode = self.create(name, inode_type, mode.into())?;
         if let Some(device_id) = device_id {
-            // Store the ext2 special-file device encoding in `i_block`.
             new_inode.set_device_id(device_id)?;
         }
 
@@ -281,7 +271,6 @@ impl Inode for Ext2Inode {
     }
 
     fn fs(&self) -> Arc<dyn FileSystem> {
-        // The inode must belong to a live filesystem instance.
         self.fs().unwrap()
     }
 

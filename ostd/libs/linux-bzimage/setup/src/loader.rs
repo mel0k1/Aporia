@@ -1,8 +1,5 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use xmas_elf::program::{ProgramHeader, SegmentData};
 
-/// Load the kernel ELF payload to memory.
 pub(crate) fn load_elf(file: &[u8]) {
     let elf = xmas_elf::ElfFile::new(file).unwrap();
 

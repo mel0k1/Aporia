@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use aster_rights::Rights;
 
 use crate::prelude::*;
@@ -8,11 +6,8 @@ use crate::prelude::*;
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum AccessMode {
-    /// Read only
     O_RDONLY = 0,
-    /// Write only
     O_WRONLY = 1,
-    /// Read write
     O_RDWR = 2,
 }
 
@@ -47,8 +42,6 @@ impl From<Rights> for AccessMode {
             (true, true) => AccessMode::O_RDWR,
             (true, false) => AccessMode::O_RDONLY,
             (false, true) => AccessMode::O_WRONLY,
-            // The file is opened with `O_PATH`. We follow Linux to report `O_RDONLY` here (e.g.,
-            // in `/proc/[pid]/fdinfo/[n]`).
             (false, false) => AccessMode::O_RDONLY,
         }
     }

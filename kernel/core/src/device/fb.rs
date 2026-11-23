@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use aster_framebuffer::{
     framebuffer::{ColorMapEntry, FRAMEBUFFER, FrameBuffer, MAX_CMAP_SIZE},
     pixel::PixelFormat,
@@ -31,22 +29,15 @@ struct FbHandle {
     framebuffer: Arc<FrameBuffer>,
 }
 
-/// Bitfields describing the color channel layout; `struct fb_bitfield` in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/linux/fb.h#L189>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
 struct FbBitfield {
-    /// Bit offset of the field
     pub offset: u32,
-    /// Length of the field in bits
     pub length: u32,
-    /// Most significant bit position (0 = left, 1 = right)
     pub msb_right: u32,
 }
 
 impl FbBitfield {
-    /// Converts pixel format to framebuffer bitfields for Linux compatibility.
     #[rustfmt::skip]
     fn from_pixel_format(pixel_format: PixelFormat) -> (Self, Self, Self, Self) {
         match pixel_format {
@@ -78,128 +69,69 @@ impl FbBitfield {
     }
 }
 
-/// Variable screen information for framebuffer devices; `struct fb_var_screeninfo` in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/linux/fb.h#L243>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
 struct FbVarScreenInfo {
-    /// Visible resolution width
     pub xres: u32,
-    /// Visible resolution height
     pub yres: u32,
-    /// Virtual resolution width
     pub xres_virtual: u32,
-    /// Virtual resolution height
     pub yres_virtual: u32,
-    /// Offset from virtual to visible (horizontal)
     pub xoffset: u32,
-    /// Offset from virtual to visible (vertical)
     pub yoffset: u32,
-    /// Color depth in bits per pixel
     pub bits_per_pixel: u32,
-    /// 0 = color, 1 = grayscale, >1 = FOURCC
     pub grayscale: u32,
-    /// Red color bitfield in framebuffer memory
     pub red: FbBitfield,
-    /// Green color bitfield in framebuffer memory
     pub green: FbBitfield,
-    /// Blue color bitfield in framebuffer memory
     pub blue: FbBitfield,
-    /// Transparency bitfield
     pub transp: FbBitfield,
-    /// Non-standard pixel format indicator
     pub nonstd: u32,
-    /// Activation control flags
     pub activate: u32,
-    /// Height of display in millimeters
     pub height: u32,
-    /// Width of display in millimeters
     pub width: u32,
-    /// Acceleration capabilities (obsolete)
     pub accel_flags: u32,
-    /// Pixel clock period in picoseconds
     pub pixclock: u32,
-    /// Time from horizontal sync to picture
     pub left_margin: u32,
-    /// Time from picture to horizontal sync
     pub right_margin: u32,
-    /// Time from vertical sync to picture
     pub upper_margin: u32,
-    /// Time from picture to vertical sync
     pub lower_margin: u32,
-    /// Length of horizontal sync
     pub hsync_len: u32,
-    /// Length of vertical sync
     pub vsync_len: u32,
-    /// Synchronization flags
     pub sync: u32,
-    /// Video mode flags
     pub vmode: u32,
-    /// Screen rotation angle (counter-clockwise)
     pub rotate: u32,
-    /// Colorspace for FOURCC-based modes
     pub colorspace: u32,
-    /// Reserved for future compatibility
     pub reserved: [u32; 4],
 }
 
-/// Fixed screen information for framebuffer devices; `struct fb_fix_screeninfo` in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/linux/fb.h#L158>.
 #[padding_struct]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
 struct FbFixScreenInfo {
-    /// Identification string (e.g., "EFI VGA")
     pub id: [u8; 16],
-    /// Start of framebuffer memory (physical address)
     pub smem_start: u64,
-    /// Length of framebuffer memory in bytes
     pub smem_len: u32,
-    /// Framebuffer type identifier
     pub type_: u32,
-    /// Auxiliary type information (e.g., interleave)
     pub type_aux: u32,
-    /// Visual type (mono, pseudo-color, true-color, etc.)
     pub visual: u32,
-    /// Horizontal panning step size (0 = no panning)
     pub xpanstep: u16,
-    /// Vertical panning step size (0 = no panning)
     pub ypanstep: u16,
-    /// Y-axis wrapping step size (0 = no wrapping)
     pub ywrapstep: u16,
-    /// Length of a screen line in bytes
     pub line_length: u32,
-    /// Start of memory-mapped I/O (physical address)
     pub mmio_start: u64,
-    /// Length of memory-mapped I/O region
     pub mmio_len: u32,
-    /// Hardware acceleration type identifier
     pub accel: u32,
-    /// Hardware capability flags
     pub capabilities: u16,
-    /// Reserved for future compatibility
     pub reserved: [u16; 2],
 }
 
-/// Framebuffer colormap structure for userspace communication; `struct fb_cmap` in Linux.
-///
-/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/linux/fb.h#L283>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 struct FbCmapUser {
-    /// Starting offset in colormap
     pub start: u32,
-    /// Number of colormap entries
     pub len: u32,
-    /// Pointer to red color values in userspace
     pub red: usize,
-    /// Pointer to green color values in userspace
     pub green: usize,
-    /// Pointer to blue color values in userspace
     pub blue: usize,
-    /// Pointer to transparency values in userspace (may be null)
     pub transp: usize,
 }
 
@@ -210,15 +142,12 @@ mod ioctl_defs {
         util::ioctl::{InData, InOutData, NoData, OutData},
     };
 
-    // Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/linux/fb.h#L13-L38>
-
     pub(super) type GetVarScreenInfo = ioc!(FBIOGET_VSCREENINFO, 0x4600, OutData<FbVarScreenInfo>);
     pub(super) type PutVarScreenInfo = ioc!(FBIOPUT_VSCREENINFO, 0x4601, InOutData<FbVarScreenInfo>);
     pub(super) type GetFixScreenInfo = ioc!(FBIOGET_FSCREENINFO, 0x4602, OutData<FbFixScreenInfo>);
     pub(super) type GetColorMap      = ioc!(FBIOGETCMAP,         0x4604, InData<FbCmapUser>);
     pub(super) type PutColorMap      = ioc!(FBIOPUTCMAP,         0x4605, InData<FbCmapUser>);
 
-    // `NoData` is used below because they're not supported by efifb.
     pub(super) type PanDisplay       = ioc!(FBIOPAN_DISPLAY,     0x4606, NoData);
     pub(super) type Blank            = ioc!(FBIOBLANK,           0x4611, NoData);
 }
@@ -229,15 +158,10 @@ impl Device for Fb {
     }
 
     fn id(&self) -> DeviceId {
-        // Same value with Linux: major 29, minor 0
         DeviceId::new(MajorId::new(29), MinorId::new(0))
     }
 
     fn devtmpfs_meta(&self) -> Option<DevtmpfsNodeMeta> {
-        // Linux names framebuffer device nodes as `fbN`.
-        // TODO: We currently expose only one framebuffer device,
-        // so the devtmpfs node is fixed to `fb0`.
-        // Reference: <https://elixir.bootlin.com/linux/v6.18/source/drivers/video/fbdev/core/fbsysfs.c#L482>.
         Some(DevtmpfsNodeMeta::new("fb0").unwrap())
     }
 
@@ -251,7 +175,6 @@ impl Device for Fb {
 }
 
 impl FbHandle {
-    /// Reads an array of `u16` color map values from userspace.
     fn read_color_maps_from_user(addr: usize, data: &mut [u16]) -> Result<()> {
         for (i, item) in data.iter_mut().enumerate() {
             let user_addr = addr + i * size_of::<u16>();
@@ -260,7 +183,6 @@ impl FbHandle {
         Ok(())
     }
 
-    /// Writes an array of `u16` color map values to userspace.
     fn write_color_maps_to_user(addr: usize, data: &[u16]) -> Result<()> {
         for (i, &value) in data.iter().enumerate() {
             let user_addr = addr + i * size_of::<u16>();
@@ -269,12 +191,9 @@ impl FbHandle {
         Ok(())
     }
 
-    /// Collects the information in the [`FbVarScreenInfo`].
     fn collect_var_screen_info(&self) -> FbVarScreenInfo {
-        /// Default pixel clock calculation for efifb compatibility
         const DEFAULT_PIXEL_CLOCK_DIVISOR: u32 = 10_000_000;
 
-        /// Default timing parameters for efifb compatibility
         const DEFAULT_RIGHT_MARGIN: u32 = 32;
         const DEFAULT_UPPER_MARGIN: u32 = 16;
         const DEFAULT_LOWER_MARGIN: u32 = 4;
@@ -305,7 +224,6 @@ impl FbHandle {
         }
     }
 
-    /// Collects the information in the [`FbFixScreenInfo`].
     fn collect_fix_screen_info(&self) -> FbFixScreenInfo {
         FbFixScreenInfo {
             smem_start: self.framebuffer.io_mem().paddr() as u64,
@@ -315,11 +233,6 @@ impl FbHandle {
         }
     }
 
-    /// Handles the [`ioctl_defs::GetColorMap`] ioctl command.
-    ///
-    /// Arguments:
-    ///  - Input: [`FbCmapUser`] (specifying the range).
-    ///  - Output: [`FbCmapUser`] (filled with color palette data).
     fn handle_get_cmap(&self, cmap_user: &FbCmapUser) -> Result<()> {
         if cmap_user.len == 0 {
             return Ok(());
@@ -328,13 +241,11 @@ impl FbHandle {
         let start = cmap_user.start as usize;
         let len = cmap_user.len as usize;
 
-        // Get color map entries from framebuffer
         let entries = self
             .framebuffer
             .get_color_map(start, len)
             .ok_or_else(|| errno!(EINVAL, "the color map index is out of bounds"))?;
 
-        // Extract color channels and write to userspace
         let red: Vec<u16> = entries.iter().map(|e| e.red).collect();
         let green: Vec<u16> = entries.iter().map(|e| e.green).collect();
         let blue: Vec<u16> = entries.iter().map(|e| e.blue).collect();
@@ -350,11 +261,6 @@ impl FbHandle {
         Ok(())
     }
 
-    /// Handles the [`ioctl_defs::PutColorMap`] ioctl command.
-    ///
-    /// Arguments:
-    ///  - Input: [`FbCmapUser`] (with color palette data).
-    ///  - Output: None.
     fn handle_set_cmap(&self, cmap_user: &FbCmapUser) -> Result<()> {
         if cmap_user.len == 0 {
             return Ok(());
@@ -363,7 +269,6 @@ impl FbHandle {
         let start = cmap_user.start as usize;
         let len = cmap_user.len as usize;
 
-        // Check the size to prevent excessive memory allocation
         if start > MAX_CMAP_SIZE || len > MAX_CMAP_SIZE - start {
             return Err(errno!(
                 EINVAL,
@@ -371,7 +276,6 @@ impl FbHandle {
             ));
         }
 
-        // Read color data from userspace
         let mut red = vec![0u16; len];
         let mut green = vec![0u16; len];
         let mut blue = vec![0u16; len];
@@ -384,7 +288,6 @@ impl FbHandle {
             Self::read_color_maps_from_user(cmap_user.transp, &mut transp)?;
         }
 
-        // Build color map entries
         let entries: Vec<ColorMapEntry> = (0..len)
             .map(|i| ColorMapEntry {
                 red: red[i],
@@ -394,7 +297,6 @@ impl FbHandle {
             })
             .collect();
 
-        // Set color map entries in framebuffer
         self.framebuffer.set_color_map(start, &entries)?;
 
         Ok(())
@@ -515,9 +417,6 @@ impl PerOpenFileOps for FbHandle {
                 Ok(0)
             }
             cmd @ PutVarScreenInfo => {
-                // EFI framebuffers do not support changing settings. Linux
-                // will return the old settings to user space and succeed.
-                // Reference: <https://elixir.bootlin.com/linux/v6.17/source/drivers/video/fbdev/core/fbmem.c#L276-L279>.
                 cmd.write(&self.collect_var_screen_info())?;
                 Ok(0)
             }
@@ -534,8 +433,6 @@ impl PerOpenFileOps for FbHandle {
                 Ok(0)
             }
             PanDisplay | Blank => {
-                // These commands are not supported by efifb.
-                // We return errors according to the Linux behavior.
                 Err(errno!(
                     EINVAL,
                     "the ioctl command is not supported by efifb devices"

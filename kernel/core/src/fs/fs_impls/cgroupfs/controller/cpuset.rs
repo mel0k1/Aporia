@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::sync::Arc;
 
 use aster_systree::{Error, Result, SysAttrSetBuilder, SysPerms, SysStr};
@@ -9,7 +7,6 @@ use ostd::{
     mm::{VmReader, VmWriter},
 };
 
-/// A sub-controller responsible for CPU resource management in the cgroup subsystem.
 pub(crate) struct CpuSetController {
     _private: (),
 }
@@ -44,9 +41,7 @@ impl super::SubControl for CpuSetController {
                     writeln!(printer, "0-{}", num_cpus - 1)?;
                 }
             }
-            // Currently we only support a single memory node.
             "cpuset.mems.effective" => writeln!(printer, "0")?,
-            // TODO: Add support for reading other attributes.
             _ => return Err(Error::AttributeError),
         }
 
@@ -54,7 +49,6 @@ impl super::SubControl for CpuSetController {
     }
 
     fn write_attr(&self, _name: &str, _reader: &mut VmReader) -> Result<usize> {
-        // TODO: Add support for writing attributes.
         Err(Error::AttributeError)
     }
 }

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use crate::{
     fs::{
         file::{InodeType, mkmod},
@@ -18,14 +16,10 @@ use crate::{
 
 mod nr_open;
 
-/// Represents the inode at `/proc/sys/fs`.
 pub(super) struct FsDirOps;
 
 impl FsDirOps {
     pub(super) fn new_inode(parent: Weak<dyn Inode>) -> Arc<dyn Inode> {
-        // Reference:
-        // <https://elixir.bootlin.com/linux/v6.16.5/source/fs/file_table.c#L139>
-        // <https://elixir.bootlin.com/linux/v6.16.5/source/fs/proc/proc_sysctl.c#L978>
         ProcDir::new(Self, parent, mkmod!(a+rx))
     }
 

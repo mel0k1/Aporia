@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 pub mod device;
 
 use core::mem::offset_of;
@@ -15,7 +13,6 @@ use crate::transport::{ConfigManager, VirtioTransport};
 pub const DEVICE_NAME: &str = "Virtio-Block";
 
 bitflags! {
-    /// features for virtio block device
     #[derive(Clone, Copy, Debug)]
     struct BlockFeatures: u64 {
         const BARRIER       = 1 << 0;
@@ -56,13 +53,9 @@ enum ReqType {
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, TryFromInt)]
 enum RespStatus {
-    /// Ok.
     Ok = 0,
-    /// IoErr.
     IoErr = 1,
-    /// Unsupported yet.
     Unsupported = 2,
-    /// Not ready.
     _NotReady = 3,
 }
 
@@ -70,36 +63,20 @@ enum RespStatus {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 struct VirtioBlockConfig {
-    /// The number of 512-byte sectors.
     capacity: u64,
-    /// The maximum segment size.
     size_max: u32,
-    /// The maximum number of segments.
     seg_max: u32,
-    /// The geometry of the device.
     geometry: VirtioBlockGeometry,
-    /// The block size. If `logical_block_size` is not given in qemu cmdline,
-    /// `blk_size` will be set to sector size (512 bytes) by default.
     blk_size: u32,
-    /// The topology of the device.
     topology: VirtioBlockTopology,
-    /// Writeback mode.
     writeback: u8,
     unused0: u8,
-    /// The number of virtqueues.
     num_queues: u16,
-    /// The maximum discard sectors for one segment.
     max_discard_sectors: u32,
-    /// The maximum number of discard segments in a discard command.
     max_discard_seg: u32,
-    /// Discard commands must be aligned to this number of sectors.
     discard_sector_alignment: u32,
-    /// The maximum number of write zeroes sectors in one segment.
     max_write_zeroes_sectors: u32,
-    /// The maximum number of segments in a write zeroes command.
     max_write_zeroes_seg: u32,
-    /// Set if a write zeroes command may result in the
-    /// deallocation of one or more of the sectors.
     write_zeros_may_unmap: u8,
     unused1: [u8; 3],
 }
@@ -115,13 +92,9 @@ struct VirtioBlockGeometry {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 struct VirtioBlockTopology {
-    /// Exponent for physical block per logical block.
     physical_block_exp: u8,
-    /// Alignment offset in logical blocks.
     alignment_offset: u8,
-    /// Minimum I/O size without performance penalty in logical blocks.
     min_io_size: u16,
-    /// Optimal sustained I/O size in logical blocks.
     opt_io_size: u32,
 }
 
@@ -143,7 +116,6 @@ impl VirtioBlockConfig {
 impl ConfigManager<VirtioBlockConfig> {
     pub(self) fn read_config(&self) -> VirtioBlockConfig {
         let mut blk_config = VirtioBlockConfig::new_zeroed();
-        // Only following fields are defined in legacy interface.
         let cap_low = self
             .read_once::<u32>(offset_of!(VirtioBlockConfig, capacity))
             .unwrap() as u64;
@@ -177,9 +149,7 @@ impl ConfigManager<VirtioBlockConfig> {
             .read_once::<u32>(offset_of!(VirtioBlockConfig, blk_size))
             .unwrap();
 
-        if self.is_modern() {
-            // TODO: read more field if modern interface exists.
-        }
+        if self.is_modern() {}
 
         blk_config
     }

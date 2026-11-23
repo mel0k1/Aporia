@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use super::SyscallReturn;
 use crate::{
     fs::file::{
@@ -55,7 +53,6 @@ fn do_accept(
         socket
             .accept(is_nonblocking)
             .map_err(|err| match err.error() {
-                // FIXME: `accept` should not be restarted if a timeout has been set on the socket using `setsockopt`.
                 Errno::EINTR => errno!(ERESTARTSYS),
                 _ => err,
             })?

@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
-//! Device attribute tests.
-
 use alloc::{boxed::Box, sync::Arc};
 
 use device_id::{DeviceId, MajorId, MinorId};
@@ -17,17 +13,10 @@ use crate::{
     common::{Attr, DevNum, Error},
 };
 
-/// A driver's attributes come and go, and the published attribute set is rebuilt each time.
-/// The attributes that survive must keep their IDs,
-/// because sysfs derives an inode number from `(node id, attribute id)`:
-/// renumbering them would give every file in a device's directory a new inode
-/// whenever a driver bound beside it.
 #[ktest]
 fn attribute_ids_survive_bind_and_unbind() {
     let (class, bus) = toy::register_toy_subsystems();
 
-    // 1. Add an unbound device and record its attribute IDs.
-    // Vendor 9 matches no driver registered by another test.
     let dev = BusDevice::builder(
         &bus,
         "ids0",
@@ -43,7 +32,6 @@ fn attribute_ids_survive_bind_and_unbind() {
     assert!(!before.is_empty());
     assert!(before.iter().all(|(name, _)| name != "bound_by"));
 
-    // 2. Register a matching driver and check that binding preserves existing IDs.
     let driver = bus
         .register_driver(Box::new(ToyDiskDriver {
             match_data: ToyMatch { vendor: 9 },
@@ -72,11 +60,9 @@ fn attribute_ids_survive_bind_and_unbind() {
         .expect("the driver's attribute is present while it is bound");
     assert!(before.iter().all(|(_, id)| *id != bound_by_id));
 
-    // 3. Unbind and check that the original attributes and IDs remain.
     bus.unbind(&dev).unwrap();
     assert_eq!(utils::attr_ids(path), before);
 
-    // 4. Rebind and check that the driver attribute reuses its ID.
     bus.bind(&dev, &driver).unwrap();
     assert_eq!(
         utils::attr_ids(path)
@@ -86,25 +72,18 @@ fn attribute_ids_survive_bind_and_unbind() {
         Some(bound_by_id)
     );
 
-    // 5. Unbind, remove the device, and unregister the driver.
     bus.unbind(&dev).unwrap();
     crate::remove_device(&dev).unwrap();
     bus.unregister_driver(&driver).unwrap();
 }
 
-/// Registration hands the core, subsystem, device type, and own attributes over as one batch,
-/// so a layer that reuses a name the core already took must be rejected there.
-/// Otherwise its callback would quietly replace the core's while sysfs went on showing the core's
-/// entry.
 #[ktest]
 fn an_attribute_may_not_shadow_a_core_one() {
-    // 1. Define an attribute that conflicts with the core device-number attribute.
     const SHADOWING: &[Attr<BusDevice<ToyBus>>] = &[Attr::ro("dev", |_dev, w| {
         writeln!(w, "not the core's device number")?;
         Ok(())
     })];
 
-    // 2. Build a device that supplies both a device number and this attribute.
     let (_, bus) = toy::register_toy_subsystems();
     let dev = BusDevice::builder(
         &bus,
@@ -121,14 +100,12 @@ fn an_attribute_may_not_shadow_a_core_one() {
     .attrs(SHADOWING)
     .build();
 
-    // 3. Check that registration fails and leaves no device directory behind.
     assert!(matches!(crate::add_device(&dev), Err(Error::NameConflict)));
     assert!(utils::lookup("/devices/shadow0").is_none());
 }
 
 #[ktest]
 fn invalid_attribute_names_are_rejected() {
-    // 1. Define one attribute for each invalid name.
     const INVALID_ATTRS: &[[Attr<ClassDevice<ToyBlock>>; 1]] = &[
         [Attr::ro("", |_dev, _w| Ok(()))],
         [Attr::ro(".", |_dev, _w| Ok(()))],
@@ -138,7 +115,6 @@ fn invalid_attribute_names_are_rejected() {
     ];
     let (class, _) = toy::register_toy_subsystems();
 
-    // 2. Check that registration rejects each attribute and removes the directory.
     for attrs in INVALID_ATTRS {
         let dev = ClassDevice::builder(&class, "invalid-attr", ToyDisk { sectors: 8 })
             .attrs(attrs)
@@ -154,7 +130,6 @@ fn invalid_attribute_names_are_rejected() {
 
 #[ktest]
 fn suppressed_bind_attrs_are_inaccessible() {
-    // 1. Add a device and bind a driver that suppresses sysfs bind/unbind attributes.
     let (class, bus) = toy::register_toy_subsystems();
     let dev = BusDevice::builder(
         &bus,
@@ -174,7 +149,6 @@ fn suppressed_bind_attrs_are_inaccessible() {
         }))
         .unwrap();
 
-    // 2. Check that the attributes are absent and reads/writes fail without changing the binding.
     let path = "/bus/toy/drivers/toy_disk";
     let attrs = utils::attr_names(path);
     let directory = utils::lookup(path).unwrap().cast_to_node().unwrap();
@@ -194,7 +168,6 @@ fn suppressed_bind_attrs_are_inaccessible() {
     assert!(Arc::ptr_eq(&dev.driver().unwrap(), &driver));
     assert!(Arc::ptr_eq(&class.find_device("td101").unwrap(), &disk));
 
-    // 3. Unbind via the kernel API, then check that writing `bind` leaves the device unbound.
     bus.unbind(&dev).unwrap();
     assert!(matches!(
         directory.store_attr("bind", "suppressed0"),
@@ -203,7 +176,6 @@ fn suppressed_bind_attrs_are_inaccessible() {
     assert!(dev.driver().is_none());
     assert!(class.find_device("td101").is_none());
 
-    // 4. Remove the device and unregister the driver.
     crate::remove_device(&dev).unwrap();
     bus.unregister_driver(&driver).unwrap();
 }

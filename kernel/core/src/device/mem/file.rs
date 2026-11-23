@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use crate::{
     events::IoEvents,
     fs::{
@@ -33,7 +31,6 @@ pub(crate) fn geturandom(writer: &mut VmWriter) -> Result<usize> {
     Ok(written_bytes)
 }
 
-// TODO: Support true randomness by collecting environment noise.
 pub(crate) use geturandom as getrandom;
 
 #[expect(dead_code)]

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::{boxed::Box, sync::Arc};
 
 use aster_device::{
@@ -11,8 +9,6 @@ use aster_pci::bus::{PciBus, PciDevice, PciMatch};
 use super::{device::VirtioPciModernTransport, legacy::VirtioPciLegacyTransport};
 use crate::transport::VirtioTransport;
 
-// PCI device discovery identifiers (Virtio 1.2, section 4.1.2).
-// Reference: <https://docs.oasis-open.org/virtio/virtio/v1.2/virtio-v1.2.html>
 const VIRTIO_PCI_VENDOR_ID: u16 = 0x1af4;
 const TRANSITIONAL_DEVICE_ID_MIN: u16 = 0x1000;
 const TRANSITIONAL_DEVICE_ID_MAX: u16 = 0x103f;
@@ -63,7 +59,6 @@ impl Driver<PciBus> for VirtioPciDriver {
     }
 
     fn on_release(&self, _device: &Arc<PciDevice>) {
-        // FIXME: Stop the virtio device and release its transport resources before removal.
         panic!("virtio-pci driver removal is not supported");
     }
 
