@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  no-comments:
+    name: code without comments
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/check_no_comments.py
+
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install
+      - run: cargo fmt --check --all
+      - run: cargo fmt --check --manifest-path osdk/Cargo.toml
+      - run: cargo fmt --check --manifest-path tools/sctrace/Cargo.toml
+      - run: cargo fmt --check --manifest-path kernel/libs/comp-sys/cargo-component/Cargo.toml
+      - run: cargo fmt --check --manifest-path kernel/libs/comp-sys/controlled/Cargo.toml
+      - run: cargo fmt --check --manifest-path kernel/libs/comp-sys/component/Cargo.toml
+      - run: cargo fmt --check --manifest-path kernel/libs/comp-sys/component-macro/Cargo.toml
