@@ -3,6 +3,7 @@
 [Introduction](README.md)
 
 * [Aporia и upstream](aporia.md)
+* [Железо и загрузка](hardware.md)
 
 # Asterinas NixOS
 
