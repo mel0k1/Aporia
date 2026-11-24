@@ -32,7 +32,8 @@ jobs:
         run: |
           mkdir dist
           iso=$(find target -name "*.iso" -type f | head -1)
-          elf=$(find target/osdk -name "*.elf" -type f | grep -v "osdk-bin" | head -1)
+          elf=$(find target/osdk -name "asterinas-osdk-bin.elf" -type f | head -1)
+          if [ -z "$elf" ]; then elf=$(find target -name "asterinas-osdk-bin" -type f | head -1); fi
           echo "iso=$iso"
           echo "elf=$elf"
           test -n "$iso"
