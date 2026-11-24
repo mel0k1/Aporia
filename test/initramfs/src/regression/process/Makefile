@@ -7,6 +7,7 @@ SUBDIRS := \
 	exit \
 	fork_c \
 	getcpu \
+	get_robust_list \
 	getpid \
 	personality \
 	prctl \
@@ -14,6 +15,7 @@ SUBDIRS := \
 	ptrace \
 	sched \
 	signal \
+	sigqueueinfo \
 
 ifeq ($(HOST_PLATFORM), x86_64-linux)
 SUBDIRS += \

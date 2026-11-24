@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MPL-2.0
 
 SUBDIRS := \
+	copy_file_range \
 	empty_write \
 	exfat \
 	ext2 \

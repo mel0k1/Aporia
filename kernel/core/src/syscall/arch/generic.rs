@@ -1,3 +1,11 @@
+/// Imports all generic syscall entries.
+///
+/// This macro is intended solely for internal use within [macro@define_syscalls_with_generic_syscall_table].
+///
+/// The primary reason for this macro's existence is to facilitate code formatting.
+/// The macro, [macro@define_syscalls_with_generic_syscall_table],
+/// contains non-standard syntax that rustfmt cannot process.
+/// By moving these use statements into this dedicated macro, they can be correctly formatted.
 macro_rules! import_generic_syscall_entries {
     () => {
         use $crate::syscall::{
@@ -11,10 +19,11 @@ macro_rules! import_generic_syscall_entries {
             chmod::{sys_fchmod, sys_fchmodat, sys_fchmodat2},
             chown::{sys_fchown, sys_fchownat},
             chroot::sys_chroot,
-            clock_gettime::sys_clock_gettime,
+            clock_gettime::{sys_clock_getres, sys_clock_gettime},
             clone::{sys_clone, sys_clone3},
             close::{sys_close, sys_close_range},
             connect::sys_connect,
+            copy_file_range::sys_copy_file_range,
             dup::{sys_dup, sys_dup3},
             epoll::{sys_epoll_create1, sys_epoll_ctl, sys_epoll_pwait, sys_epoll_pwait2},
             eventfd::sys_eventfd2,
@@ -32,6 +41,7 @@ macro_rules! import_generic_syscall_entries {
             futex::sys_futex,
             get_ioprio::sys_ioprio_get,
             get_priority::sys_get_priority,
+            get_robust_list::sys_get_robust_list,
             getcpu::sys_getcpu,
             getcwd::sys_getcwd,
             getdents64::sys_getdents64,
@@ -95,6 +105,7 @@ macro_rules! import_generic_syscall_entries {
             readlink::sys_readlinkat,
             reboot::sys_reboot,
             recvfrom::sys_recvfrom,
+            recvmmsg::sys_recvmmsg,
             recvmsg::sys_recvmsg,
             removexattr::{sys_fremovexattr, sys_lremovexattr, sys_removexattr},
             rename::sys_renameat2,
@@ -145,6 +156,7 @@ macro_rules! import_generic_syscall_entries {
             shutdown::sys_shutdown,
             sigaltstack::sys_sigaltstack,
             signalfd::sys_signalfd4,
+            sigqueueinfo::{sys_rt_sigqueueinfo, sys_rt_tgsigqueueinfo},
             socket::sys_socket,
             socketpair::sys_socketpair,
             stat::{sys_fstat, sys_fstatat},
@@ -154,6 +166,7 @@ macro_rules! import_generic_syscall_entries {
             sync::{sys_sync, sys_syncfs},
             sysinfo::sys_sysinfo,
             tgkill::{sys_tgkill, sys_tkill},
+            time::sys_times,
             timer_create::{sys_timer_create, sys_timer_delete},
             timer_settime::{sys_timer_gettime, sys_timer_settime},
             timerfd_create::sys_timerfd_create,
@@ -175,11 +188,30 @@ macro_rules! import_generic_syscall_entries {
 
 pub(super) use import_generic_syscall_entries;
 
+/// Defines syscalls by combining architecture-specific definitions with the generic syscall table.
+///
+/// Generic syscalls refer to syscalls whose numbers are standardized across multiple architectures.
+/// By using this macro, you only need to define the arch-specific syscalls;
+/// the generic ones are integrated automatically.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.18/source/include/uapi/asm-generic/unistd.h>.
+///
+/// # Examples
+///
+/// Define architecture-specific syscalls `example1` and `example2` with generic syscalls:
+///
+/// ```rust
+/// define_syscalls_with_generic_syscall_table! {
+///     SYS_EXAMPLE1 = 500 => sys_example1(args[..0]);
+///     SYS_EXAMPLE2 = 501 => sys_example2(args[..1], &user_ctx);
+/// }
+/// ```
 macro_rules! define_syscalls_with_generic_syscall_table {
     ( $( $name: ident = $num: literal => $handler: ident $args: tt );* $(;)? ) => {
         generic::import_generic_syscall_entries!();
 
         $crate::syscall::impl_syscall_nums_and_dispatch_fn! {
+
             SYS_SETXATTR = 5                 => sys_setxattr(args[..5]);
             SYS_LSETXATTR = 6                => sys_lsetxattr(args[..5]);
             SYS_FSETXATTR = 7                => sys_fsetxattr(args[..5]);
@@ -265,6 +297,7 @@ macro_rules! define_syscalls_with_generic_syscall_table {
             SYS_UNSHARE = 97                 => sys_unshare(args[..1]);
             SYS_FUTEX = 98                   => sys_futex(args[..6]);
             SYS_SET_ROBUST_LIST = 99         => sys_set_robust_list(args[..2]);
+            SYS_GET_ROBUST_LIST = 100        => sys_get_robust_list(args[..3]);
             SYS_NANOSLEEP = 101              => sys_nanosleep(args[..2]);
             SYS_GETITIMER = 102              => sys_getitimer(args[..2]);
             SYS_SETITIMER = 103              => sys_setitimer(args[..3]);
@@ -273,6 +306,7 @@ macro_rules! define_syscalls_with_generic_syscall_table {
             SYS_TIMER_SETTIME = 110          => sys_timer_settime(args[..4]);
             SYS_TIMER_DELETE = 111           => sys_timer_delete(args[..1]);
             SYS_CLOCK_GETTIME = 113          => sys_clock_gettime(args[..2]);
+            SYS_CLOCK_GETRES = 114           => sys_clock_getres(args[..2]);
             SYS_CLOCK_NANOSLEEP = 115        => sys_clock_nanosleep(args[..4]);
             SYS_PTRACE = 117                 => sys_ptrace(args[..4]);
             SYS_SCHED_SETPARAM = 118         => sys_sched_setparam(args[..2]);
@@ -293,6 +327,7 @@ macro_rules! define_syscalls_with_generic_syscall_table {
             SYS_RT_SIGPROCMASK = 135         => sys_rt_sigprocmask(args[..4]);
             SYS_RT_SIGPENDING = 136          => sys_rt_sigpending(args[..2]);
             SYS_RT_SIGTIMEDWAIT = 137        => sys_rt_sigtimedwait(args[..4]);
+            SYS_RT_SIGQUEUEINFO = 138        => sys_rt_sigqueueinfo(args[..3]);
             SYS_RT_SIGRETURN = 139           => sys_rt_sigreturn(args[..0], &mut user_ctx);
             SYS_SET_PRIORITY = 140           => sys_set_priority(args[..3]);
             SYS_GET_PRIORITY = 141           => sys_get_priority(args[..2]);
@@ -307,6 +342,7 @@ macro_rules! define_syscalls_with_generic_syscall_table {
             SYS_GETRESGID = 150              => sys_getresgid(args[..3]);
             SYS_SETFSUID = 151               => sys_setfsuid(args[..1]);
             SYS_SETFSGID = 152               => sys_setfsgid(args[..1]);
+            SYS_TIMES = 153                  => sys_times(args[..1]);
             SYS_SETPGID = 154                => sys_setpgid(args[..2]);
             SYS_GETPGID = 155                => sys_getpgid(args[..1]);
             SYS_GETSID = 156                 => sys_getsid(args[..1]);
@@ -360,7 +396,9 @@ macro_rules! define_syscalls_with_generic_syscall_table {
             SYS_MPROTECT = 226               => sys_mprotect(args[..3]);
             SYS_MSYNC = 227                  => sys_msync(args[..3]);
             SYS_MADVISE = 233                => sys_madvise(args[..3]);
+            SYS_RT_TGSIGQUEUEINFO = 240      => sys_rt_tgsigqueueinfo(args[..4]);
             SYS_ACCEPT4 = 242                => sys_accept4(args[..4]);
+            SYS_RECVMMSG = 243               => sys_recvmmsg(args[..5]);
             SYS_WAIT4 = 260                  => sys_wait4(args[..4]);
             SYS_PRLIMIT64 = 261              => sys_prlimit64(args[..4]);
             SYS_SYNCFS = 267                 => sys_syncfs(args[..1]);
@@ -373,6 +411,7 @@ macro_rules! define_syscalls_with_generic_syscall_table {
             SYS_MEMFD_CREATE = 279           => sys_memfd_create(args[..2]);
             SYS_EXECVEAT = 281               => sys_execveat(args[..5], &mut user_ctx);
             SYS_MEMBARRIER = 283             => sys_membarrier(args[..2]);
+            SYS_COPY_FILE_RANGE = 285        => sys_copy_file_range(args[..6]);
             SYS_PREADV2 = 286                => sys_preadv2(args[..6]);
             SYS_PWRITEV2 = 287               => sys_pwritev2(args[..6]);
             SYS_STATX = 291                  => sys_statx(args[..5]);
@@ -389,6 +428,7 @@ macro_rules! define_syscalls_with_generic_syscall_table {
             SYS_EPOLL_PWAIT2 = 441           => sys_epoll_pwait2(args[..6]);
             SYS_FCHMODAT2 = 452              => sys_fchmodat2(args[..4]);
             SYS_LISTMOUNT = 458              => sys_listmount(args[..4]);
+
             $( $name = $num => $handler $args );*
         }
     };

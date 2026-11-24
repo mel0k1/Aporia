@@ -1,3 +1,5 @@
+//! System call handlers.
+
 #![cfg_attr(
     any(
         target_arch = "riscv64",
@@ -37,6 +39,7 @@ mod clone;
 mod close;
 mod connect;
 mod constants;
+mod copy_file_range;
 mod dup;
 mod epoll;
 mod eventfd;
@@ -55,6 +58,7 @@ mod fsync;
 mod futex;
 mod get_ioprio;
 mod get_priority;
+mod get_robust_list;
 mod getcpu;
 mod getcwd;
 mod getdents64;
@@ -121,6 +125,7 @@ mod read;
 mod readlink;
 mod reboot;
 mod recvfrom;
+mod recvmmsg;
 mod recvmsg;
 mod removexattr;
 mod rename;
@@ -173,6 +178,7 @@ mod setxattr;
 mod shutdown;
 mod sigaltstack;
 mod signalfd;
+mod sigqueueinfo;
 mod socket;
 mod socketpair;
 mod stat;
@@ -188,6 +194,7 @@ mod timer_settime;
 mod timerfd_create;
 mod timerfd_gettime;
 mod timerfd_settime;
+mod times;
 mod truncate;
 mod umask;
 mod umount;
@@ -199,6 +206,11 @@ mod wait4;
 mod waitid;
 mod write;
 
+/// This macro is used to define syscall handler.
+/// The first param is the number of parameters,
+/// The second param is the function name of syscall handler,
+/// The third is optional, means the args(if parameter number > 0),
+/// The fourth is optional, means if cpu ctx is required.
 macro_rules! syscall_handler {
     (0, $fn_name: ident, $args: ident, $ctx: expr) => {
         $fn_name($ctx)
@@ -308,10 +320,13 @@ macro_rules! dispatch_fn_inner {
 }
 
 macro_rules! impl_syscall_nums_and_dispatch_fn {
+
     ( $( $name: ident = $num: literal => $handler: ident $args: tt );* $(;)? ) => {
+
         $(
             pub(crate) const $name: u64 = $num;
         )*
+
 
         pub(crate) fn syscall_dispatch(
             syscall_number: u64,
@@ -347,9 +362,12 @@ struct SyscallArgument {
     args: [u64; 6],
 }
 
+/// Syscall return
 #[derive(Clone, Copy, Debug)]
 enum SyscallReturn {
+    /// return isize, this value will be used to set rax
     Return(isize),
+    /// does not need to set rax
     NoReturn,
 }
 

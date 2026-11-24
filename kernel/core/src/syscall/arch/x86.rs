@@ -1,3 +1,5 @@
+//! System call dispatch in the x86 architecture.
+
 use super::{
     accept::{sys_accept, sys_accept4},
     access::{sys_access, sys_faccessat, sys_faccessat2},
@@ -11,10 +13,11 @@ use super::{
     chmod::{sys_chmod, sys_fchmod, sys_fchmodat, sys_fchmodat2},
     chown::{sys_chown, sys_fchown, sys_fchownat, sys_lchown},
     chroot::sys_chroot,
-    clock_gettime::sys_clock_gettime,
+    clock_gettime::{sys_clock_getres, sys_clock_gettime},
     clone::{sys_clone, sys_clone3},
     close::{sys_close, sys_close_range},
     connect::sys_connect,
+    copy_file_range::sys_copy_file_range,
     dup::{sys_dup, sys_dup2, sys_dup3},
     epoll::{
         sys_epoll_create, sys_epoll_create1, sys_epoll_ctl, sys_epoll_pwait, sys_epoll_pwait2,
@@ -36,6 +39,7 @@ use super::{
     futex::sys_futex,
     get_ioprio::sys_ioprio_get,
     get_priority::sys_get_priority,
+    get_robust_list::sys_get_robust_list,
     getcpu::sys_getcpu,
     getcwd::sys_getcwd,
     getdents64::{sys_getdents, sys_getdents64},
@@ -103,6 +107,7 @@ use super::{
     readlink::{sys_readlink, sys_readlinkat},
     reboot::sys_reboot,
     recvfrom::sys_recvfrom,
+    recvmmsg::sys_recvmmsg,
     recvmsg::sys_recvmsg,
     removexattr::{sys_fremovexattr, sys_lremovexattr, sys_removexattr},
     rename::{sys_rename, sys_renameat, sys_renameat2},
@@ -155,6 +160,7 @@ use super::{
     shutdown::sys_shutdown,
     sigaltstack::sys_sigaltstack,
     signalfd::{sys_signalfd, sys_signalfd4},
+    sigqueueinfo::{sys_rt_sigqueueinfo, sys_rt_tgsigqueueinfo},
     socket::sys_socket,
     socketpair::sys_socketpair,
     stat::{sys_fstat, sys_fstatat, sys_lstat, sys_stat},
@@ -170,6 +176,7 @@ use super::{
     timerfd_create::sys_timerfd_create,
     timerfd_gettime::sys_timerfd_gettime,
     timerfd_settime::sys_timerfd_settime,
+    times::sys_times,
     truncate::{sys_ftruncate, sys_truncate},
     umask::sys_umask,
     umount::sys_umount,
@@ -274,6 +281,7 @@ impl_syscall_nums_and_dispatch_fn! {
     SYS_GETRLIMIT = 97         => sys_getrlimit(args[..2]);
     SYS_GETRUSAGE = 98         => sys_getrusage(args[..2]);
     SYS_SYSINFO = 99           => sys_sysinfo(args[..1]);
+    SYS_TIMES = 100            => sys_times(args[..1]);
     SYS_PTRACE = 101           => sys_ptrace(args[..4]);
     SYS_GETUID = 102           => sys_getuid(args[..0]);
     SYS_GETGID = 104           => sys_getgid(args[..0]);
@@ -301,6 +309,7 @@ impl_syscall_nums_and_dispatch_fn! {
     SYS_CAPSET = 126           => sys_capset(args[..2]);
     SYS_RT_SIGPENDING = 127    => sys_rt_sigpending(args[..2]);
     SYS_RT_SIGTIMEDWAIT = 128  => sys_rt_sigtimedwait(args[..4]);
+    SYS_RT_SIGQUEUEINFO = 129  => sys_rt_sigqueueinfo(args[..3]);
     SYS_RT_SIGSUSPEND = 130    => sys_rt_sigsuspend(args[..2]);
     SYS_SIGALTSTACK = 131      => sys_sigaltstack(args[..2], &user_ctx);
     SYS_UTIME = 132            => sys_utime(args[..2]);
@@ -355,6 +364,7 @@ impl_syscall_nums_and_dispatch_fn! {
     SYS_TIMER_GETTIME = 224    => sys_timer_gettime(args[..2]);
     SYS_TIMER_DELETE = 226     => sys_timer_delete(args[..1]);
     SYS_CLOCK_GETTIME = 228    => sys_clock_gettime(args[..2]);
+    SYS_CLOCK_GETRES = 229     => sys_clock_getres(args[..2]);
     SYS_CLOCK_NANOSLEEP = 230  => sys_clock_nanosleep(args[..4]);
     SYS_EXIT_GROUP = 231       => sys_exit_group(args[..1], &mut user_ctx);
     SYS_EPOLL_WAIT = 232       => sys_epoll_wait(args[..4]);
@@ -384,6 +394,7 @@ impl_syscall_nums_and_dispatch_fn! {
     SYS_PPOLL = 271            => sys_ppoll(args[..5]);
     SYS_UNSHARE = 272          => sys_unshare(args[..1]);
     SYS_SET_ROBUST_LIST = 273  => sys_set_robust_list(args[..2]);
+    SYS_GET_ROBUST_LIST = 274  => sys_get_robust_list(args[..3]);
     SYS_UTIMENSAT = 280        => sys_utimensat(args[..4]);
     SYS_EPOLL_PWAIT = 281      => sys_epoll_pwait(args[..6]);
     SYS_SIGNALFD = 282         => sys_signalfd(args[..3]);
@@ -401,6 +412,8 @@ impl_syscall_nums_and_dispatch_fn! {
     SYS_INOTIFY_INIT1 = 294     => sys_inotify_init1(args[..1]);
     SYS_PREADV = 295           => sys_preadv(args[..5]);
     SYS_PWRITEV = 296          => sys_pwritev(args[..5]);
+    SYS_RT_TGSIGQUEUEINFO = 297 => sys_rt_tgsigqueueinfo(args[..4]);
+    SYS_RECVMMSG = 299         => sys_recvmmsg(args[..5]);
     SYS_PRLIMIT64 = 302        => sys_prlimit64(args[..4]);
     SYS_SYNCFS = 306           => sys_syncfs(args[..1]);
     SYS_SENDMMSG = 307         => sys_sendmmsg(args[..4]);
@@ -413,6 +426,7 @@ impl_syscall_nums_and_dispatch_fn! {
     SYS_MEMFD_CREATE = 319     => sys_memfd_create(args[..2]);
     SYS_EXECVEAT = 322         => sys_execveat(args[..5], &mut user_ctx);
     SYS_MEMBARRIER = 324       => sys_membarrier(args[..2]);
+    SYS_COPY_FILE_RANGE = 326  => sys_copy_file_range(args[..6]);
     SYS_PREADV2 = 327          => sys_preadv2(args[..6]);
     SYS_PWRITEV2 = 328         => sys_pwritev2(args[..6]);
     SYS_STATX = 332            => sys_statx(args[..5]);

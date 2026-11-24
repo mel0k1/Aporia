@@ -19,14 +19,17 @@
 - [x] Кэши сборки OSDK и ядра шарятся между job'ами тяжёлого контура
 - [x] Быстрый workflow `Test smoke` для проверки контура вручную: boot, regression, xfstests, pjdfstest
 - [x] Инструкция по загрузке на реальном железе и честный список драйверной поддержки в `book/`
+- [x] Тяжёлый контур прогнан до конца: 32 из 33 job'ов зелёные; упавший lint (fmt-дрейф в примерах книги) разобран и починен
+- [x] Восстановлены док-комментарии из базы после чистки: `make check` (fmt, clippy, udeps) проходит целиком
+- [x] Партия syscalls: `copy_file_range`, `recvmmsg`, `clock_getres`, `times`, `get_robust_list`, `rt_sigqueueinfo`, `rt_tgsigqueueinfo` с регрессионными тестами в initramfs
 
 ## Ближайшие шаги
 
-- [ ] Прогнать тяжёлый контур до конца и разобрать расхождения с upstream-результатами
 - [ ] Первая загрузка на реальной машине и первая запись в список проверенного оборудования
+- [ ] Семейство mlock (mlock, mlock2, munlock, mlockall, munlockall): populate страниц и лимит RLIMIT_MEMLOCK
 
 ## Дальше
 
-- [ ] Расширять покрытие Linux syscalls по списку отсутствующих
+- [ ] Расширять покрытие Linux syscalls по списку отсутствующих (124 номера, крупные кандидаты: splice/vmsplice/tee, POSIX-очереди сообщений, SysV IPC, rseq, process_vm_readv/writev, openat2, statmount)
 - [ ] Драйверы для реального железа: AHCI/SATA, USB-хост, сетевые карты
 - [ ] Свой инсталлятор и дистро-слой поверх ядра

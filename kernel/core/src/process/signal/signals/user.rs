@@ -1,5 +1,7 @@
 #![expect(dead_code)]
 
+use ostd::mm::Vaddr;
+
 use super::Signal;
 use crate::{
     context::Context,
@@ -19,6 +21,7 @@ pub(crate) struct UserSignal {
     pid: Pid,
     uid: Uid,
     kind: UserSignalKind,
+    sigval: Vaddr,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -35,6 +38,7 @@ impl UserSignal {
             pid,
             uid,
             kind,
+            sigval: 0,
         }
     }
 
@@ -44,6 +48,27 @@ impl UserSignal {
             pid: ctx.process.pid(),
             uid: ctx.posix_thread.credentials().ruid(),
             kind: UserSignalKind::Kill,
+            sigval: 0,
+        }
+    }
+
+    pub(crate) fn new_sigqueue(num: SigNum, ctx: &Context, sigval: Vaddr) -> Self {
+        Self {
+            num,
+            pid: ctx.process.pid(),
+            uid: ctx.posix_thread.credentials().ruid(),
+            kind: UserSignalKind::Sigqueue,
+            sigval,
+        }
+    }
+
+    pub(crate) fn new_tkill_with_sigval(num: SigNum, ctx: &Context, sigval: Vaddr) -> Self {
+        Self {
+            num,
+            pid: ctx.process.pid(),
+            uid: ctx.posix_thread.credentials().ruid(),
+            kind: UserSignalKind::Tkill,
+            sigval,
         }
     }
 
@@ -70,6 +95,7 @@ impl Signal for UserSignal {
 
         let mut info = siginfo_t::new(self.num, code);
         info.set_pid_uid(self.pid, self.uid);
+        info.set_ptr(self.sigval);
 
         info
     }

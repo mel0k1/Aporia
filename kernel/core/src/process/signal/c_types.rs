@@ -12,6 +12,7 @@ use crate::{
 };
 
 pub(crate) type sigset_t = u64;
+
 pub(crate) type clock_t = i64;
 
 #[padding_struct]
@@ -31,6 +32,7 @@ pub(crate) struct siginfo_t {
     pub si_signo: i32,
     pub si_errno: i32,
     pub si_code: i32,
+
     siginfo_fields: siginfo_fields_t,
 }
 
@@ -56,6 +58,10 @@ impl siginfo_t {
 
     pub(crate) fn set_pid_uid_by(&mut self, ctx: &Context) {
         self.set_pid_uid(ctx.process.pid(), ctx.posix_thread.credentials().ruid());
+    }
+
+    pub(crate) fn sigval(&self) -> Vaddr {
+        self.siginfo_fields.common().second.value().read_ptr()
     }
 
     pub(crate) fn set_timer(&mut self, timerid: i32, overrun: i32) {
@@ -201,6 +207,7 @@ union siginfo_addr_bnd_t {
     upper: Vaddr,
 }
 
+/// Reference: <https://elixir.bootlin.com/linux/v6.15.7/source/include/uapi/asm-generic/ucontext.h#L5>
 #[cfg(target_arch = "x86_64")]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
@@ -212,6 +219,9 @@ pub(crate) struct ucontext_t {
     pub uc_sigmask: sigset_t,
 }
 
+/// Reference: <https://elixir.bootlin.com/linux/v6.15.7/source/arch/riscv/include/uapi/asm/ucontext.h>
+/// Reference: <https://elixir.bootlin.com/linux/v6.15.7/source/arch/loongarch/include/uapi/asm/ucontext.h>
+/// Reference: <https://elixir.bootlin.com/linux/v6.15.7/source/arch/arm64/include/uapi/asm/ucontext.h>
 #[cfg(any(
     target_arch = "riscv64",
     target_arch = "loongarch64",
@@ -288,6 +298,7 @@ pub(crate) struct _sigev_thread {
 }
 
 const SIGEV_MAX_SIZE: usize = 64;
+/// The total size of the fields `sigev_value`, `sigev_signo` and `sigev_notify`.
 const SIGEV_PREAMBLE_SIZE: usize = size_of::<i32>() * 2 + size_of::<sigval_t>();
 const SIGEV_PAD_SIZE: usize = (SIGEV_MAX_SIZE - SIGEV_PREAMBLE_SIZE) / size_of::<i32>();
 

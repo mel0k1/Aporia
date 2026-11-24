@@ -2,9 +2,11 @@
 
 SUBDIRS := \
 	alarm \
+	clock_getres \
 	clock_nanosleep \
 	gettimeofday \
 	itimer \
+	times \
 	timerfd \
 
 include ../common/Makefile
