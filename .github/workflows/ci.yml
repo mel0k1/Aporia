@@ -28,3 +28,44 @@ jobs:
       - run: cargo +$TC fmt --check --manifest-path kernel/libs/comp-sys/controlled/Cargo.toml
       - run: cargo +$TC fmt --check --manifest-path kernel/libs/comp-sys/component/Cargo.toml
       - run: cargo +$TC fmt --check --manifest-path kernel/libs/comp-sys/component-macro/Cargo.toml
+
+  build-kernel:
+    name: kernel build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    container:
+      image: asterinas/kernel-dev:0.19.0-20261012
+      options: -v /dev:/dev --privileged
+      volumes:
+        - /usr/lib/google-cloud-sdk:/usr/lib/google-cloud-sdk
+        - /usr/local/lib/android:/usr/local/lib/android
+        - /usr/share/dotnet:/usr/share/dotnet
+    steps:
+      - name: free disk space
+        run: rm -rf /usr/lib/google-cloud-sdk/* /usr/local/lib/android/* /usr/share/dotnet/*
+      - uses: actions/checkout@v4
+      - name: install cargo-osdk
+        run: OSDK_LOCAL_DEV=1 cargo install --path osdk --locked --force
+      - name: build kernel and iso
+        run: make kernel
+
+  ktest:
+    name: kernel tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    if: github.event_name == 'push'
+    container:
+      image: asterinas/kernel-dev:0.19.0-20261012
+      options: -v /dev:/dev --privileged
+      volumes:
+        - /usr/lib/google-cloud-sdk:/usr/lib/google-cloud-sdk
+        - /usr/local/lib/android:/usr/local/lib/android
+        - /usr/share/dotnet:/usr/share/dotnet
+    steps:
+      - name: free disk space
+        run: rm -rf /usr/lib/google-cloud-sdk/* /usr/local/lib/android/* /usr/share/dotnet/*
+      - uses: actions/checkout@v4
+      - name: install cargo-osdk
+        run: OSDK_LOCAL_DEV=1 cargo install --path osdk --locked --force
+      - name: run ktest suite
+        run: make ktest
