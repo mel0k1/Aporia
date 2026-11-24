@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - v*
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: build and publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    container:
+      image: asterinas/kernel-dev:0.19.0-20261012
+      options: -v /dev:/dev --privileged
+      volumes:
+        - /usr/lib/google-cloud-sdk:/usr/lib/google-cloud-sdk
+        - /usr/local/lib/android:/usr/local/lib/android
+        - /usr/share/dotnet:/usr/share/dotnet
+    steps:
+      - name: free disk space
+        run: rm -rf /usr/lib/google-cloud-sdk/* /usr/local/lib/android/* /usr/share/dotnet/*
+      - uses: actions/checkout@v4
+      - name: install cargo-osdk
+        run: OSDK_LOCAL_DEV=1 cargo install --path osdk --locked --force
+      - name: build kernel and iso
+        run: make kernel RELEASE=1
+      - name: collect artifacts
+        run: |
+          mkdir dist
+          find target -name "*.iso" -type f | head -1 | xargs -I{} cp {} dist/aporia-x86_64.iso
+          find target/x86_64-unknown-none/release -maxdepth 1 -name "asterinas" -type f | head -1 | xargs -I{} cp {} dist/aporia-x86_64.elf
+          sha256sum dist/* > dist/SHA256SUMS
+          ls -la dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aporia-x86_64
+          path: dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
