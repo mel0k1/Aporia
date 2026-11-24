@@ -8,6 +8,7 @@
 - [x] Код без комментариев (Rust, Python, TOML), проверка в CI
 - [x] Форматирование по rustfmt с настройками базы
 - [x] README, логотип, лёгкий CI
+- [x] Реализован syscall `membarrier`: QUERY, GLOBAL, EXPEDITED с регистрациями через IPI-барьеры OSTD
 
 ## Ближайшие шаги
 

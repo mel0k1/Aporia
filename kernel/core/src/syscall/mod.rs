@@ -87,6 +87,7 @@ mod listmount;
 mod listxattr;
 mod lseek;
 mod madvise;
+mod membarrier;
 mod memfd_create;
 mod mkdir;
 mod mknod;
