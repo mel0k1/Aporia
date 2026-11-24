@@ -1,5 +1,3 @@
-
-
 //! The test suite for OpenJDK on Asterinas NixOS.
 //!
 //! Supplements the `OpenJDK` coverage in `development-tools`.
@@ -13,15 +11,6 @@ nixos_test_main!();
 
 #[nixos_test]
 fn openjdk_regression(nixos_shell: &mut Session) -> Result<(), Error> {
-
-
-
-
-
-
-
-
-
     let success_regex =
         Regex::new(r"(?m)^Test results: passed: [0-9]+$").map_err(|err| Error::Pty(err.into()))?;
 

@@ -1,5 +1,3 @@
-
-
 //! The test suite for nix and nixos tools on Asterinas NixOS.
 //!
 //! See `test/nixos/README.md#documentation-maintenance` for sync requirements

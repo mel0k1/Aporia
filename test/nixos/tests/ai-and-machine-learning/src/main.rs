@@ -1,5 +1,3 @@
-
-
 //! The test suite for AI and machine learning applications on Asterinas NixOS.
 //!
 //! See `test/nixos/README.md#documentation-maintenance` for sync requirements
@@ -8,10 +6,6 @@
 use nixos_test_framework::*;
 
 nixos_test_main!();
-
-
-
-
 
 #[nixos_test]
 fn pytorch_run_script(nixos_shell: &mut Session) -> Result<(), Error> {
@@ -22,10 +16,6 @@ fn pytorch_run_script(nixos_shell: &mut Session) -> Result<(), Error> {
     Ok(())
 }
 
-
-
-
-
 #[nixos_test]
 fn tensorflow_run_script(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd_and_expect(
@@ -34,10 +24,6 @@ fn tensorflow_run_script(nixos_shell: &mut Session) -> Result<(), Error> {
     )?;
     Ok(())
 }
-
-
-
-
 
 #[nixos_test]
 fn ollama_start_server(nixos_shell: &mut Session) -> Result<(), Error> {
@@ -54,15 +40,8 @@ fn ollama_start_server(nixos_shell: &mut Session) -> Result<(), Error> {
     Ok(())
 }
 
-
-
-
-
 #[nixos_test]
 fn codex_show_help(nixos_shell: &mut Session) -> Result<(), Error> {
-
-
-
     nixos_shell.run_cmd_and_expect("codex --help", "Run Codex non-interactively")?;
     Ok(())
 }

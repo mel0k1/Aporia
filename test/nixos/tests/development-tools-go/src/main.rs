@@ -1,5 +1,3 @@
-
-
 //! The test suite for Go standard library on Asterinas NixOS.
 //!
 //! Supplements the `Go` coverage in `development-tools`.
@@ -13,24 +11,6 @@ nixos_test_main!();
 
 #[nixos_test]
 fn go_stdlib(nixos_shell: &mut Session) -> Result<(), Error> {
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     let success_regex = Regex::new(r"(?m)^(?:ok|\?)\s+").map_err(|err| Error::Pty(err.into()))?;
 
     let testcases =

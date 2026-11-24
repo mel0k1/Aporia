@@ -1,5 +1,3 @@
-
-
 //! An imperative testing framework for NixOS-based tests.
 //!
 //! # Core Concepts
@@ -160,18 +158,14 @@ macro_rules! nixos_test_main {
 pub fn __nixos_test_main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
 
-
     if args.iter().any(|i| i == "--help") || args.iter().any(|i| i == "-h") {
         print_help();
         return Ok(());
     }
 
-
     let qemu_cmd = parse_arg(&args, "--qemu-cmd").ok_or("Missing --qemu-cmd argument")?;
 
-
     let test_filter = parse_arg(&args, "--test");
-
 
     let timeout_ms = env::var("NIXOS_TEST_TIMEOUT")
         .ok()
@@ -184,7 +178,6 @@ pub fn __nixos_test_main() -> Result<(), Box<dyn std::error::Error>> {
     if all_test_cases.is_empty() {
         return Err("No test cases found".into());
     }
-
 
     let test_cases: Vec<&TestCase> = if let Some(ref filter) = test_filter {
         let filtered: Vec<&TestCase> = all_test_cases
@@ -219,8 +212,6 @@ pub fn __nixos_test_main() -> Result<(), Box<dyn std::error::Error>> {
 
     let desc = SessionDesc::new(init_prompt, "", "poweroff");
     let mut session = Session::new(desc, session);
-
-
 
     session.run_cmd("set +o emacs +o vi")?;
 

@@ -1,5 +1,3 @@
-
-
 //! The test suite for development tools on Asterinas NixOS.
 //!
 //! See `test/nixos/README.md#documentation-maintenance` for sync requirements
@@ -8,10 +6,6 @@
 use nixos_test_framework::*;
 
 nixos_test_main!();
-
-
-
-
 
 #[nixos_test]
 fn clang_compile(nixos_shell: &mut Session) -> Result<(), Error> {
@@ -29,10 +23,6 @@ fn clang_emit_llvm_ir(nixos_shell: &mut Session) -> Result<(), Error> {
     Ok(())
 }
 
-
-
-
-
 #[nixos_test]
 fn gcc_compile(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd(r##"echo -e '#include <stdio.h>\nint main() { printf("Hello from GCC\\n"); return 0; }' > /tmp/hello.c"##)?;
@@ -49,10 +39,6 @@ fn gcc_compile_object_file(nixos_shell: &mut Session) -> Result<(), Error> {
     Ok(())
 }
 
-
-
-
-
 #[nixos_test]
 fn go_run_program(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd("mkdir -p /tmp/gotest && cd /tmp/gotest")?;
@@ -61,10 +47,6 @@ fn go_run_program(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd_and_expect("cd /tmp/gotest && go run main.go", "Hello from Go")?;
     Ok(())
 }
-
-
-
-
 
 #[nixos_test]
 fn lua_run_script(nixos_shell: &mut Session) -> Result<(), Error> {
@@ -79,10 +61,6 @@ fn lua_run_inline_code(nixos_shell: &mut Session) -> Result<(), Error> {
     Ok(())
 }
 
-
-
-
-
 #[nixos_test]
 fn nodejs_run_script(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd(r#"echo 'console.log("Hello from Node.js");' > /tmp/test.js"#)?;
@@ -95,10 +73,6 @@ fn nodejs_run_inline_code(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd_and_expect(r#"node -e "console.log('Hello World')""#, "Hello World")?;
     Ok(())
 }
-
-
-
-
 
 #[nixos_test]
 fn octave_run_script(nixos_shell: &mut Session) -> Result<(), Error> {
@@ -113,10 +87,6 @@ fn octave_run_inline_code(nixos_shell: &mut Session) -> Result<(), Error> {
     Ok(())
 }
 
-
-
-
-
 #[nixos_test]
 fn java_compile_run_program(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd(r#"echo 'public class HelloWorld { public static void main(String[] args) { System.out.println("Hello from Java"); } }' > /tmp/HelloWorld.java"#)?;
@@ -124,10 +94,6 @@ fn java_compile_run_program(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd_and_expect("cd /tmp && java HelloWorld", "Hello from Java")?;
     Ok(())
 }
-
-
-
-
 
 #[nixos_test]
 fn perl_run_script(nixos_shell: &mut Session) -> Result<(), Error> {
@@ -142,10 +108,6 @@ fn perl_run_inline_code(nixos_shell: &mut Session) -> Result<(), Error> {
     Ok(())
 }
 
-
-
-
-
 #[nixos_test]
 fn php_run_script(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd(r#"echo '<?php echo "Hello from PHP"; ?>' > /tmp/test.php"#)?;
@@ -158,10 +120,6 @@ fn php_run_inline_code(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd_and_expect(r#"php -r "echo 'Hello World';""#, "Hello World")?;
     Ok(())
 }
-
-
-
-
 
 #[nixos_test]
 fn python3_run_script(nixos_shell: &mut Session) -> Result<(), Error> {
@@ -176,10 +134,6 @@ fn python3_run_inline_code(nixos_shell: &mut Session) -> Result<(), Error> {
     Ok(())
 }
 
-
-
-
-
 #[nixos_test]
 fn ruby_run_script(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd(r#"echo 'puts "Hello from Ruby"' > /tmp/test.rb"#)?;
@@ -193,10 +147,6 @@ fn ruby_run_inline_code(nixos_shell: &mut Session) -> Result<(), Error> {
     Ok(())
 }
 
-
-
-
-
 #[nixos_test]
 fn rust_compile_run_program(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd("mkdir -p /tmp/rust_test")?;
@@ -206,10 +156,6 @@ fn rust_compile_run_program(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd_and_expect("/tmp/rust_test/hello_rust", "Hello from Rust")?;
     Ok(())
 }
-
-
-
-
 
 #[nixos_test]
 fn git_init_status(nixos_shell: &mut Session) -> Result<(), Error> {
@@ -245,10 +191,6 @@ fn git_create_branch(nixos_shell: &mut Session) -> Result<(), Error> {
     Ok(())
 }
 
-
-
-
-
 #[nixos_test]
 fn cargo_create_build_project(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd("cd /tmp && cargo new myproject")?;
@@ -257,10 +199,6 @@ fn cargo_create_build_project(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd_and_expect("cd /tmp/myproject && cargo run", "Hello, world!")?;
     Ok(())
 }
-
-
-
-
 
 #[nixos_test]
 fn cmake_build(nixos_shell: &mut Session) -> Result<(), Error> {
@@ -274,10 +212,6 @@ fn cmake_build(nixos_shell: &mut Session) -> Result<(), Error> {
     Ok(())
 }
 
-
-
-
-
 #[nixos_test]
 fn make_run_target(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd("mkdir -p /tmp/make_test")?;
@@ -285,10 +219,6 @@ fn make_run_target(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd_and_expect("cd /tmp/make_test && make", "Hello from Make")?;
     Ok(())
 }
-
-
-
-
 
 #[nixos_test]
 fn meson_build(nixos_shell: &mut Session) -> Result<(), Error> {
@@ -304,10 +234,6 @@ fn meson_build(nixos_shell: &mut Session) -> Result<(), Error> {
     Ok(())
 }
 
-
-
-
-
 #[nixos_test]
 fn gdb_debug(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd("gcc -g -O0 /tmp/gdb_sample.c -o /tmp/hello")?;
@@ -316,7 +242,6 @@ fn gdb_debug(nixos_shell: &mut Session) -> Result<(), Error> {
         "gdb -batch -x /tmp/gdb_commands.gdb /tmp/hello > /tmp/gdb.out 2>&1 && echo GDB_OK",
         "GDB_OK",
     )?;
-
 
     nixos_shell.run_cmd_and_expect(
         "grep -F 'Breakpoint 1, hello_world' /tmp/gdb.out",
@@ -345,10 +270,6 @@ fn gdb_debug(nixos_shell: &mut Session) -> Result<(), Error> {
     Ok(())
 }
 
-
-
-
-
 #[nixos_test]
 fn strace_ls(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd_and_expect(
@@ -359,10 +280,6 @@ fn strace_ls(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd_and_expect("grep -F 'getdents64(' /tmp/strace.out", "getdents64(")?;
     Ok(())
 }
-
-
-
-
 
 #[nixos_test]
 fn hugo_serve_site(nixos_shell: &mut Session) -> Result<(), Error> {
@@ -380,10 +297,6 @@ fn hugo_serve_site(nixos_shell: &mut Session) -> Result<(), Error> {
     Ok(())
 }
 
-
-
-
-
 #[nixos_test]
 fn direnv_load_environment(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd("mkdir -p /tmp/direnv-test")?;
@@ -399,10 +312,6 @@ fn direnv_load_environment(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd("unset HELLO; rm -rf /tmp/direnv-test")?;
     Ok(())
 }
-
-
-
-
 
 #[nixos_test]
 fn shellcheck_lint_script(nixos_shell: &mut Session) -> Result<(), Error> {
@@ -420,10 +329,6 @@ fn shellcheck_lint_script(nixos_shell: &mut Session) -> Result<(), Error> {
     Ok(())
 }
 
-
-
-
-
 #[nixos_test]
 fn jq_query_json(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd_and_expect(r#"echo '{"name":"Alice","age":30}' | jq ."#, "name")?;
@@ -434,10 +339,6 @@ fn jq_query_json(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd_and_expect(r#"echo '{"a":1,"b":2}' | jq '{sum: (.a + .b)}'"#, "3")?;
     Ok(())
 }
-
-
-
-
 
 #[nixos_test]
 fn yq_query_yaml(nixos_shell: &mut Session) -> Result<(), Error> {

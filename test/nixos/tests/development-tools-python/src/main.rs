@@ -1,5 +1,3 @@
-
-
 //! The test suite for Python 3 on Asterinas NixOS.
 //!
 //! Supplements the `Python 3` coverage in `development-tools`.
@@ -17,15 +15,9 @@ fn python3_regrtest(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd("mkdir -p $py_src")?;
     nixos_shell.run_cmd("tar xf /tmp/python3-src.tar.xz --strip-components=1 -C $py_src")?;
 
-
-
-
-
-
     nixos_shell.run_cmd("pyhome=/tmp/pyhome")?;
     nixos_shell
         .run_cmd("cp -dR --preserve=mode $(python3 -c 'import sys; print(sys.prefix)') $pyhome")?;
-
 
     nixos_shell.run_cmd(
         "py_testdir=$pyhome/lib/python$(python3 -c 'import sys; print(\"%d.%d\" % sys.version_info[:2])')",
@@ -33,12 +25,6 @@ fn python3_regrtest(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd("rm -rf $py_testdir/test")?;
     nixos_shell.run_cmd("cp -a $py_src/Lib/test $py_testdir/")?;
     nixos_shell.run_cmd("cp -a $py_src/Tools $pyhome/lib/Tools")?;
-
-
-
-
-
-
 
     const RESULT_SUCCESS: &str = "Result: SUCCESS";
 

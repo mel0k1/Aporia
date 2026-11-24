@@ -1,5 +1,3 @@
-
-
 //! Smoke tests for the DRM, Xorg, and Mesa integration path on Asterinas NixOS.
 
 use std::time::Duration;
@@ -10,7 +8,6 @@ nixos_test_main!();
 
 #[nixos_test]
 fn drm_xorg_mesa_smoke(nixos_shell: &mut Session) -> Result<(), Error> {
-
     nixos_shell.wait_until_check_matches(
         &CommandCheck::new(
             "bash -o pipefail -c 'timeout 2s env DISPLAY=:0 glxinfo -B 2>&1 | tee /tmp/drm-glxinfo.txt'",
@@ -19,7 +16,6 @@ fn drm_xorg_mesa_smoke(nixos_shell: &mut Session) -> Result<(), Error> {
         Duration::from_secs(90),
         "Xorg and GLX to become ready",
     )?;
-
 
     nixos_shell.run_cmd_and_expect_regex("test -c /dev/dri/card0", &Regex::new("").unwrap())?;
     nixos_shell.run_cmd_and_expect_regex(
@@ -35,7 +31,6 @@ fn drm_xorg_mesa_smoke(nixos_shell: &mut Session) -> Result<(), Error> {
         &Regex::new(r"(?m)^[^[:space:]]+ connected( primary)? [0-9]+x[0-9]+\+[0-9]+\+[0-9]+")
             .unwrap(),
     )?;
-
 
     nixos_shell.run_cmd_and_expect_regex(
         r#"readlink /proc/"$(pgrep -o -x Xorg)"/fd/* 2>/dev/null | grep -Fx /dev/dri/card0"#,

@@ -1,5 +1,3 @@
-
-
 //! The test suite for networking applications on Asterinas NixOS.
 //!
 //! See `test/nixos/README.md#documentation-maintenance` for sync requirements
@@ -8,10 +6,6 @@
 use nixos_test_framework::*;
 
 nixos_test_main!();
-
-
-
-
 
 #[nixos_test]
 fn curl_fetch_webpage(nixos_shell: &mut Session) -> Result<(), Error> {
@@ -163,10 +157,6 @@ fn wget_download(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd_and_expect("cat /tmp/wget_test.txt", "Disallow")?;
     Ok(())
 }
-
-
-
-
 
 #[nixos_test]
 fn ldns_drill_basic(nixos_shell: &mut Session) -> Result<(), Error> {

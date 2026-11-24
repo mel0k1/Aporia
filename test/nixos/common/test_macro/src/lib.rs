@@ -1,5 +1,3 @@
-
-
 //! A procedural macro to register NixOS test cases.
 //!
 //! This crate should work together with `nixos_test_framework` crate. The

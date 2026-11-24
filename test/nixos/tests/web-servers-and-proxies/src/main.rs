@@ -1,5 +1,3 @@
-
-
 //! The test suite for web servers and proxies applications on Asterinas NixOS.
 //!
 //! See `test/nixos/README.md#documentation-maintenance` for sync requirements
@@ -8,10 +6,6 @@
 use nixos_test_framework::*;
 
 nixos_test_main!();
-
-
-
-
 
 #[nixos_test]
 fn httpd_serve_webpage(nixos_shell: &mut Session) -> Result<(), Error> {
