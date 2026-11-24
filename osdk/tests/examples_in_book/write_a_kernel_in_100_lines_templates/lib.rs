@@ -10,12 +10,12 @@ use align_ext::AlignExt;
 use ostd::{
     arch::cpu::context::UserContext,
     mm::{
-        CachePolicy, FallibleVmRead, FrameAllocOptions, PAGE_SIZE, PageFlags, PageProperty, Vaddr,
-        VmIo, VmSpace, VmWriter,
+        CachePolicy, FallibleVmRead, FrameAllocOptions, PageFlags, PageProperty, Vaddr, VmIo,
+        VmSpace, VmWriter, PAGE_SIZE,
     },
-    power::{ExitCode, poweroff},
+    power::{poweroff, ExitCode},
     prelude::*,
-    task::{Task, TaskOptions, disable_preempt},
+    task::{disable_preempt, Task, TaskOptions},
     user::{DummyUserHooks, ReturnReason, UserMode},
 };
 
