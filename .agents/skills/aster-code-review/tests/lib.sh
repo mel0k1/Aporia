@@ -1,41 +1,26 @@
-# SPDX-License-Identifier: MPL-2.0
 
-# Shared helpers + a tiny runner for the script test suites.
-#
-# A suite file sources this, defines `test_<aspect>` functions
-# (and optionally a `setup` that prepares a fresh $TMP for each case),
-# and ends with `run_suite`.
-# Each test case runs in its own empty $TMP and is reported ok/FAIL.
-# Asserts accumulate into $_fail, which the runner resets per case.
 
 _fail=0
 _note() { printf '       %s\n' "$1"; }
 
-assert_eq() {        # <what> <actual> <expected>
+assert_eq() {
     [[ "$2" == "$3" ]] && return 0
     _fail=$((_fail + 1)); _note "$1: expected [$3], got [$2]"
 }
-assert_contains() {  # <what> <haystack> <needle>
+assert_contains() {
     [[ "$2" == *"$3"* ]] && return 0
     _fail=$((_fail + 1)); _note "$1: output is missing [$3]"
 }
-assert_absent() {    # <what> <haystack> <needle>
+assert_absent() {
     [[ "$2" != *"$3"* ]] && return 0
     _fail=$((_fail + 1)); _note "$1: output unexpectedly contains [$3]"
 }
-assert_before() {    # <what> <haystack> <first> <second>
+assert_before() {
     local pre_a="${2%%"$3"*}" pre_b="${2%%"$4"*}"
     [[ "$2" == *"$3"* && "$2" == *"$4"* && ${#pre_a} -lt ${#pre_b} ]] && return 0
     _fail=$((_fail + 1)); _note "$1: expected [$3] to appear before [$4]"
 }
 
-# Build the standard fixture repo at $1.
-# History (HEAD = feature):
-#   M0  main: a.txt="base"                         <- merge-base(main, feature)
-#   F1  feature (from M0): a.txt+="more", add b.txt <- HEAD
-#   M1  main (after the fork): add m.txt            <- on main only
-# So a bare base (`main`, 3-dot from M0) excludes m.txt,
-# while the literal `main..feature` (2-dot from M1) includes it as a deletion.
 build_repo() {
     local r="$1"; mkdir -p "$r"
     git -C "$r" init -q

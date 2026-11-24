@@ -1,17 +1,12 @@
 #!/bin/bash
 
-# SPDX-License-Identifier: MPL-2.0
 
 set -e
 
-# Publish OSDK and OSTD to crates.io
-#
-# Usage: publish_osdk_and_ostd.sh [--dry-run | --token REGISTRY_TOKEN]
 
 SCRIPT_DIR=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
 ASTER_SRC_DIR=${SCRIPT_DIR}/../..
 
-# Print help message
 print_help() {
     echo "Usage: $0 [--dry-run | --token REGISTRY_TOKEN]"
     echo ""
@@ -20,7 +15,6 @@ print_help() {
     echo "  --token REGISTRY_TOKEN:  The token to authenticate with crates.io."
 }
 
-# Parse the parameters
 DRY_RUN=""
 TOKEN=""
 while [ "$#" -gt 0 ]; do
@@ -41,10 +35,6 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
-# Tracks packages that have already passed `cargo publish --dry-run` in this
-# script. `--dry-run` does not really publish earlier packages to `crates.io`,
-# so later packages patch only these already-checked local `path` dependencies
-# to mirror the dependency state that a real publish would see.
 declare -A DRY_RUN_PUBLISHED_PACKAGES=()
 
 mark_dry_run_published() {
@@ -55,8 +45,6 @@ is_dry_run_published() {
     [ -n "${DRY_RUN_PUBLISHED_PACKAGES[$1]}" ]
 }
 
-# Performs the publish check or publishes the crate in directory $1.
-# All arguments after $1 are passed to `cargo publish`.
 do_publish_for() {
     pushd "$ASTER_SRC_DIR/$1"
     shift
@@ -69,13 +57,8 @@ do_publish_for() {
         local PATCH_ARGS=()
 
         MANIFEST_PATH="$(pwd -P)/Cargo.toml"
-        # `cargo metadata` prints a JSON document for the **whole workspace**,
-        # not only for `MANIFEST_PATH`. Each package entry includes fields such as
-        # `manifest_path`, `name`, and `dependencies`; the `--dry-run` logic below
-        # uses them to find the package being published and its local `path` deps.
         METADATA=$(cargo metadata --format-version=1 --no-deps --manifest-path "$MANIFEST_PATH")
 
-        # Pick the package entry for the manifest currently being published.
         PACKAGE_METADATA=$(jq --arg manifest "$MANIFEST_PATH" '
             .packages[]
             | select(.manifest_path == $manifest)
@@ -91,8 +74,6 @@ do_publish_for() {
             exit 1
         fi
 
-        # List local non-dev `path` dependencies as tab-separated
-        # `name<TAB>path` rows.
         LOCAL_PATH_DEPS=$(jq -r '
             .dependencies[]
             | select(.path != null and .source == null and .kind != "dev")
@@ -108,7 +89,6 @@ do_publish_for() {
             done <<< "$LOCAL_PATH_DEPS"
         fi
 
-        # Perform checks
         RUSTFLAGS=$RF cargo publish --dry-run --allow-dirty "${PATCH_ARGS[@]}" "${ADDITIONAL_ARGS[@]}"
         RUSTFLAGS=$RF cargo doc "${ADDITIONAL_ARGS[@]}"
 
@@ -120,11 +100,6 @@ do_publish_for() {
     popd
 }
 
-# The order of `do_publish_for` calls matters:
-# `do_publish_for path/to/crate-a`
-# must appear before
-# `do_publish_for path/to/crate-b`
-# if `crate-a` is a dependency of `crate-b`.
 
 do_publish_for ostd/libs/linux-bzimage/boot-params
 do_publish_for ostd/libs/linux-bzimage/builder
@@ -134,8 +109,6 @@ do_publish_for ostd/libs/linux-bzimage/setup \
     -Zjson-target-spec
 do_publish_for osdk
 
-# All supported targets of OSTD, this array should keep consistent with
-# `package.metadata.docs.rs.targets` in `ostd/Cargo.toml`.
 TARGETS="x86_64-unknown-none"
 for TARGET in $TARGETS; do
     do_publish_for ostd/libs/ostd-macros --target $TARGET
@@ -145,8 +118,6 @@ for TARGET in $TARGETS; do
     do_publish_for osdk/deps/heap-allocator --target $TARGET
     do_publish_for osdk/deps/test-kernel --target $TARGET
 
-    # For actual publishing, we should only publish once. Using any target that
-    # OSTD supports is OK. Here we use the first target in the list.
     if [ -z "$DRY_RUN" ]; then
         break
     fi

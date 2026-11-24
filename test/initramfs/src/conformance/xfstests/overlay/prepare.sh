@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: MPL-2.0
 
 mkdir -p "$TEST_DIR" "$SCRATCH_MNT"
 
@@ -9,8 +8,6 @@ for dev in "$TEST_DEV" "$SCRATCH_DEV"; do
     fi
 done
 
-# Scoped Asterinas compatibility: move init_rc after the overrides so
-# directory-backed overlay mounts pass init_rc checks.
 if ! grep -q "Asterinas-specific compatibility overrides" \
         "$XFSTESTS_DIR/common/rc"; then
     sed '/^init_rc$/d' "$XFSTESTS_DIR/common/rc" \

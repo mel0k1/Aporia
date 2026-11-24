@@ -1,6 +1,5 @@
 #!/bin/sh
 
-# SPDX-License-Identifier: MPL-2.0
 
 set -e
 
@@ -9,7 +8,6 @@ CGROUP_NAME="user"
 PROCESS_ID=1
 BUSY_PID=""
 
-# --- Helpers ------------------------------------------------------------------
 
 log_section() {
     echo ""
@@ -99,7 +97,6 @@ cleanup() {
 
 trap cleanup EXIT
 
-# --- Section 1: Basic cgroup setup --------------------------------------------
 
 log_section "Section 1: Basic cgroup setup"
 
@@ -159,7 +156,6 @@ verify "Initial cgroup.events populated=0" \
     "grep '^populated' cgroup.events" \
     "populated 0"
 
-# --- Section 2: Controller activation / deactivation -------------------------
 
 log_section "Section 2: Controller activation / deactivation"
 
@@ -272,7 +268,6 @@ done
 ' sh "$CGROUP_ROOT/$CGROUP_NAME" &
 BUSY_PID=$!
 
-# Give the helper time to join the cgroup and start consuming CPU.
 sleep 1
 
 USAGE_BEFORE=$(read_cpu_stat_field "usage_usec" "$CPU_STAT_PATH")
@@ -318,7 +313,6 @@ verify "memory.max removed after disabling" \
     "ls memory.max" \
     "ls: memory.max: No such file or directory"
 
-# --- Section 3: Process membership --------------------------------------------
 
 log_section "Section 3: Process membership"
 
@@ -359,11 +353,9 @@ verify "Process 1 added to user hierarchy" \
     "cat cgroup.procs | grep -w $PROCESS_ID" \
     "$PROCESS_ID"
 
-# --- Section 4: pids sub-controller -------------------------------------------
 
 log_section "Section 4: pids sub-controller"
 
-# -- 4.1 pids.max --------------------------------------------------------------
 
 log_section "Section 4.1: pids.max"
 
@@ -386,12 +378,6 @@ verify "pids.max reset to max" \
 
 log_step "4.1.4 Verify pids.max enforces the fork limit"
 
-# Write a helper script that will run inside the cgroup.
-# It moves itself into the cgroup, then attempts a fork.
-# The result (success or failure) is written to a temp file.
-# This helper runs as a completely separate process, so when the
-# fork inside it fails and the shell aborts, our main script is
-# unaffected.
 RESULT_FILE=$(mktemp)
 HELPER_SCRIPT=$(mktemp)
 
@@ -400,31 +386,21 @@ cat > "$HELPER_SCRIPT" << 'EOF'
 CGROUP_PATH="$1"
 RESULT_FILE="$2"
 
-# Join the cgroup.
 echo $$ > "$CGROUP_PATH/cgroup.procs"
 
-# Read the current pid count (built-in read, no fork).
 read CURRENT_IN_CGROUP < "$CGROUP_PATH/pids.current"
 
-# Set pids.max to exactly the current count so no further fork is allowed.
 echo $CURRENT_IN_CGROUP > "$CGROUP_PATH/pids.max"
 
-# Attempt to fork. If the kernel rejects it, this shell will abort.
-# We write the result before attempting so we have a baseline.
 echo "fork_failed" > "$RESULT_FILE"
 
-# This fork is the one that should be rejected.
 sh -c "echo fork_succeeded > $RESULT_FILE" 2>/dev/null
 EOF
 
 chmod +x "$HELPER_SCRIPT"
 
-# Run the helper as a separate process. If it crashes due to fork failure,
-# only the helper exits; our main script continues normally.
 sh "$HELPER_SCRIPT" "$CGROUP_ROOT/$CGROUP_NAME" "$RESULT_FILE" 2>/dev/null || true
 
-# The helper has exited (either normally or due to fork failure).
-# Restore pids.max before reading results.
 echo "max" > "$CGROUP_ROOT/$CGROUP_NAME/pids.max"
 
 FORK_RESULT=$(cat "$RESULT_FILE")
@@ -439,7 +415,6 @@ else
     exit 1
 fi
 
-# -- 4.2 pids.current ----------------------------------------------------------
 
 log_section "Section 4.2: pids.current"
 
@@ -450,39 +425,30 @@ verify_ge "pids.current >= 1 with one process" \
 
 log_step "4.2.2 Spawn a child process and verify pids.current increases"
 
-# Read baseline before the shell joins the cgroup so the cat itself is safe.
 BEFORE=$(cat "$CGROUP_ROOT/$CGROUP_NAME/pids.current")
 echo "pids.current before fork: $BEFORE"
 
-# Move the current shell into the user cgroup.
 echo $$ > "$CGROUP_ROOT/$CGROUP_NAME/cgroup.procs"
 
-# Fork the child process that we want to observe.
 sleep 100 &
 CHILD_PID=$!
 
-# Use the shell built-in read to avoid an extra fork for the cat.
 read AFTER < "$CGROUP_ROOT/$CGROUP_NAME/pids.current"
 echo "pids.current after fork: $AFTER"
 
-# Move the shell back to the root cgroup; subsequent commands are safe.
 echo $$ > "$CGROUP_ROOT/cgroup.procs"
 
-# Verify the count increased (sleep is still running in the background).
 verify_ge "pids.current increased after fork" \
     "cat $CGROUP_ROOT/$CGROUP_NAME/pids.current" \
     $((BEFORE + 1))
 
 log_step "4.2.3 Kill child process and verify pids.current decreases"
 
-# Kill the child and wait for it to fully exit.
 kill $CHILD_PID 2>/dev/null || true
 wait $CHILD_PID 2>/dev/null || true
 
-# Give the cgroup accounting a moment to update.
 sleep 0.2
 
-# pids.current should be back to the baseline (shell is no longer in cgroup).
 verify "pids.current back to pre-fork value" \
     "cat $CGROUP_ROOT/$CGROUP_NAME/pids.current" \
     "$BEFORE"
@@ -501,11 +467,7 @@ fi
 echo "max" > "$CGROUP_ROOT/$CGROUP_NAME/pids.max"
 
 log_step "4.2.5 Verify pids.current accuracy after pids controller is toggled"
-# This test checks that disabling and re-enabling the pids controller does not
-# corrupt the pid accounting: pids.current must still reflect the actual number
-# of processes present in the cgroup.
 
-# Spawn two long-lived background processes and move them into the cgroup.
 sleep 100 &
 BG1=$!
 sleep 100 &
@@ -513,21 +475,16 @@ BG2=$!
 echo $BG1 > "$CGROUP_ROOT/$CGROUP_NAME/cgroup.procs"
 echo $BG2 > "$CGROUP_ROOT/$CGROUP_NAME/cgroup.procs"
 
-# Count how many PIDs the cgroup actually contains right now.
 ACTUAL_BEFORE=$(wc -l < "$CGROUP_ROOT/$CGROUP_NAME/cgroup.procs")
 echo "Processes in cgroup before toggle: $ACTUAL_BEFORE"
 echo "pids.current before toggle: $(cat $CGROUP_ROOT/$CGROUP_NAME/pids.current)"
 
-# Disable the pids controller at the root level.
 echo "-pids" > "$CGROUP_ROOT/cgroup.subtree_control"
 echo "pids controller disabled"
 
-# Re-enable the pids controller at the root level.
 echo "+pids" > "$CGROUP_ROOT/cgroup.subtree_control"
 echo "pids controller re-enabled"
 
-# After the toggle, pids.current must equal the number of processes still
-# present in cgroup.procs.
 ACTUAL_AFTER=$(wc -l < "$CGROUP_ROOT/$CGROUP_NAME/cgroup.procs")
 REPORTED_AFTER=$(cat "$CGROUP_ROOT/$CGROUP_NAME/pids.current")
 echo "Processes in cgroup after toggle: $ACTUAL_AFTER"
@@ -542,14 +499,10 @@ else
     echo "Verified: pids.current matches actual process count after controller toggle"
 fi
 
-# Clean up the background processes before asserting, so a failure does not
-# leave them running.
 kill $BG1 $BG2 2>/dev/null || true
 wait $BG1 $BG2 2>/dev/null || true
 sleep 0.2
 
-# Now verify that pids.current still matches the actual process count after
-# the background jobs have exited.
 ACTUAL_FINAL=$(wc -l < "$CGROUP_ROOT/$CGROUP_NAME/cgroup.procs")
 REPORTED_FINAL=$(cat "$CGROUP_ROOT/$CGROUP_NAME/pids.current")
 echo "Processes in cgroup after kill: $ACTUAL_FINAL"
@@ -562,7 +515,6 @@ else
     echo "Verified: pids.current matches actual process count after process exit"
 fi
 
-# -- 4.3 pids.peak -------------------------------------------------------------
 
 log_section "Section 4.3: pids.peak"
 
@@ -605,7 +557,6 @@ else
     echo -e "Verified: pids.peak retained"
 fi
 
-# --- Section 5: Teardown ------------------------------------------------------
 
 log_section "Section 5: Teardown"
 

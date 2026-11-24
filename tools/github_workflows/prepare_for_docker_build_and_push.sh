@@ -1,6 +1,5 @@
 #!/bin/bash
 
-# SPDX-License-Identifier: MPL-2.0
 
 set -e
 
@@ -13,14 +12,12 @@ fi
 USERNAME="$1"
 TOKEN="$2"
 
-# Step 1: Login to Docker Hub
 echo "Logging in to Docker Hub..."
 echo "${TOKEN}" | docker login -u "${USERNAME}" --password-stdin || {
     echo "Docker login failed"
     exit 2
 }
 
-# Step 2: Fetch versions
 echo "Fetching Docker image version and Rust version..."
 ASTER_SRC_DIR=$(dirname "$0")/../..
 IMAGE_VERSION=$(cat "${ASTER_SRC_DIR}/DOCKER_IMAGE_VERSION")
@@ -28,7 +25,6 @@ RUST_VERSION=$(grep -m1 -o 'nightly-[0-9]\+-[0-9]\+-[0-9]\+' "${ASTER_SRC_DIR}/r
 echo "image_version=$IMAGE_VERSION" >> "${GITHUB_OUTPUT}"
 echo "rust_version=$RUST_VERSION" >> "${GITHUB_OUTPUT}"
 
-# Step 3: Check whether each target image already exists.
 echo "Checking if Docker images exist..."
 for image_name in osdk-dev prebuilt-nix-packages kernel-dev dev; do
     docker_image="asterinas/${image_name}:${IMAGE_VERSION}"

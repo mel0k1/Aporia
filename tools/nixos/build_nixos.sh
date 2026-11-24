@@ -1,11 +1,9 @@
 #!/bin/bash
 
-# SPDX-License-Identifier: MPL-2.0
 
 set -e
 
 TARGET_ARCH=${TARGET_ARCH:-x86_64}
-# Accept config file name as parameter, default to "configuration.nix"
 CONFIG_FILE_NAME=${1:-"configuration.nix"}
 
 SCRIPT_DIR=$(cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd)
@@ -29,8 +27,6 @@ nix-build aster_nixos_installer/default.nix \
 popd
 
 mkdir -p ${ASTERINAS_DIR}/target/nixos
-# The installer skips partitioning and mkfs on an existing image,
-# so a new size takes effect only on a new image.
 if [ -e ${ASTER_IMAGE_PATH} ] \
     && [ "$(stat -c %s ${ASTER_IMAGE_PATH})" -ne $((NIXOS_DISK_SIZE_IN_MB * 1024 * 1024)) ]; then
     echo "Removing ${ASTER_IMAGE_PATH}, because its size is not ${NIXOS_DISK_SIZE_IN_MB}MB......"

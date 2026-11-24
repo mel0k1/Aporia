@@ -1,10 +1,8 @@
 #!/bin/sh
 
-# SPDX-License-Identifier: MPL-2.0
 
 set -eu
 
-# RUNTIME_PATH is substituted by the Nix build.
 export PATH=__RUNTIME_PATH__
 
 XFSTESTS_FS_TYPE=${XFSTESTS_FS_TYPE:-ext2}
@@ -32,12 +30,8 @@ fi
 
 export HOST_OPTIONS="$XFSTESTS_CONFIG"
 
-# Prepare scripts consume the same filesystem variables that `./check` later
-# loads through `HOST_OPTIONS`.
-# shellcheck source=/dev/null
 . "$XFSTESTS_CONFIG"
 
-# shellcheck source=/dev/null
 . "$XFSTESTS_PREPARE"
 
 RUNLIST_FILE=""
@@ -46,7 +40,6 @@ SELECTED_TESTS=$(mktemp)
 
 trap 'rm -f "$REQUESTED_TESTS" "$SELECTED_TESTS"' EXIT
 
-# Parse -R flag and collect direct test names.
 while [ $# -gt 0 ]; do
   case "$1" in
     -R|--runlist)
@@ -72,7 +65,6 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# When a selector is set, run only the selected test ids and ignore the blocklist.
 CONFORMANCE_TEST_SELECTOR=${CONFORMANCE_TEST_SELECTOR:-}
 
 if [ -n "$CONFORMANCE_TEST_SELECTOR" ]; then

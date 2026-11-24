@@ -1,43 +1,12 @@
 #!/usr/bin/env bash
 
-# SPDX-License-Identifier: MPL-2.0
 
-#
-# resolve_target.sh — parse the skill's raw argument string (self-tokenizing)
-# and emit either the canonical review input or the frontmatter meta.
-# Deterministic; shared by both agents and the benchmark.
-# See spec/interface.md.
-#
-# The skill is triggered from a prompt, not a shell,
-# so the raw argument string arrives with its quotes intact;
-# this script owns the tokenization rather than leaning on a shell to do it.
-# Pass the WHOLE argument string as ONE argument:
-#
-#   resolve_target.sh        '<raw arg string>'   # the canonical review input
-#   resolve_target.sh --meta '<raw arg string>'   # mode=/base=|files=/head=/branch=/output=/overwrite=
-#
-# Raw arg string grammar:
-#   diff   <base>              <output> [--overwrite]
-#   files  <path[:lines] ...>  <output> [--overwrite]
-#
-# diff  = the commit series merge-base(base,HEAD)..HEAD
-#         — each commit's message and its diff,
-#         so the review covers per-commit intent and commit hygiene, not just the net change.
-#         Commit first; uncommitted edits are not reviewed here.
-# files = the working-tree contents of the named paths (optionally line ranges).
 set -euo pipefail
 
 meta=0
 if [[ "${1:-}" == "--meta" ]]; then meta=1; shift; fi
 raw="${1-}"
 
-# --- parse: quote-aware tokenizer + grammar (in python for a robust parse) ----
-# Stdout is normalized, TAB-separated lines the bash below consumes:
-#   MODE\t<diff|files>
-#   OUTPUT\t<path>
-#   OVERWRITE\t<0|1>
-#   BASE\t<ref>                 (diff mode only)
-#   TARGET\t<path>\t<ranges>    (files mode; ranges = "" or "a-b,c-d", merged+sorted)
 parse="$(RAW="$raw" python3 - <<'PY'
 import os, re, sys
 
@@ -48,8 +17,6 @@ def fail(msg):
     sys.exit(2)
 
 def tokenize(s):
-    # Split on whitespace EXCEPT inside double quotes;
-    # keep the quote chars so the target parser can tell a quoted path from a bare one.
     toks, cur, inq, has = [], "", False, False
     for ch in s:
         if ch == '"':
@@ -77,7 +44,6 @@ def parse_ranges(spec):
         if a < 1 or b < a:
             fail("invalid line range: " + part)
         out.append((a, b))
-    # merge overlapping/adjacent, sorted
     out.sort()
     merged = [list(out[0])]
     for a, b in out[1:]:
@@ -88,7 +54,6 @@ def parse_ranges(spec):
     return ",".join(f"{a}-{b}" for a, b in merged)
 
 def parse_target(tok):
-    # -> (path, ranges_str)  ; ranges_str = "" when none
     if tok.startswith('"'):
         end = tok.find('"', 1)
         if end == -1:
@@ -160,7 +125,6 @@ for k, v in lines:
 PY
 )"
 
-# --- consume the normalized parse --------------------------------------------
 mode=""; output=""; overwrite=0; base=""; app="auto"
 tpath=(); tranges=()
 while IFS=$'\t' read -r key a b; do
@@ -174,21 +138,15 @@ while IFS=$'\t' read -r key a b; do
     esac
 done <<< "$parse"
 
-# Run from the repo root so every emitted path is repo-root-relative and consistent.
 cd "$(git rev-parse --show-toplevel)"
 
 short() { git rev-parse --short "$1"; }
 
-# Head token: HEAD short SHA.
-# files mode reviews the working tree,
-# so mark it -dirty when there are uncommitted edits;
-# diff mode reviews committed commits only, so it is never -dirty.
 head_token="$(short HEAD)"
 if [[ "$mode" == "files" ]] && { ! git diff --quiet || ! git diff --cached --quiet; }; then
     head_token="${head_token}-dirty"
 fi
 
-# diff mode reviews merge-base(base, HEAD) -> working tree; record that same base.
 if [[ "$mode" == "diff" ]]; then
     mb="$(git merge-base "$base" HEAD)"
 fi
@@ -213,18 +171,8 @@ if [[ $meta -eq 1 ]]; then
     exit 0
 fi
 
-# --- emit the canonical review input -----------------------------------------
 if [[ "$mode" == "diff" ]]; then
-    # The commit series the branch adds over <base>:
-    # each commit's message and its diff,
-    # oldest first — so the review can judge per-commit intent and commit hygiene,
-    # not just the net code change.
-    # Committed commits only.
     if [[ -z "$(git rev-list "$mb..HEAD" 2>/dev/null)" ]]; then
-        # Hard error, not a warning:
-        # an empty range would otherwise emit an empty canonical input and exit 0,
-        # so the orchestrator/benchmark would review "nothing" without noticing.
-        # Fail closed instead.
         echo "resolve_target.sh: no commits in ${base}..HEAD — commit your changes first" >&2
         exit 2
     fi

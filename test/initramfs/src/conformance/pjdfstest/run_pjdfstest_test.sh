@@ -1,12 +1,9 @@
 #!/bin/sh
 
-# SPDX-License-Identifier: MPL-2.0
 
-# Run the pjdfstest suite inside Asterinas.
 
 set -u
 
-# RUNTIME_PATH is substituted by the Nix build.
 export PATH=__RUNTIME_PATH__
 
 PJDFSTEST_DIR=$(readlink -f "$(dirname "$0")")
@@ -30,10 +27,6 @@ RUNLIST_FILE=$PJDFSTEST_DIR/runlists/$PJDFSTEST_FS.list
 
 TEST_TIMEOUT=${PJDFSTEST_TEST_TIMEOUT:-300}
 
-# Resolve WORK_DIR to an absolute path before deriving LOG and FAILED_LOG from
-# it. Both are used after the runner has `cd`-ed into WORK_DIR, so a relative
-# value would make them resolve one directory too deep, leaving the run with no
-# log and no failed-assertion list while still exiting successfully.
 WORK_DIR=$(readlink -f "$TEST_TMP_DIR/pjdfstest")
 LOG=$WORK_DIR/pjdfstest.log
 FAILED_LOG=$WORK_DIR/failed.txt
@@ -142,8 +135,6 @@ fi
 
 if [ "$TEE_STATUS" -ne 0 ]; then
     echo "Error: tee failed with exit status $TEE_STATUS" >&2
-    # Comment due to coreutils v9.11 tee bug, uncomment it after v9.12
-    # RESULT=1
 fi
 
 if [ "$PROVE_STATUS" -ne 0 ]; then
@@ -177,9 +168,6 @@ if [ "$TIMED_OUT_COUNT" -ne 0 ]; then
     RESULT=1
 fi
 
-# A run that reports no tests at all means the suite was mispackaged, which
-# `prove` itself treats as a failure by exiting non-zero; check explicitly so
-# the reason is visible.
 if ! grep -q -e '^Files=' -e '^Result: ' "$LOG"; then
     echo "Error: pjdfstest produced no test summary; see $LOG" >&2
     echo "--- first 30 lines of $LOG ---" >&2

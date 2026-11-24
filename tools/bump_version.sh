@@ -1,33 +1,16 @@
 #!/bin/bash
 
-# SPDX-License-Identifier: MPL-2.0
 
 set -e
 
-# This script is used to update Asterinas version numbers in all relevant files in the repository.
-# Usage: ./tools/bump_version.sh command [options]
-# Commands:
-#   --docker_version_file [major|minor|patch|date]   Bump the Docker image version in the DOCKER_IMAGE_VERSION file under the project root
-#   --docker_version_refs                            Update all references to the Docker image version throughout the codebase
-#   --version_file                                   Bump the project version to match the Docker image version
-#   --api_doc_hyperlinks_in_book                     Update all API doc hyperlinks in the Book to match VERSION
-#   --help, -h                                       Show this help message
-# Options:
-#   major, minor, patch, date                        The version part to increment when bumping the Docker image version
 
-# TODO: we may remove the VERSION file in the future,
-# and retrieve the current version from git tag.
 
-# Update the package version (`version = "{version}"`) in file $1
 update_package_version() {
     echo "Updating file $1"
-    # Package version is usually the first version in Cargo.toml,
-    # so only the first matched version is updated.
     pattern="^version = \"[[:digit:]]\+\.[[:digit:]]\+\.[[:digit:]]\+\"$"
     sed -i "0,/${pattern}/s/${pattern}/version = \"${new_version}\"/1" $1
 }
 
-# Update the version of the $2 dependency in a single-line inline table in file $1.
 update_dep_version() {
     local file="$1" dependency="$2"
     local dep_pattern="^[[:space:]]*${dependency}[[:space:]]*=[[:space:]]*\\{"
@@ -42,18 +25,13 @@ update_dep_version() {
     sed -Ei "/${dep_pattern}/s/${version_pattern}/\\1${new_version}\\2/" "$file"
 }
 
-# Update Docker image versions in file $1
 update_image_versions() {
     echo "Updating file $1"
-    # Update the version of OSDK development container
     sed -i "s/asterinas\/osdk-dev:[[:digit:]]\+\.[[:digit:]]\+\.[[:digit:]]\+\(-[[:digit:]]\+\)\?/asterinas\/osdk-dev:${new_version}/g" $1
-    # Update the version of kernel development container
     sed -i "s/asterinas\/kernel-dev:[[:digit:]]\+\.[[:digit:]]\+\.[[:digit:]]\+\(-[[:digit:]]\+\)\?/asterinas\/kernel-dev:${new_version}/g" $1
-    # Update the version of the Asterinas development container
     sed -i "s/asterinas\/dev:[[:digit:]]\+\.[[:digit:]]\+\.[[:digit:]]\+\(-[[:digit:]]\+\)\?/asterinas\/dev:${new_version}/g" $1
 }
 
-# Print the help message
 print_help() {
     echo "Usage: $0 <command> [options]"
     echo ""
@@ -68,9 +46,6 @@ print_help() {
     echo "Docker image version to increment. The 'date' option updates the date part of the version."
 }
 
-# Add the number $1 by 1
-# Bash cannot deal with 0 by using `$((num + 1))`,
-# So this function is defined to specially deal with 0.
 add_one() {
     local num=$1
     if [ "$num" == "0" ]; then
@@ -81,7 +56,6 @@ add_one() {
     fi
 }
 
-# Update Docker image version in DOCKER_IMAGE_VERSION file
 update_docker_image_version() {
     local IFS="-"
     local docker_version_parts=($(cat "${DOCKER_IMAGE_VERSION_PATH}"))
@@ -104,7 +78,7 @@ update_docker_image_version() {
             elif [ "$version_part" == "minor" ]; then
                 semantic_version_parts[1]=$(add_one "${semantic_version_parts[1]}")
                 semantic_version_parts[2]=0
-            else # patch
+            else
                 semantic_version_parts[2]=$(add_one "${semantic_version_parts[2]}")
             fi
             docker_version_parts[0]="${semantic_version_parts[*]}"
@@ -126,25 +100,20 @@ update_docker_image_version() {
     echo "Bumped Docker image version to $new_docker_version"
 }
 
-# Update all Docker version references (except VERSION)
 update_all_docker_version_refs() {
     new_version=$(cat ${DOCKER_IMAGE_VERSION_PATH})
 
-    # Update Docker image versions in devcontainer.json, README files, and AGENTS.md
     update_image_versions ${ASTER_SRC_DIR}/.devcontainer/devcontainer.json
     update_image_versions ${ASTER_SRC_DIR}/README.md
     update_image_versions ${ASTER_SRC_DIR}/AGENTS.md
     update_image_versions ${SCRIPT_DIR}/dev_env/docker/README.md
 
-    # Update Docker image versions in the Book
     update_image_versions ${BOOK_DIR}/src/kernel/intel-tdx.md
     update_image_versions ${BOOK_DIR}/src/kernel/README.md
     update_image_versions ${BOOK_DIR}/src/osdk/guide/intel-tdx.md
 
-    # Update Docker image versions in the shared test action
     update_image_versions "${ASTER_SRC_DIR}/.github/actions/test/action.yml"
 
-    # Update Docker image versions in workflows
     ALL_WORKFLOWS=$(find "${ASTER_SRC_DIR}/.github/workflows/" -type f -name "*.yml")
     EXCLUDED_WORKFLOWS=(
         "${ASTER_SRC_DIR}/.github/workflows/push_git_tag.yml"
@@ -162,21 +131,17 @@ update_all_docker_version_refs() {
 update_api_doc_hyperlinks_in_book() {
     new_version=$(cat ${VERSION_PATH})
 
-    # This matches 'asterinas.github.io/api-docs/' followed by any X.Y.Z version.
     SEARCH_PATTERN="asterinas\.github\.io/api-docs/[[:digit:]]\+\.[[:digit:]]\+\.[[:digit:]]\+"
     REPLACE_STR="asterinas\.github\.io/api-docs/${new_version}"
 
     grep -rl "asterinas.github.io/api-docs/" "$BOOK_SRC_DIR" | while read -r file; do
-        # We use '|' as a delimiter for sed to avoid escaping the slashes in the URL.
         sed -i "s|$SEARCH_PATTERN|$REPLACE_STR|g" "$file"
     done
 
     echo "Updated Book API doc hyperlinks to ${new_version}"
 }
 
-# Update project dependencies (Cargo.toml and Cargo.lock)
 update_project_dependencies() {
-    # Update the versions in Cargo.toml
     update_package_version ${WORKSPACE_CARGO_TOML_PATH}
     update_package_version ${OSDK_CARGO_TOML_PATH}
     update_package_version ${SCTRACE_CARGO_TOML_PATH}
@@ -187,13 +152,11 @@ update_project_dependencies() {
     update_dep_version ${WORKSPACE_CARGO_TOML_PATH} ostd-macros
     update_dep_version ${OSDK_CARGO_TOML_PATH} linux-bzimage-builder
 
-    # Automatically bump Cargo.lock files
-    cargo update -p asterinas --precise $new_version # For Cargo.lock
-    cd ${OSDK_DIR} && cargo update -p cargo-osdk --precise $new_version # For osdk/Cargo.lock
-    cd ${SCTRACE_DIR} && cargo update -p sctrace --precise $new_version # For tools/sctrace/Cargo.lock
+    cargo update -p asterinas --precise $new_version
+    cd ${OSDK_DIR} && cargo update -p cargo-osdk --precise $new_version
+    cd ${SCTRACE_DIR} && cargo update -p sctrace --precise $new_version
 }
 
-# Synchronize project version to Docker version (update VERSION)
 sync_project_version() {
     new_version=$(cat ${DOCKER_IMAGE_VERSION_PATH} | cut -d'-' -f1)
     current_version=$(cat ${VERSION_PATH})
@@ -202,13 +165,11 @@ sync_project_version() {
         exit 1
     fi
 
-    # Check if versions are equal
     if [ "$new_version" = "$current_version" ]; then
         echo "Versions are equal. No action needed."
         exit 0
     fi
 
-    # Compare semantic versions
     lower_version=$(printf '%s\n' "$new_version" "$current_version" | sort -V | head -n1)
     if [ "$lower_version" = "$new_version" ]; then
         echo "Error: New version ($new_version) must be greater than current version ($current_version)."

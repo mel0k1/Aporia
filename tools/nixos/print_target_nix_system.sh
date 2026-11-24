@@ -1,6 +1,5 @@
 #!/bin/sh
 
-# SPDX-License-Identifier: MPL-2.0
 
 TARGET_ARCH=${1:-${TARGET_ARCH:-x86_64}}
 

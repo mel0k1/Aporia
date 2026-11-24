@@ -1,38 +1,11 @@
 #!/usr/bin/env bash
 
-# SPDX-License-Identifier: MPL-2.0
 
-#
-# build_pass_prompt.sh — assemble a persona pass prompt DETERMINISTICALLY,
-# ordered for prompt-cache reuse.
-# The STABLE blocks come first and are byte-identical across passes and across reviews:
-# the shared reviewer contract,
-# then one block per persona (its template + its inlined guideline page).
-# The VOLATILE review input comes LAST,
-# so everything above it is a reusable cache prefix.
-#
-# The orchestrator must spawn the pass with this script's EXACT output
-# — retyping or paraphrasing it loses the byte-identical prefix, and with it the cache hit.
-#
-#   one persona  => a fan-out pass   (--per-persona-context=yes/auto)
-#   several      => the combined pass (--per-persona-context=no)
-#
-# Usage: build_pass_prompt.sh <input-file> <persona> [<persona> ...]
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SKILLDIR="$(cd "$HERE/.." && pwd)"
-REPO="$(cd "$SKILLDIR/../../.." && pwd)"   # .agents/skills/aster-code-review -> repo root
+REPO="$(cd "$SKILLDIR/../../.." && pwd)"
 
-# Where to read the guideline pages from.
-# Priority:
-#   1. explicit ACR_GUIDELINE_ROOT, for tests or external harnesses;
-#   2. a guideline snapshot bundled beside the overlaid skill;
-#   3. the current repo, for normal in-tree use.
-#
-# The benchmark cannot rely on the review agent preserving ACR_GUIDELINE_ROOT
-# across its own shell commands, so overlay_skill.sh bundles a current snapshot
-# into the skill package. This keeps historical worktrees on current guidelines
-# without modifying their tracked book/ tree.
 if [[ -n "${ACR_GUIDELINE_ROOT:-}" ]]; then
     GROOT="$ACR_GUIDELINE_ROOT"
 elif [[ -f "$SKILLDIR/guideline-root" ]]; then
@@ -45,7 +18,7 @@ input="${1:-}"; shift || true
 [[ -n "$input" && -f "$input" ]] || { echo "build_pass_prompt.sh: a readable <input-file> is required" >&2; exit 2; }
 [[ $# -ge 1 ]] || { echo "build_pass_prompt.sh: at least one <persona> is required" >&2; exit 2; }
 
-linked_guideline_pages() { # <guideline-page-path-relative-to-GROOT>
+linked_guideline_pages() {
     python3 - "$1" "$GROOT/$1" <<'PY'
 import posixpath
 import re
@@ -75,7 +48,7 @@ for link in re.findall(r"\[[^\]]+\]\(([^)]+)\)", page_text):
 PY
 }
 
-inline_guidelines() { # <guideline-page-path-relative-to-GROOT>
+inline_guidelines() {
     local gp="$1" gfile="$GROOT/$gp" sub
     [[ -f "$gfile" ]] || return 0
 
@@ -90,11 +63,9 @@ inline_guidelines() { # <guideline-page-path-relative-to-GROOT>
     done < <(linked_guideline_pages "$gp")
 }
 
-# --- STABLE: the shared reviewer contract ------------------------------------
 cat "$SKILLDIR/scripts/pass_contract.md"
 printf '\n'
 
-# --- STABLE: one block per persona (template + inlined guideline page) --------
 for persona in "$@"; do
     pf="$SKILLDIR/personas/$persona.md"
     [[ -f "$pf" ]] || { echo "build_pass_prompt.sh: no such persona: $persona" >&2; exit 2; }
@@ -104,6 +75,5 @@ for persona in "$@"; do
     [[ -n "$gp" ]] && inline_guidelines "$gp"
 done
 
-# --- VOLATILE: the review input (LAST; everything above is the cache prefix) ---
 printf '===== REVIEW INPUT =====\n\n'
 cat "$input"

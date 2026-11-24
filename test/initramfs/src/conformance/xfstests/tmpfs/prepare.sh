@@ -1,6 +1,4 @@
-# SPDX-License-Identifier: MPL-2.0
 
-# Patch xfstests' tmpfs defaults here so the workaround stays scoped to tmpfs.
 sed -i 's/\[ -z "TEST_DEV" \]/[ -z "$TEST_DEV" ]/' "$XFSTESTS_DIR/common/config"
 sed -i 's/\[ -z "SCRATCH_DEV" \]/[ -z "$SCRATCH_DEV" ]/' "$XFSTESTS_DIR/common/config"
 sed -i 's/export TEST_DEV=tmpfs_scratch/export SCRATCH_DEV=tmpfs_scratch/' "$XFSTESTS_DIR/common/config"

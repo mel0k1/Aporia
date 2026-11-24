@@ -1,6 +1,5 @@
 #!/bin/sh
 
-# SPDX-License-Identifier: MPL-2.0
 
 SCRIPT_DIR=$(dirname "$0")
 TEST_TMP_DIR=${CONFORMANCE_TEST_WORKDIR:-/tmp}
@@ -15,7 +14,6 @@ GREEN='\033[0;32m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-# When a selector is set, run only the selected test binaries and ignore the blocklist.
 CONFORMANCE_TEST_SELECTOR=${CONFORMANCE_TEST_SELECTOR:-}
 CONFORMANCE_TEST_GVISOR_FILTER=${CONFORMANCE_TEST_GVISOR_FILTER:-}
 SELECTED_TESTS=$(mktemp "$SCRIPT_DIR/selected_tests.XXXXXX")
@@ -45,7 +43,6 @@ get_blocklist_subtests(){
 
 run_one_test(){
     echo -e "Run Test Case: $1"
-    # The gvisor test framework utilizes the "TEST_TMPDIR" environment variable to dictate the directory's location.
     export TEST_TMPDIR=$TEST_TMP_DIR
     ret=0
     if [ -x "$TEST_BIN_DIR/$1" ]; then
@@ -57,7 +54,6 @@ run_one_test(){
         fi
         cd "$TEST_BIN_DIR" && "./$1" --gtest_filter="$gtest_filter"
         ret=$?
-        #After executing the test, it is necessary to clean the directory to ensure no residual data remains
         rm -rf $TEST_TMP_DIR/*
     else
         echo "Error: gVisor test is not executable: $1" >&2
@@ -108,10 +104,6 @@ else
         -exec basename {} \; | sort -u > "$SELECTED_TESTS"
 fi
 
-# Some gVisor tests require a very large soft `RLIMIT_NOFILE` limit.
-# For example, `PipeTest.PipeFdCount` requires file descriptors above 66000.
-# Raise both the soft and hard limits to gVisor's recommended values.
-# Reference: https://github.com/google/gvisor/blob/release-20260622.0/runsc/boot/limits.go#L77
 ulimit -Hn 1048576 || exit 1
 ulimit -Sn 1048576 || exit 1
 

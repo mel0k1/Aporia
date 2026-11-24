@@ -1,11 +1,9 @@
 #!/bin/bash
 
-# SPDX-License-Identifier: MPL-2.0
 
 set -e
 set -o pipefail
 
-# Ensure all dependencies are installed
 if ! command -v yq >/dev/null 2>&1; then
     echo >&2 "Error: missing required tool: yq"
     exit 1
@@ -15,7 +13,6 @@ if ! command -v jq >/dev/null 2>&1; then
     exit 1
 fi
 
-# Set up paths
 BENCHMARK_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 source "${BENCHMARK_ROOT}/common/prepare_host.sh"
 RESULT_TEMPLATE="${BENCHMARK_ROOT}/result_template.json"
@@ -23,12 +20,8 @@ BENCH_LINUX_VIRTIOFS_WORK_DIR=""
 BENCH_LINUX_VIRTIOFSD_PID=""
 BENCH_LINUX_VIRTIOFS_SOCKET=""
 BENCH_VIRTIOFS_CACHE="auto"
-# Keep this tag in sync with tools/qemu_args.sh and the virtiofs benchmark run.sh files.
 VIRTIOFS_TAG="aster-virtiofs"
 
-# Prints column `column` (a number or `NF`) of the nth line in `file` matching
-# `pattern`. The pattern goes through the environment because `awk -v`
-# escape-processes its value (gawk turns `\+` into `+`).
 extract_result() {
     local file="$1" pattern="$2" column="$3" nth="$4"
     PATTERN="$pattern" awk -v column="$column" \
@@ -36,7 +29,6 @@ extract_result() {
         "$file" | tr -d '\r' | sed 's/[^0-9.]*//g' | sed -n "${nth}p"
 }
 
-# Parse benchmark results
 parse_raw_results() {
     local search_pattern="$1"
     local nth_occurrence="$2"
@@ -45,7 +37,6 @@ parse_raw_results() {
     local parser="$5"
     local direction="$6"
 
-    # Extract and sanitize numeric results
     local linux_result aster_result
     case "$parser" in
         text)
@@ -63,13 +54,11 @@ parse_raw_results() {
             ;;
     esac
 
-    # Ensure both results are valid
     if [ -z "${linux_result}" ] || [ -z "${aster_result}" ]; then
         echo "Error: Failed to parse the results from the benchmark output" >&2
         exit 1
     fi
 
-    # Write the results into the template
     yq --arg linux_result "${linux_result}" --arg aster_result "${aster_result}" \
         '(.[] | select(.extra == "linux_result") | .value) |= $linux_result |
          (.[] | select(.extra == "aster_result") | .value) |= $aster_result' \
@@ -77,30 +66,25 @@ parse_raw_results() {
     echo "Results written to ${result_file}"
 }
 
-# Generate a new result template based on unit and legend
 generate_template() {
     local unit="$1"
     local legend="$2"
 
-    # Replace placeholders with actual system names
     local linux_legend=${legend//"{system}"/"Linux"}
     local asterinas_legend=${legend//"{system}"/"Asterinas"}
 
-    # Generate the result template JSON
     yq -n --arg linux "$linux_legend" --arg aster "$asterinas_legend" --arg unit "$unit" '[
         { "name": $linux, "unit": $unit, "value": 0, "extra": "linux_result" },
         { "name": $aster, "unit": $unit, "value": 0, "extra": "aster_result" }
     ]' > "${RESULT_TEMPLATE}"
 }
 
-# Extract the result file path based on benchmark location
 extract_result_file() {
     local bench_result="$1"
     local relative_path="${bench_result#*/benchmark/}"
     local first_dir="${relative_path%%/*}"
     local filename=$(basename "$bench_result")
 
-    # Handle different naming conventions for result files
     if [[ "$filename" == bench_* ]]; then
         local second_part=$(dirname "$bench_result" | awk -F"/benchmark/$first_dir/" '{print $2}' | cut -d'/' -f1)
         echo "result_${first_dir}-${second_part}.json"
@@ -110,14 +94,13 @@ extract_result_file() {
     fi
 }
 
-# Start virtiofsd for the Linux VM and wait for its socket to appear.
 start_linux_virtiofsd() {
     "${BENCHMARK_ROOT}/../../../../tools/run_virtiofsd.sh" \
         --cache-mode "$BENCH_VIRTIOFS_CACHE" \
         --work-dir "$BENCH_LINUX_VIRTIOFS_WORK_DIR" \
         &
     BENCH_LINUX_VIRTIOFSD_PID=$!
-    local socket_wait_tries=100 # 10 s at 0.1 s per try
+    local socket_wait_tries=100
     for _ in $(seq 1 "$socket_wait_tries"); do
         [[ -S "$BENCH_LINUX_VIRTIOFS_SOCKET" ]] && break
         sleep 0.1
@@ -128,7 +111,6 @@ start_linux_virtiofsd() {
     fi
 }
 
-# Stop the Linux-side virtiofsd and remove its work directory.
 cleanup_linux_virtiofs() {
     if [[ -n "$BENCH_LINUX_VIRTIOFSD_PID" ]]; then
         kill "$BENCH_LINUX_VIRTIOFSD_PID" 2>/dev/null || true
@@ -137,24 +119,21 @@ cleanup_linux_virtiofs() {
     rm -rf "$BENCH_LINUX_VIRTIOFS_WORK_DIR"
 }
 
-# Run the specified benchmark with runtime configurations.
 run_benchmark() {
     local benchmark="$1"
     local run_mode="$2"
-    local runtime_configs_str="$3" # String with key=value pairs, one per line
+    local runtime_configs_str="$3"
 
     echo "Preparing libraries..."
     prepare_libs
 
-    # Default values
     local smp_val=1
     local mem_val="8G"
-    local aster_scheme_cmd_part="SCHEME=iommu" # Default scheme
+    local aster_scheme_cmd_part="SCHEME=iommu"
     local virtiofs="off"
 
-    # Process runtime_configs_str to override defaults and gather extra args
     while IFS='=' read -r key value; do
-         if [[ -z "$key" ]]; then continue; fi # Skip empty lines/keys
+         if [[ -z "$key" ]]; then continue; fi
          case "$key" in
              "smp")
                  smp_val="$value"
@@ -164,9 +143,9 @@ run_benchmark() {
                  ;;
              "aster_scheme")
                  if [[ "$value" == "null" ]]; then
-                     aster_scheme_cmd_part="" # Remove default SCHEME=iommu
+                     aster_scheme_cmd_part=""
                  else
-                     aster_scheme_cmd_part="SCHEME=${value}" # Override default
+                     aster_scheme_cmd_part="SCHEME=${value}"
                  fi
                  ;;
              "virtiofs")
@@ -179,9 +158,7 @@ run_benchmark() {
          esac
      done <<< "$runtime_configs_str"
 
-    # Prepare commands for Asterinas and Linux using arrays
     local asterinas_cmd_arr=(make run_kernel "BENCHMARK=${benchmark}")
-    # Add scheme part only if it's not empty and the platform is not TDX (OSDK doesn't support multiple SCHEME)
     [[ -n "$aster_scheme_cmd_part" && "$platform" != "tdx" ]] && asterinas_cmd_arr+=("$aster_scheme_cmd_part")
     asterinas_cmd_arr+=(
         "SMP=${smp_val}"
@@ -204,7 +181,6 @@ run_benchmark() {
                 ;;
         esac
         BENCH_LINUX_VIRTIOFS_WORK_DIR=$(mktemp -d -p /tmp asterinas-bench-linux-virtiofs-XXXXXX)
-        # run_virtiofsd.sh uses vfs.sock under its work directory.
         BENCH_LINUX_VIRTIOFS_SOCKET="${BENCH_LINUX_VIRTIOFS_WORK_DIR}/vfs.sock"
         trap cleanup_linux_virtiofs EXIT
         asterinas_cmd_arr+=(
@@ -247,7 +223,6 @@ run_benchmark() {
     fi
 
     if [[ "$virtiofs" == "on" ]]; then
-        # The Linux VM uses the same mount tag as Asterinas.
         linux_cmd_arr+=(
             -object "memory-backend-memfd,id=mem0,size=${mem_val},share=on"
             -numa node,memdev=mem0
@@ -256,24 +231,18 @@ run_benchmark() {
         )
     fi
 
-    # Run the benchmark depending on the mode
     case "${run_mode}" in
         "guest_only")
             echo "Running benchmark ${benchmark} on Asterinas..."
-            # Execute directly from array, redirect stderr to stdout, then tee
             "${asterinas_cmd_arr[@]}" 2>&1 | tee "${ASTER_OUTPUT}"
             prepare_fs "$benchmark"
             if [[ "$virtiofs" == "on" ]]; then
                 start_linux_virtiofsd
             fi
             echo "Running benchmark ${benchmark} on Linux..."
-            # Execute directly from array, redirect stderr to stdout, then tee
             "${linux_cmd_arr[@]}" 2>&1 | tee "${LINUX_OUTPUT}"
             ;;
         "host_guest")
-            # Note: host_guest_bench_runner.sh expects commands as single strings.
-            # We need to reconstruct the string representation for compatibility.
-            # Use printf %q to quote arguments safely.
             local asterinas_cmd_str
             printf -v asterinas_cmd_str '%q ' "${asterinas_cmd_arr[@]}"
             local linux_cmd_str
@@ -298,7 +267,6 @@ run_benchmark() {
     esac
 }
 
-# Parse the benchmark configuration
 parse_results() {
     local bench_result="$1"
 
@@ -320,13 +288,11 @@ parse_results() {
     parse_raw_results "$search_pattern" "$nth_occurrence" "$result_index" "$(extract_result_file "$bench_result")" "$parser" "$direction"
 }
 
-# Clean up temporary files
 cleanup() {
     echo "Cleaning up..."
     rm -f "${LINUX_OUTPUT}" "${ASTER_OUTPUT}" "${RESULT_TEMPLATE}"
 }
 
-# Main function to coordinate the benchmark run
 main() {
     local benchmark="$1"
     local platform="$2"
@@ -337,36 +303,28 @@ main() {
     fi
     echo "Running benchmark $benchmark..."
 
-    # Determine the run mode (host-only or host-guest)
     local run_mode="guest_only"
     [[ -f "${BENCHMARK_ROOT}/${benchmark}/host.sh" ]] && run_mode="host_guest"
 
     local bench_result="${BENCHMARK_ROOT}/${benchmark}/bench_result.yaml"
     local runtime_configs_str=""
 
-    # Try reading from single result file first
     if [[ -f "$bench_result" ]]; then
-        # Read runtime_config object, convert to key=value lines, ensuring value is string
         runtime_configs_str=$(yq -r '(.runtime_config // {}) | to_entries | .[] | .key + "=" + (.value | tostring)' "$bench_result")
     else
-        # If not found, try reading from the first file in bench_results/ that has a non-empty runtime_config
         for job_yaml in "${BENCHMARK_ROOT}/${benchmark}"/bench_results/*; do
             if [[ -f "$job_yaml" ]]; then
                 echo "Reading runtime configurations from $job_yaml..."
-                # Read runtime_config object, convert to key=value lines, ensuring value is string
                 runtime_configs_str=$(yq -r '(.runtime_config // {}) | to_entries | .[] | .key + "=" + (.value | tostring)' "$job_yaml")
-                # Check if runtime_config was actually found and non-empty
                 if [[ -n "$runtime_configs_str" ]]; then
-                    break # Found it, stop looking
+                    break
                 fi
             fi
         done
     fi
 
-    # Run the benchmark, passing the config string
     run_benchmark "$benchmark" "$run_mode" "$runtime_configs_str"
 
-    # Parse results if benchmark configuration exists
     if [[ -f "$bench_result" ]]; then
         parse_results "$bench_result"
     else
@@ -375,7 +333,6 @@ main() {
         done
     fi
 
-    # Cleanup temporary files
     cleanup
     echo "Benchmark completed successfully."
 }

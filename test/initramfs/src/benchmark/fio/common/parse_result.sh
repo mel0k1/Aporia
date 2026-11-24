@@ -1,8 +1,6 @@
 #!/bin/bash
 
-# SPDX-License-Identifier: MPL-2.0
 
-# Extract one successful, single-job FIO result as decimal MB/s.
 extract_fio_result() (
     set -o pipefail
     local output="$1" result_direction="$2"
@@ -15,7 +13,6 @@ extract_fio_result() (
             ;;
     esac
 
-    # Reject incomplete or duplicate blocks instead of parsing a partial run.
     awk '
         { sub(/\r$/, "") }
         $0 == "FIO_RESULT_BEGIN" {

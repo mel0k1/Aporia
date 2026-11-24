@@ -1,18 +1,13 @@
 #!/usr/bin/env bash
 
-# SPDX-License-Identifier: MPL-2.0
 
-# Tests for scripts/parse_pr_command.sh
-# — the strict allowlist parser for /aster-code-review PR-comment commands.
-# Model-free.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/lib.sh"
 P="$HERE/../scripts/parse_pr_command.sh"
 
-run() { OUT="$("$P" "$1" 2>/dev/null)"; RC=$?; }   # sets $OUT, $RC
+run() { OUT="$("$P" "$1" 2>/dev/null)"; RC=$?; }
 
-# --- valid commands ---------------------------------------------------------
 test_bare_is_diff() {
     run "/aster-code-review"
     assert_eq       "accepted"     "$RC" 0
@@ -54,13 +49,11 @@ test_trigger_on_later_line_with_indent() {
     assert_contains "target smoke" "$OUT" "target=smoke"
 }
 
-# --- rejected: unknown / malformed -----------------------------------------
 test_reject_unknown_subcommand() { run "/aster-code-review frobnicate"; assert_eq "rejected" "$RC" 2; }
 test_reject_diff_with_args()     { run "/aster-code-review diff main";  assert_eq "rejected" "$RC" 2; }
 test_reject_no_command()         { run "just a normal comment";        assert_eq "rejected" "$RC" 2; }
 test_reject_trigger_substring()  { run "/aster-code-reviewX smoke";     assert_eq "rejected" "$RC" 2; }
 
-# --- rejected: injection attempts (the whole point) ------------------------
 test_reject_path_traversal()   { run "/aster-code-review files ../etc/passwd";     assert_eq "rejected" "$RC" 2; }
 test_reject_absolute_path()    { run "/aster-code-review files /etc/passwd";       assert_eq "rejected" "$RC" 2; }
 test_reject_path_metachars()   { run '/aster-code-review files a;rm';              assert_eq "rejected" "$RC" 2; }
@@ -68,8 +61,6 @@ test_reject_path_subshell()    { run '/aster-code-review files $(rm)';          
 test_reject_problems_inject()  { run '/aster-code-review benchmark --problems="; rm -rf /"'; assert_eq "rejected" "$RC" 2; }
 test_reject_nonproblems_flag() { run "/aster-code-review benchmark --keep=1";      assert_eq "rejected" "$RC" 2; }
 test_reject_problems_letters() { run '/aster-code-review smoke --problems="abc"';  assert_eq "rejected" "$RC" 2; }
-# The old make-style knob is no longer the comment syntax;
-# only --problems= is.
 test_reject_make_style_knob()  { run '/aster-code-review smoke PROBLEMS="0002"';   assert_eq "rejected" "$RC" 2; }
 
 run_suite

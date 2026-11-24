@@ -1,6 +1,5 @@
 #!/bin/bash
 
-# SPDX-License-Identifier: MPL-2.0
 
 set -euo pipefail
 
@@ -13,10 +12,6 @@ echo "Target version for validation: ${TARGET_VERSION}"
 
 echo "Scanning directory: ${BOOK_SRC_DIR}"
 
-# Define the search pattern.
-# This regex looks for 'asterinas.github.io/api-docs/'
-# followed by any version number that IS NOT '${TARGET_VERSION}/'.
-# (?!${ESCAPED_TARGET_VERSION}/) is a negative lookahead.
 ESCAPED_TARGET_VERSION=${TARGET_VERSION//./\\.}
 PATTERN="asterinas\\.github\\.io/api-docs/(?!${ESCAPED_TARGET_VERSION}/)[0-9]+\\.[0-9]+\\.[0-9]+"
 MISMATCHES=$(grep -rPn "${PATTERN}" "${BOOK_SRC_DIR}" || true)

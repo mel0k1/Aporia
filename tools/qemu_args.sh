@@ -1,36 +1,8 @@
 #!/bin/bash
 
-# SPDX-License-Identifier: MPL-2.0
 
-# This script is used to generate QEMU arguments for OSDK.
-# Usage: `qemu_args.sh [scheme]`
-#  - scheme: "normal", "test", "microvm" or "iommu";
-# Other arguments are configured via environmental variables:
-#  - OVMF: "on" or "off";
-#  - OVMF_DIR: directory containing OVMF.fd, OVMF_VARS.fd and microvm/MICROVM.fd;
-#  - BOOT_METHOD: "vmm-direct", "grub-rescue-iso" or "grub-qcow2";
-#  - BOOT_PROTOCOL: "multiboot", "multiboot2", "pvh", "linux-legacy32", "linux-efi-pe64" or "linux-efi-handover64";
-#  - NETDEV: "user", "tap" or "none" ("none" is not supported by microvm);
-#  - QEMU_DISPLAY: QEMU display backend, default is "vnc=0.0.0.0:$VNC_PORT", or "none" to disable it;
-#  - VHOST: "off" or "on";
-#  - VSOCK: "off" or "on";
-#  - VIRTIOFS: "off" or "on";
-#  - VIRTIOFS_WORK_DIR: work directory used by the virtio-fs daemons;
-#  - VIRTIOFS_TAG: mount tag for virtio-fs device;
-#  - VIRTIOFS_SCRATCH: "off" or "on", whether to attach a scratch virtio-fs device;
-#  - VIRTIOFS_SCRATCH_TAG: mount tag for the scratch virtio-fs device;
-#  - INITRAMFS: "on" or "off"; when "off", attach `rootfs.img` as an extra block device.
-#  - CONSOLE: "hvc0" to enable virtio console;
-#  - SMP: number of CPUs;
-#  - MEM: amount of memory, e.g. "8G";
-#  - VNC_PORT: VNC display number, default is "42" (TCP port 5942),
-#    ignored when QEMU_DISPLAY is set;
-#  - XFSTESTS_NEEDS_BLOCK_DEVICES: "true" or "false", whether to attach
-#    xfstests images (xfstests_test.img and xfstests_scratch.img) to the VM.
 
 OVMF=${OVMF:-"on"}
-# Directory holding OVMF.fd, OVMF_VARS.fd and microvm/MICROVM.fd. Defaults to the
-# Docker image's path; the Nix dev shell exports this to the Nix store instead.
 OVMF_DIR=${OVMF_DIR:-/root/ovmf/release}
 VHOST=${VHOST:-"off"}
 VSOCK=${VSOCK:-"off"}
@@ -47,9 +19,6 @@ if [ "$XFSTESTS_NEEDS_BLOCK_DEVICES" != "true" ] && \
     exit 1
 fi
 
-# Draw all host ports from a single `shuf` invocation,
-# so that none of them will conflict with others.
-# Stay below 32768, where Linux's default ephemeral port range starts.
 mapfile -t RAND_PORTS < <(shuf -i 1024-32767 -n 7)
 SSH_RAND_PORT=${SSH_PORT:-${RAND_PORTS[0]}}
 NGINX_RAND_PORT=${NGINX_PORT:-${RAND_PORTS[1]}}
@@ -59,8 +28,6 @@ LMBENCH_TCP_LAT_RAND_PORT=${LMBENCH_TCP_LAT_PORT:-${RAND_PORTS[4]}}
 LMBENCH_TCP_BW_RAND_PORT=${LMBENCH_TCP_BW_PORT:-${RAND_PORTS[5]}}
 MEMCACHED_RAND_PORT=${MEMCACHED_PORT:-${RAND_PORTS[6]}}
 
-# Optional QEMU arguments. Opt in them manually if needed.
-# QEMU_OPT_ARG_DUMP_PACKETS="-object filter-dump,id=filter0,netdev=net01,file=virtio-net.pcap"
 
 if [ "$NETDEV" = "user" ]; then
     echo "[$1] Forwarded QEMU guest port: $SSH_RAND_PORT->22; $NGINX_RAND_PORT->8080 $REDIS_RAND_PORT->6379 $IPERF_RAND_PORT->5201 $LMBENCH_TCP_LAT_RAND_PORT->31234 $LMBENCH_TCP_BW_RAND_PORT->31236 $MEMCACHED_RAND_PORT->11211" 1>&2
@@ -80,7 +47,6 @@ fi
 VIRTIO_NET_FEATURES=",csum=off,ctrl_guest_offloads=off,ctrl_mac_addr=off,ctrl_rx_extra=off,ctrl_rx=off,ctrl_vlan=off,ctrl_vq=off,event_idx=off,guest_announce=off,guest_csum=off,guest_ecn=off,guest_tso4=off,guest_tso6=off,guest_ufo=off,guest_uso4=off,guest_uso6=off,host_ecn=off,host_tso4=off,host_tso6=off,host_ufo=off,host_uso=off,indirect_desc=off,mrg_rxbuf=off,queue_reset=off"
 
 if [ "$CONSOLE" = "hvc0" ]; then
-    # Kernel logs are printed to all consoles. Redirect serial output to a file to avoid duplicate logs.
     CONSOLE_ARGS="-device virtconsole,chardev=mux -serial file:qemu-serial.log"
 else
     CONSOLE_ARGS="-serial chardev:mux"
@@ -108,18 +74,10 @@ if [ "$VIRTIOFS" = "on" ] && [ -z "${VIRTIOFS_WORK_DIR:-}" ]; then
     exit 1
 fi
 
-# These paths must match the work directories passed to tools/run_virtiofsd.sh.
 VIRTIOFS_SOCKET="$VIRTIOFS_WORK_DIR/vfs.sock"
 VIRTIOFS_SCRATCH_SOCKET="$VIRTIOFS_WORK_DIR/scratch/vfs.sock"
 
 if [ "$1" = "riscv" ]; then
-    # NOTE: The initramfs assumes that ext2.img, exfat.img, and ltp_dev.img appear as
-    # `/dev/vda`, `/dev/vdb`, and `/dev/vdc`, respectively. RISC-V virtio-mmio
-    # block devices are discovered in reverse command-line order, so list them
-    # in the reverse of the desired device-node order.
-    # When booting without initramfs, `rootfs.img` is placed before these devices
-    # so that it is discovered after them as `/dev/vdd`.
-    # TODO: Once UUID-based mounting is implemented, this strict ordering will no longer be required.
     if [ "$INITRAMFS" = "off" ]; then
         ROOTFS_RISCV_DEVICE_ARGS="-device virtio-blk-device,drive=rootfs"
     fi
@@ -151,8 +109,6 @@ if [ "$1" = "riscv" ]; then
 fi
 
 if [ "$1" = "aarch64" ]; then
-    # QEMU in KVM mode on a native aarch64 host only accepts host-compatible
-    # CPU models (e.g. `host` or `max`).
     if [ "${ENABLE_KVM:-1}" = "1" ] && [ -e /dev/kvm ] && [ "$(uname -m)" = "aarch64" ]; then
         CPU_MODEL=host
     else
@@ -240,7 +196,6 @@ COMMON_QEMU_ARGS="\
     $ROOTFS_DRIVE_ARGS \
 "
 
-# Add xfstests drives when the selected file system needs block devices.
 if [ "$XFSTESTS_NEEDS_BLOCK_DEVICES" = "true" ]; then
     COMMON_QEMU_ARGS="$COMMON_QEMU_ARGS \
     -drive if=none,format=raw,id=x3,file=./test/initramfs/build/xfstests_test.img \
@@ -258,7 +213,6 @@ if [ "$1" = "iommu" ]; then
         -device intel-iommu,intremap=on,device-iotlb=on \
         -device ioh3420,id=pcie.0,chassis=1 \
     "
-    # TODO: Add support for enabling IOMMU on AMD platforms
 fi
 
 if [ "$INITRAMFS" = "off" ]; then
@@ -266,7 +220,6 @@ if [ "$INITRAMFS" = "off" ]; then
     ROOTFS_Q35_DEVICE_ARGS="-device virtio-blk-pci,bus=pcie.0,addr=0xc,drive=rootfs,serial=vrootfs,disable-legacy=on,disable-modern=off,queue-size=64,num-queues=1,request-merging=off,backend_defaults=off,discard=off,write-zeroes=off,event_idx=off,indirect_desc=off,queue_reset=off$IOMMU_DEV_EXTRA"
 fi
 
-# The virtio-net device needs the net01 backend, which NETDEV=none does not create.
 Q35_NETWORK_DEVICE_ARGS=""
 if [ "$NETDEV" = "user" ] || [ "$NETDEV" = "tap" ]; then
     Q35_NETWORK_DEVICE_ARGS="-device virtio-net-pci,netdev=net01,disable-legacy=on,disable-modern=off$VIRTIO_NET_FEATURES$IOMMU_DEV_EXTRA"
@@ -306,7 +259,6 @@ else
     "
 fi
 
-# Add xfstests devices when the selected file system needs block devices.
 if [ "$XFSTESTS_NEEDS_BLOCK_DEVICES" = "true" ]; then
     if [ "$1" = "microvm" ]; then
         QEMU_ARGS="$QEMU_ARGS \
@@ -342,7 +294,6 @@ if [ "$VIRTIOFS" = "on" ]; then
 fi
 
 if [ "$VSOCK" = "on" ]; then
-    # RAND_CID=$(shuf -i 3-65535 -n 1)
     RAND_CID=3
     echo "[$1] Launched QEMU VM with CID $RAND_CID" 1>&2
     if [ "$1" = "microvm" ]; then
@@ -356,8 +307,6 @@ if [ "$VSOCK" = "on" ]; then
     fi
 fi
 
-# When using direct ELF boot, OVMF depends on the boot protocol:
-# linux-efi-* protocols require OVMF; other protocols (e.g. multiboot) do not.
 if [ "$BOOT_METHOD" = "vmm-direct" ]; then
     if [ "$BOOT_PROTOCOL" = "linux-efi-pe64" ] || [ "$BOOT_PROTOCOL" = "linux-efi-handover64" ]; then
         OVMF="on"
@@ -366,10 +315,6 @@ if [ "$BOOT_METHOD" = "vmm-direct" ]; then
     fi
 fi
 
-# When using `grub-rescue-iso` or `grub-qcow2` boot, OVMF must be enabled.
-# Currently, the project's `grub-mkrescue` (in container image) only contained
-# `x86_64-efi` platform modules — no `i386-pc`. This meant the generated ISO/qcow2
-# could only be loaded by OVMF.
 if [ "$BOOT_METHOD" = "grub-rescue-iso" ] || [ "$BOOT_METHOD" = "grub-qcow2" ]; then
     OVMF="on"
 fi

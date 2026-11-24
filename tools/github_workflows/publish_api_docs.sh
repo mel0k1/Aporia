@@ -1,13 +1,9 @@
 #!/bin/bash
 
-# SPDX-License-Identifier: MPL-2.0
 
 set -e
 
-# This script is used to build API documentations
-# and upload the documentation to self-hosted repos.
 
-# Print help message
 print_help() {
     echo "Usage: $0 [--dry-run | --nightly <key_file> | --release <key_file>]"
     echo ""
@@ -18,7 +14,6 @@ print_help() {
     echo "    key_file     Path to the file that stores the SSH key. Required if documentation needs to be uploaded."
 }
 
-# Validate the command line parameters
 validate_parameter() {
     if [ "$1" = "--dry-run" ]; then
         if [ "$#" -ne 1 ]; then
@@ -48,11 +43,9 @@ validate_parameter() {
     fi
 }
 
-# Build documentation of all crates to publish
 build_api_docs() {
     cd "${ASTER_SRC_DIR}"
     make install_osdk
-    # Crates depend on OSTD, including OSTD itself
     CRATES="ostd osdk/deps/frame-allocator osdk/deps/heap-allocator osdk/deps/test-kernel"
     for CRATE in $CRATES; do
         pushd $CRATE
@@ -61,7 +54,6 @@ build_api_docs() {
     done
 }
 
-# Git clone the API documentation repo
 clone_repo() {
     cd "${WORK_DIR}"
     chmod 600 "${SSH_KEY_FILE}"
@@ -72,7 +64,6 @@ clone_repo() {
     GIT_SSH_COMMAND="ssh -i ${SSH_KEY_FILE} -o UserKnownHostsFile=${KNOWN_HOSTS_FILE}" git clone "${REPO_URL}" "${CLONED_REPO_DIR}"
 }
 
-# Generate the index.html for redirecting
 generate_redirect_index_html() {
     local URL="$1"
     TEMPLATE="
@@ -93,7 +84,6 @@ generate_redirect_index_html() {
     echo -e "${TEMPLATE}" > index.html
 }
 
-# Update the nightly documentation and upload
 update_nightly_doc() {
     cd "${WORK_DIR}/${CLONED_REPO_DIR}"
     git checkout --orphan new_branch
@@ -108,7 +98,6 @@ update_nightly_doc() {
     cd "${WORK_DIR}" && rm -rf "${WORK_DIR}/${CLONED_REPO_DIR}"
 }
 
-# Update the release documentation and upload
 update_release_doc() {
     cd "${WORK_DIR}/${CLONED_REPO_DIR}"
     VERSION=$(cat "${ASTER_SRC_DIR}/VERSION")
@@ -122,13 +111,11 @@ update_release_doc() {
     cd "${WORK_DIR}" && rm -rf "${WORK_DIR}/${CLONED_REPO_DIR}"
 }
 
-# Check if help message should be printed
 if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
     print_help
     exit 0
 fi
 
-# Validate and retrieve script parameters
 validate_parameter "$@"
 SCRIPT_DIR=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
 ASTER_SRC_DIR=${SCRIPT_DIR}/../..

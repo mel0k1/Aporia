@@ -1,11 +1,9 @@
 #!/bin/bash
 
-# SPDX-License-Identifier: MPL-2.0
 
 set -e
 
 TARGET_ARCH=${TARGET_ARCH:-x86_64}
-# Accept config file name as parameter, default to "configuration.nix"
 CONFIG_FILE_NAME=${1:-"configuration.nix"}
 
 SCRIPT_DIR=$(cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd)

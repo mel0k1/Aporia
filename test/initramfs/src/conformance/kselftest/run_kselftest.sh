@@ -1,6 +1,5 @@
 #!/bin/sh
 
-# SPDX-License-Identifier: MPL-2.0
 
 echo "=== Kselftest Runner Started ==="
 
@@ -13,15 +12,6 @@ FAILED_TESTS=$(mktemp)
 
 trap 'rm -f "$COMBINED_BLOCKLISTS" "$RESOLVED_BLOCKLISTS" "$AVAILABLE_TESTS" "$FAILED_TESTS"' EXIT
 
-# The `kselftest-list.txt` is a generated file produced by the kselftest build.
-#
-# Each line describes a single kselftest case in the form:
-#     <test-dir>:<test-command>
-#
-# Example lines (matching enabled TARGETS in kselftest.nix):
-#   exec:binfmt_script.py
-#   timers:posix_timers
-#   vDSO:vdso_test_abi
 TESTS="$KSELFTEST_DIR/kselftest-list.txt"
 if [ ! -r "$TESTS" ]; then
     echo "$0: missing $TESTS; kselftest build is broken" >&2
@@ -31,7 +21,6 @@ else
     echo "Found $available_count available test cases"
 fi
 
-# When a selector is set, run only the selected entries and ignore the blocklist.
 CONFORMANCE_TEST_SELECTOR=${CONFORMANCE_TEST_SELECTOR:-}
 
 if [ -n "$CONFORMANCE_TEST_SELECTOR" ]; then
@@ -150,7 +139,6 @@ run_test() {
     )
 }
 
-# Use a dedicated subdirectory under the selected workdir.
 TEST_WORKDIR="${CONFORMANCE_TEST_WORKDIR:-/tmp}/kselftest"
 rm -rf "$TEST_WORKDIR"
 mkdir -p "$TEST_WORKDIR"

@@ -1,17 +1,12 @@
 #!/bin/bash
 
-# SPDX-License-Identifier: MPL-2.0
 
 set -e
 
-# Publish sctrace to crates.io
-#
-# Usage: publish_sctrace.sh [--dry-run | --token REGISTRY_TOKEN]
 
 SCRIPT_DIR=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
 ASTER_SRC_DIR=${SCRIPT_DIR}/../..
 
-# Print help message
 print_help() {
     echo "Usage: $0 [--dry-run | --token REGISTRY_TOKEN]"
     echo ""
@@ -20,7 +15,6 @@ print_help() {
     echo "  --token REGISTRY_TOKEN:  The token to authenticate with crates.io."
 }
 
-# Parse the parameters
 DRY_RUN=""
 TOKEN=""
 while [ "$#" -gt 0 ]; do
@@ -41,8 +35,6 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
-# Performs the publish check or publish the crate in directory $1.
-# All the arguments after $1 are passed to `cargo publish`.
 do_publish_for() {
     pushd $ASTER_SRC_DIR/$1
 
@@ -50,7 +42,6 @@ do_publish_for() {
     RF="$RUSTFLAGS --check-cfg cfg(ktest)"
 
     if [ -n "$DRY_RUN" ]; then
-        # Perform checks
         RUSTFLAGS=$RF cargo publish --dry-run --allow-dirty $ADDITIONAL_ARGS
         RUSTFLAGS=$RF cargo doc $ADDITIONAL_ARGS
     else

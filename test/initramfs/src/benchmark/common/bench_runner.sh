@@ -1,7 +1,5 @@
 #!/bin/sh
 
-# SPDX-License-Identifier: MPL-2.0
-# Entrypoint for the benchmark VM
 
 set -e
 
@@ -18,7 +16,6 @@ print_help() {
     echo "  system_type: The type of system to run the benchmark on. 'linux' or 'asterinas'."
 }
 
-# Validate arguments
 check_benchmark_name() {
     if [ -z "${BENCHMARK_NAME}" ] || [ -z "${SYSTEM}" ]; then
         echo "Error: Invalid arguments."
@@ -40,19 +37,14 @@ prepare_system() {
         mkdir /tmp
     fi
 
-    # System-specific preparation
     if [ "$SYSTEM" = "linux" ]; then
-        # Mount necessary fs
         mount -t devtmpfs devtmpfs /dev
         mount -t proc proc /proc
-        # Enable network
         ip link set lo up
         ip link set eth0 up
         ifconfig eth0 10.0.2.15
-        # Mount ext2
         mount -t ext2 /dev/vda /ext2
     elif [ "$SYSTEM" = "asterinas" ]; then
-        # Asterinas-specific preparation (if any)
         :
     else
         echo "Error: Unknown system type. Please set SYSTEM to 'linux' or 'asterinas'."
@@ -61,22 +53,16 @@ prepare_system() {
 }
 
 main() {
-    # Check if the benchmark name is valid
     check_benchmark_name
 
-    # Prepare the system
     prepare_system
 
-    # Message to notify the host script. It must align with the READY_MESSAGE in host_guest_bench_runner.sh.
-    # DO NOT REMOVE THIS LINE!!!
     echo "${READY_MESSAGE}"
 
-    # Run the benchmark
     BENCHMARK_SCRIPT=${BENCHMARK_ROOT}/${BENCHMARK_NAME}/run.sh
     chmod +x ${BENCHMARK_SCRIPT}
     ${BENCHMARK_SCRIPT}
 
-    # Shutdown explicitly if running on Linux
     if [ "$SYSTEM" = "linux" ]; then
         poweroff -f
     fi

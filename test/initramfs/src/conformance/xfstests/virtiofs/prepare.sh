@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: MPL-2.0
 
 mkdir -p "$TEST_DIR" "$SCRATCH_MNT"
 

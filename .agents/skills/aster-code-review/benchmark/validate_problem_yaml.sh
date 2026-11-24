@@ -1,11 +1,6 @@
 #!/usr/bin/env bash
 
-# SPDX-License-Identifier: MPL-2.0
 
-#
-# validate_problem_yaml.sh — schema-check benchmark/problems.yaml (model-free; no git, no model).
-# Exits non-zero on any schema error.
-# Run by run.sh (fail-closed) and by the tests.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 python3 - "$HERE/problems.yaml" <<'PY'
@@ -19,8 +14,8 @@ path = sys.argv[1]
 PERSONAS = {"maintainability", "development", "security", "hardware", "documentation"}
 KINDS = {"file", "commit_message", "whole_change"}
 SEVERITIES = {"critical", "major", "minor", "nit"}
-SHA_RE = re.compile(r"^[0-9a-f]{40}$")     # full object name — abbreviations are not git-fetchable
-NUM_RE = re.compile(r"^(\d+)")             # the leading numeric part of a problem_id (e.g. 0002)
+SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+NUM_RE = re.compile(r"^(\d+)")
 REMOTE_RE = re.compile(r"^(https?://|git@)")
 errs = []
 
@@ -32,7 +27,7 @@ if not isinstance(docs, list):
     print("FATAL: top level must be a sequence of problems"); sys.exit(2)
 
 ids = set()
-nums = {}                                  # numeric prefix -> first problem_id that used it
+nums = {}
 for i, p in enumerate(docs):
     tag = (p.get("problem_id") if isinstance(p, dict) else None) or f"#{i}"
     def err(m, tag=tag): errs.append(f"[{tag}] {m}")
@@ -45,8 +40,6 @@ for i, p in enumerate(docs):
         err("duplicate problem_id")
     else:
         ids.add(pid)
-        # The numeric part is the stable id the harness/CLI select by (slugs get reworded),
-        # so two problems must never share it, even with different slugs.
         m = NUM_RE.match(pid)
         if not m:
             err("problem_id must begin with a numeric part (e.g. 0002-...)")
@@ -60,11 +53,9 @@ for i, p in enumerate(docs):
         err("source missing or not a non-empty string")
     if "base_commit" in p:
         err("base_commit is obsolete; use the top-level `commit` (the checkout) instead")
-    # Every problem checks out one snapshot: top-level `commit` (a commit-ish for detached HEAD).
     commit = p.get("commit")
     if not isinstance(commit, str) or not commit.strip():
         err("commit missing or not a non-empty string (the snapshot to check out)")
-    # `remote` (optional) is where `commit` is fetched from if absent; run.sh defaults it to upstream.
     r = p.get("remote")
     if r is not None and (not isinstance(r, str) or not REMOTE_RE.match(r)):
         err("remote, if present, must be a fetch URL (https:// or git@)")
@@ -76,8 +67,6 @@ for i, p in enumerate(docs):
         if present not in (["diff"], ["files"]):
             err(f"review_mode must have exactly one of diff/files, got {present or 'none'}")
         elif "diff" in rm:
-            # diff mode: review `base..HEAD`. `commit` is fetched by full SHA (dangling/PR commit),
-            # so it must be a full 40-char object name.
             if isinstance(commit, str) and not SHA_RE.match(commit):
                 err("commit must be a full 40-char hex SHA in diff mode (it is fetched by SHA)")
             v = rm["diff"]
@@ -91,7 +80,6 @@ for i, p in enumerate(docs):
                 if extra:
                     err(f"review_mode.diff has unexpected keys: {sorted(extra)}")
         else:
-            # files mode: named paths reviewed at `commit` (a local commit-ish; never fetched).
             v = rm["files"]
             if not isinstance(v, list) or not v or not all(isinstance(x, str) and x for x in v):
                 err("review_mode.files must be a non-empty list of path strings")

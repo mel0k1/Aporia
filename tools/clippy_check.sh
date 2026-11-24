@@ -1,6 +1,5 @@
 #!/bin/bash
 
-# SPDX-License-Identifier: MPL-2.0
 
 set -euo pipefail
 
@@ -99,8 +98,6 @@ run_workspace_clippy() {
         )
     fi
 
-    # `linux-bzimage/setup` only supports x86_64 currently.
-    # It may fail on other architectures.
     if [[ "${OSDK_TARGET_ARCH:-x86_64}" = "x86_64" ]]; then
         echo "Checking ${LINUX_BZIMAGE_SETUP_DIR}"
         (

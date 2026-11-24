@@ -1,6 +1,5 @@
 #!/bin/sh
 
-# SPDX-License-Identifier: MPL-2.0
 
 LTP_DIR=$(dirname "$0")
 TEST_TMP_DIR=${CONFORMANCE_TEST_WORKDIR:-/tmp}
@@ -8,7 +7,6 @@ KIRK_TMP_DIR=${KIRK_TMP_DIR:-/tmp}
 JSON_REPORT=$TEST_TMP_DIR/result.json
 RESULT=0
 
-# Some test cases require a block device. Select the dedicated LTP device by default.
 export LTP_DEV=${LTP_DEV:-/dev/vdc}
 export LTP_TIMEOUT_MUL=5
 export LTPROOT=$LTP_DIR

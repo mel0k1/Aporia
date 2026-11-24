@@ -1,8 +1,6 @@
 #!/bin/bash
 
-# SPDX-License-Identifier: MPL-2.0
 
-# A failed file search must fail the check even if nixfmt succeeds.
 set -euo pipefail
 
 options=()
@@ -27,7 +25,6 @@ for path in "$@"; do
         echo "formatting paths must not be empty" >&2
         exit 2
     fi
-    # Prefix relative paths so find does not interpret them as expressions.
     case "$path" in
         /*) roots+=("$path") ;;
         *) roots+=("./$path") ;;

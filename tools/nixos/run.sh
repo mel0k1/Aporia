@@ -1,10 +1,6 @@
 #!/bin/sh
 
-# SPDX-License-Identifier: MPL-2.0
 
-# Run a NixOS installation or NixOS ISO installer image built by the root Makefile inside a VM
-#
-# Usage: ./run.sh [nixos | iso]
 
 set -e
 
@@ -22,20 +18,15 @@ TARGET_ARCH=${TARGET_ARCH:-x86_64}
 SCRIPT_DIR=$(dirname "$0")
 ASTERINAS_DIR=$(realpath "${SCRIPT_DIR}/../..")
 
-# tools/qemu_args.sh currently emits x86_64-specific arguments.
-# Reject other architectures to avoid invoking non-x86 QEMU with incompatible args.
 if [ "${TARGET_ARCH}" != "x86_64" ]; then
     echo "Error: tools/nixos/run.sh currently supports only TARGET_ARCH=x86_64; got ${TARGET_ARCH}" >&2
     exit 1
 fi
 
-# Change to Asterinas root directory to ensure all scripts run from the correct location.
 cd "${ASTERINAS_DIR}"
 
-# Get base QEMU arguments from qemu_args.sh script
 QEMU_ARGS=$(${ASTERINAS_DIR}/tools/qemu_args.sh common 2>/dev/null)
 
-# Add mode-specific disk and device arguments
 case "$MODE" in
     nixos)
         NIXOS_DIR="${ASTERINAS_DIR}/target/nixos"
@@ -76,21 +67,12 @@ fi
 
 QEMU_BIN=${QEMU_BIN:-qemu-system-${TARGET_ARCH}}
 
-# The kernel uses a specific value to signal a successful shutdown via the
-# isa-debug-exit device.
-KERNEL_SUCCESS_EXIT_CODE=16 # 0x10 in hexadecimal
-# QEMU translates the value written to the isa-debug-exit device into a final
-# process exit code using following formula.
+KERNEL_SUCCESS_EXIT_CODE=16
 QEMU_SUCCESS_EXIT_CODE=$(((KERNEL_SUCCESS_EXIT_CODE << 1) | 1))
 
-# Execute QEMU
-# shellcheck disable=SC2086
 ${QEMU_BIN} ${QEMU_ARGS} || exit_code=$?
 exit_code=${exit_code:-0}
 
-# Check if the execution was successful:
-# - Exit code 0: Normal successful exit (e.g., ACPI shutdown or clean termination)
-# - Exit code $QEMU_SUCCESS_EXIT_CODE: Kernel signaled success via isa-debug-exit device
 if [ ${exit_code} -eq 0 ] || [ ${exit_code} -eq ${QEMU_SUCCESS_EXIT_CODE} ]; then
     exit 0
 fi

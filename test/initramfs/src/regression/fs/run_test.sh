@@ -1,6 +1,5 @@
 #!/bin/sh
 
-# SPDX-License-Identifier: MPL-2.0
 
 set -e
 
@@ -29,7 +28,6 @@ test_ext2() {
 
     cd ${ext2_dir}
 
-    # Test case for the big file feature
     for i in $(seq 1 10); do
         truncate -s 500M ${test_file}
         check_file_size ${test_file} $((500 * 1024 * 1024))
@@ -37,7 +35,6 @@ test_ext2() {
         check_file_size ${test_file} $((2 * 1024))
     done
 
-    # Clean up
     rm -f ${test_file}
     sync
     cd -
@@ -63,7 +60,6 @@ test_mount_bind_file() {
 
     mount --bind "$file_a" "$file_b"
 
-    # Read from file_b and check if it matches file_a's content
     if [ "$(cat "$file_b")" != "$content_a" ]; then
         echo "Error: Read from bind-mounted file failed. Content mismatch."
         umount "$file_b"
@@ -73,7 +69,6 @@ test_mount_bind_file() {
 
     echo "$content_b_new" > "$file_b"
 
-    # Check if file_a's content is updated
     if [ "$(cat "$file_a")" != "$content_b_new" ]; then
         echo "Error: Write to bind-mounted file did not affect the source file."
         umount "$file_b"

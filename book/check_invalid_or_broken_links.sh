@@ -1,19 +1,12 @@
 #!/bin/bash
 
-# SPDX-License-Identifier: MPL-2.0
 
-# Temporary files:
-# - `JSON_FILE` stores lychee JSON output.
-# - `URLS_FILE` stores failed http/https links extracted from lychee output.
-# - `CACHE_UPDATES_FILE` stores recovered links to write back into .lycheecache.
-# - `CACHE_MERGED_FILE` is the merged cache output before replace.
 OUT_DIR="$(mktemp -d /tmp/lychee-XXXXXX)"
 JSON_FILE="$OUT_DIR"/result.json
 URLS_FILE="$OUT_DIR"/failed-urls.txt
 CACHE_UPDATES_FILE="$OUT_DIR"/cache-updates.txt
 CACHE_MERGED_FILE="$OUT_DIR"/cache-merged.txt
 
-# Remove `/tmp/lychee` files when the script exits.
 cleanup() {
   rm -rf "$OUT_DIR"
 }
@@ -32,14 +25,12 @@ print_lychee_summary() {
   echo "  unsupported.$LYCHEE_UNSUPPORTED"
 }
 
-# Run lychee once and capture JSON output for fallback processing.
 echo "[1/3] Running lychee..."
 LYCHEE_EXIT=0
 if ! lychee --config lychee.toml --format json --no-progress book/**/*.html >"$JSON_FILE"; then
   LYCHEE_EXIT=$?
 fi
 
-# Collect unique failed http/https links from lychee error/timeout maps.
 jq -r '
   [
     (.error_map // {} | to_entries[]? | .value[]? | .url?),
@@ -50,7 +41,6 @@ jq -r '
   | .[]
 ' "$JSON_FILE" >"$URLS_FILE"
 
-# Print lychee raw stats (same data source as detailed format summary).
 LYCHEE_TOTAL="$(jq -r '.total // 0' "$JSON_FILE")"
 LYCHEE_UNIQUE="$(jq -r '.unique // 0' "$JSON_FILE")"
 LYCHEE_SUCCESSFUL="$(jq -r '.successful // 0' "$JSON_FILE")"
@@ -69,14 +59,12 @@ if [ "$TOTAL_FAILED_BY_LYCHEE" -eq 0 ]; then
   exit "$LYCHEE_EXIT"
 fi
 
-# Retry failed links using plain curl; report recovered/failed links.
 echo "[2/3] Curl fallback on lychee-failed links..."
 RECOVERED=0
 FAILED=0
 while IFS= read -r url; do
   [ -z "$url" ] && continue
   if [[ $url == file://* ]]; then
-    # Just warn against this local file link is not accessible without further check.
     FAILED=$((FAILED + 1))
     echo "FAILED:    $url"
     continue
@@ -87,7 +75,6 @@ while IFS= read -r url; do
   if [ "$CURL_EXIT" -eq 0 ]; then
     RECOVERED=$((RECOVERED + 1))
     echo "RECOVERED: $url (status=$STATUS_CODE)"
-    # Status code is recorded as 200 in .lycheecache to let lychee skip the link next time.
     printf '%s,%s,%s\n' "$url" "200" "$(date +%s)" >>"$CACHE_UPDATES_FILE"
   else
     FAILED=$((FAILED + 1))
@@ -95,14 +82,9 @@ while IFS= read -r url; do
   fi
 done <"$URLS_FILE"
 
-# Write recovered links into .lycheecache as url,status,timestamp.
 UPDATED_CACHE_LINES=0
 if [ -s "$CACHE_UPDATES_FILE" ]; then
   if [ -f .lycheecache ]; then
-    # Merge cache with URL-level deduplication:
-    # - First pass (updates): keep the latest recovered record by URL.
-    # - Second pass (existing cache): keep only URLs not present in updates.
-    # - End: append updated records so recovered entries replace old ones.
     awk -F, '
       NR==FNR { new[$1]=$0; order[++n]=$1; next }
       !($1 in new) { print }

@@ -1,12 +1,6 @@
 #!/usr/bin/env bash
 
-# SPDX-License-Identifier: MPL-2.0
 
-# Tests for scripts/parse_review.py
-# — the review-file parser behind post_reviews_to_github.sh.
-# Model-free:
-# exercises summary extraction, comment parsing, and the in-diff filter directly,
-# with no gh and no network.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/lib.sh"
@@ -88,7 +82,6 @@ index 1111111..2222222 100644
 EOF
 }
 
-# run parser; arg "no-diff" => empty DIFF (nothing is filtered out)
 _parse() {
     if [[ "${1:-}" == no-diff ]]; then
         REVIEW_FILE="$TMP/review.md" DIFF="" python3 "$PARSER"
@@ -153,11 +146,8 @@ test_no_dropped_section_when_nothing_dropped() {
     assert_eq "empty section when nothing dropped" "$(_f "$out" 'd["dropped_section"]')" ""
 }
 
-# parse a custom review + diff pair (both as here-strings written to $TMP)
 _parse_rd() { REVIEW_FILE="$1" DIFF="$(cat "$2")" python3 "$PARSER"; }
 
-# Regression: inter-file `diff --git`/`index` lines must NOT be counted as context
-# for the previous file (else a comment just past a file's last hunk is wrongly kept).
 test_multifile_no_phantom_lines_after_last_hunk() {
     cat > "$TMP/r2.md" <<'EOF'
 # Summary
@@ -202,8 +192,6 @@ EOF
     assert_eq       "kept is b.rs"             "$(_f "$out" 'd["comments"][0]["path"]')" "b.rs"
 }
 
-# Regression: an added line whose own text starts with `+++ ` must be treated as
-# content, not a file header (else the rest of the hunk is lost from `postable`).
 test_added_line_starting_with_plus_is_content_not_header() {
     cat > "$TMP/r3.md" <<'EOF'
 # Summary
@@ -233,7 +221,6 @@ EOF
     assert_eq "nothing dropped"                  "$(_f "$out" 'len(d["dropped"])')" 0
 }
 
-# Fix: a dropped RANGE finding surfaces its start line, not just the end line.
 test_dropped_range_shows_start_line() {
     cat > "$TMP/r4.md" <<'EOF'
 # Summary

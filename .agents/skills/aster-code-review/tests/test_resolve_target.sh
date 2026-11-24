@@ -1,20 +1,16 @@
 #!/usr/bin/env bash
 
-# SPDX-License-Identifier: MPL-2.0
 
-# Test cases for scripts/resolve_target.sh.
-# Run via `make -C tests test_resolve_target`.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/lib.sh"
 RT="$HERE/../scripts/resolve_target.sh"
 
 setup() { build_repo "$TMP/repo"; FIX="$TMP/repo"; }
-rt()      { ( cd "$FIX" && "$RT" "$@" ); }                          # capture stdout
-rt_code() { ( cd "$FIX" && "$RT" "$@" ) >/dev/null 2>&1; echo $?; } # capture exit
-field()   { sed -n "s/^$1=//p"; }                                   # pull a meta field from stdin
+rt()      { ( cd "$FIX" && "$RT" "$@" ); }
+rt_code() { ( cd "$FIX" && "$RT" "$@" ) >/dev/null 2>&1; echo $?; }
+field()   { sed -n "s/^$1=//p"; }
 
-# --- argument grammar (each a distinct failure mode) -------------------------
 
 test_requires_mode_word()         { assert_eq "no mode rejected"          "$(rt_code '')"                          2; }
 test_rejects_unknown_mode()       { assert_eq "bad mode rejected"         "$(rt_code 'bogus a out.md')"            2; }
@@ -22,15 +18,12 @@ test_rejects_unknown_flag()       { assert_eq "unknown flag rejected"     "$(rt_
 test_needs_target_and_output()    { assert_eq "lone positional rejected"  "$(rt_code 'files out.md')"              2; }
 test_rejects_unbalanced_quote()   { assert_eq "unbalanced quote rejected" "$(rt_code 'files "a out.md')"           2; }
 
-# --- diff mode: grammar ------------------------------------------------------
 
 test_diff_one_base_only()         { assert_eq "two bases rejected"   "$(rt_code 'diff main feature out.md')"   2; }
 test_diff_rejects_range()         { assert_eq "base..head rejected"  "$(rt_code 'diff main..feature out.md')"  2; }
 test_diff_rejects_lines_on_base() { assert_eq "base:lines rejected"  "$(rt_code 'diff main:1-2 out.md')"       2; }
-# An empty commit range (base == HEAD) must fail closed, not emit an empty review.
 test_diff_no_commits_is_error()   { assert_eq "empty base..HEAD rejected" "$(rt_code 'diff HEAD out.md')"      2; }
 
-# --- diff mode: meta + canonical input (merge-base..HEAD commit series) -------
 
 test_diff_meta_uses_merge_base() {
     local m mb; m="$(rt --meta 'diff main out.md')"
@@ -52,12 +45,11 @@ test_diff_input_is_commit_series() {
 }
 
 test_diff_excludes_uncommitted_edits() {
-    printf 'base\nmore\nuncommitted\n' > "$FIX/a.txt"   # uncommitted (not a commit)
+    printf 'base\nmore\nuncommitted\n' > "$FIX/a.txt"
     assert_absent "uncommitted edit not in the commit series" "$(rt 'diff main out.md')" "+uncommitted"
     assert_absent "head not -dirty in diff mode" "$(rt --meta 'diff main out.md' | field head)" "-dirty"
 }
 
-# --- files mode: meta, ranges, excerpts --------------------------------------
 
 test_files_meta_records_files_no_base() {
     local m; m="$(rt --meta 'files a.txt:5-8,1-2 b.txt out.md')"
@@ -83,7 +75,6 @@ test_files_line_range_excerpt() {
 
 test_files_missing_file_errors()  { assert_eq "missing file rejected" "$(rt_code 'files nope.txt out.md')" 2; }
 
-# --- --per-persona-context flag ------------------------------------------------
 
 test_app_defaults_to_auto()   { assert_eq "default is auto"   "$(rt --meta 'diff main out.md' | field per_persona_context)" "auto"; }
 test_app_explicit_no()        { assert_eq "no recorded"       "$(rt --meta 'files a.txt --per-persona-context=no out.md' | field per_persona_context)" "no"; }

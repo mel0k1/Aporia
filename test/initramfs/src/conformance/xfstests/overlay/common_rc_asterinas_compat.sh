@@ -1,6 +1,4 @@
-# SPDX-License-Identifier: MPL-2.0
 
-# Asterinas-specific compatibility overrides for upstream xfstests.
 _df_device()
 {
     if [ $# -ne 1 ]
