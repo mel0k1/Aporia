@@ -85,6 +85,20 @@ pub(crate) struct VmMapping {
     ///
     /// All pages within the same `VmMapping` have the same permissions.
     perms: VmPerms,
+    /// Whether pages in the mapping are locked in memory (by `mlock`-family
+    /// syscalls) and thus must not be swapped out.
+    ///
+    /// Memory locks are not inherited across `fork`, so this flag is reset
+    /// to `false` when cloning a mapping for a child process.
+    is_locked: bool,
+    /// Whether the mapping is locked in the "lock on fault" mode (the
+    /// `MLOCK_ONFAULT` flag of `mlock2` or the `MCL_ONFAULT` flag of
+    /// `mlockall`).
+    ///
+    /// In this mode, pages are not populated when the mapping is locked.
+    /// Instead, they are marked as locked and only get populated (and thus
+    /// locked) when they are faulted in.
+    is_lock_onfault: bool,
 }
 
 impl Debug for VmMapping {
@@ -97,6 +111,8 @@ impl Debug for VmMapping {
             .field("map_mode", &self.map_mode)
             .field("handle_page_faults_around", &self.handle_page_faults_around)
             .field("perms", &self.perms)
+            .field("is_locked", &self.is_locked)
+            .field("is_lock_onfault", &self.is_lock_onfault)
             .finish()
     }
 }
@@ -127,6 +143,8 @@ impl VmMapping {
             map_mode,
             handle_page_faults_around,
             perms,
+            is_locked: false,
+            is_lock_onfault: false,
         }
     }
 
@@ -134,6 +152,9 @@ impl VmMapping {
         VmMapping {
             mapped_mem: self.mapped_mem.dup(),
             file: self.file.clone(),
+            // Memory locks are not inherited by the child process.
+            is_locked: false,
+            is_lock_onfault: false,
             ..*self
         }
     }
@@ -173,6 +194,22 @@ impl VmMapping {
     /// Returns the permissions of pages in the mapping.
     pub(crate) fn perms(&self) -> VmPerms {
         self.perms
+    }
+
+    /// Returns whether pages in the mapping are locked in memory.
+    pub(crate) fn is_locked(&self) -> bool {
+        self.is_locked
+    }
+
+    /// Returns whether the mapping is locked in the "lock on fault" mode.
+    pub(crate) fn is_lock_onfault(&self) -> bool {
+        self.is_lock_onfault
+    }
+
+    /// Marks the mapping as locked or unlocked.
+    pub(super) fn set_locked(&mut self, is_locked: bool, is_lock_onfault: bool) {
+        self.is_locked = is_locked;
+        self.is_lock_onfault = is_locked && is_lock_onfault;
     }
 
     /// Returns the inode of the file that backs the mapping.
@@ -1003,6 +1040,8 @@ fn try_merge(left: &VmMapping, right: &VmMapping) -> Option<VmMapping> {
     let is_type_equal = left.map_mode == right.map_mode
         && left.handle_page_faults_around == right.handle_page_faults_around
         && left.perms == right.perms
+        && left.is_locked == right.is_locked
+        && left.is_lock_onfault == right.is_lock_onfault
         && match (&left.file, &right.file) {
             (Some(left_file), Some(right_file)) => Arc::ptr_eq(left_file, right_file),
             (None, None) => true,

@@ -95,6 +95,7 @@ mod membarrier;
 mod memfd_create;
 mod mkdir;
 mod mknod;
+mod mlock;
 mod mmap;
 mod mount;
 mod move_mount;

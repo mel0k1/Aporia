@@ -1,5 +1,6 @@
 mod access_alien;
 mod fork;
+mod lock;
 pub(super) mod map;
 pub(super) mod page_fault;
 mod protect;
@@ -195,6 +196,15 @@ struct VmarInner {
     vm_mappings: IntervalSet<Vaddr, VmMapping>,
     /// The total mapped memory in bytes.
     total_vm: usize,
+    /// Whether mappings created in the future should be locked in memory
+    /// (`mlockall` with `MCL_FUTURE`).
+    ///
+    /// This flag is not inherited by child processes, as `VmarInner::new`
+    /// initializes it to `false`.
+    lock_future: bool,
+    /// Whether future mappings should be locked in the "lock on fault" mode
+    /// (`mlockall` with `MCL_FUTURE | MCL_ONFAULT`).
+    lock_future_onfault: bool,
 }
 
 impl VmarInner {
@@ -202,6 +212,8 @@ impl VmarInner {
         Self {
             vm_mappings: IntervalSet::new(),
             total_vm: 0,
+            lock_future: false,
+            lock_future_onfault: false,
         }
     }
 
@@ -221,6 +233,53 @@ impl VmarInner {
             return Err(errno!(ENOMEM, "the address space size limit is reached"));
         }
         Ok(())
+    }
+
+    /// Returns the total size of locked mappings in bytes.
+    fn total_locked_size(&self) -> usize {
+        self.vm_mappings
+            .iter()
+            .filter(|vm_mapping| vm_mapping.is_locked())
+            .map(|vm_mapping| vm_mapping.map_size())
+            .sum()
+    }
+
+    /// Returns `Ok` if the calling process may lock additional pages of the
+    /// passed size in memory, i.e., the total size of locked memory would
+    /// still fit within `RLIMIT_MEMLOCK`.
+    fn check_locked_size_fits_rlimit(&self, expand_size: usize) -> Result<()> {
+        let Some(process) = Process::current() else {
+            return Ok(());
+        };
+
+        let rlimit_memlock = process
+            .resource_limits()
+            .get_rlimit(ResourceType::RLIMIT_MEMLOCK)
+            .get_cur();
+
+        if self.total_locked_size() as u64 + expand_size as u64 > rlimit_memlock {
+            return Err(errno!(ENOMEM, "the locked memory limit is reached"));
+        }
+        Ok(())
+    }
+
+    /// Returns whether mappings created in the future should be locked in
+    /// memory (`mlockall` with `MCL_FUTURE`).
+    fn lock_future(&self) -> bool {
+        self.lock_future
+    }
+
+    /// Returns whether mappings created in the future should be locked in
+    /// the "lock on fault" mode.
+    fn lock_future_onfault(&self) -> bool {
+        self.lock_future_onfault
+    }
+
+    /// Sets whether mappings created in the future should be locked in
+    /// memory (`mlockall` with `MCL_FUTURE`).
+    fn set_lock_future(&mut self, lock_future: bool, lock_future_onfault: bool) {
+        self.lock_future = lock_future;
+        self.lock_future_onfault = lock_future && lock_future_onfault;
     }
 
     /// Checks whether `addr..addr + size` is covered by a single `VmMapping`,

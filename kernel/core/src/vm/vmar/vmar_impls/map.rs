@@ -383,7 +383,21 @@ impl<'a, 'b> VmarMapOptions<'a, 'b> {
             }
         }
 
+        // Lock the mapping in memory if `mlockall` with `MCL_FUTURE` was
+        // called before the mapping was created.
+        let should_populate = if inner.lock_future() {
+            inner.check_locked_size_fits_rlimit(map_size)?;
+            vm_mapping.set_locked(true, inner.lock_future_onfault());
+            !vm_mapping.is_lock_onfault()
+        } else {
+            false
+        };
+
         inner.insert_try_merge(parent, vm_mapping, rmap.as_deref_mut());
+
+        if should_populate {
+            parent.populate_range(map_to_addr..map_to_addr + map_size)?;
+        }
 
         Ok(map_to_addr)
     }

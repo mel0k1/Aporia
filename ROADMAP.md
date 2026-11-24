@@ -22,11 +22,11 @@
 - [x] Тяжёлый контур прогнан до конца: 32 из 33 job'ов зелёные; упавший lint (fmt-дрейф в примерах книги) разобран и починен
 - [x] Восстановлены док-комментарии из базы после чистки: `make check` (fmt, clippy, udeps) проходит целиком
 - [x] Партия syscalls: `copy_file_range`, `recvmmsg`, `clock_getres`, `times`, `get_robust_list`, `rt_sigqueueinfo`, `rt_tgsigqueueinfo` с регрессионными тестами в initramfs
+- [x] Семейство mlock (mlock, mlock2, munlock, mlockall, munlockall): populate страниц через синтез page fault, флаг VM_LOCKED на маппингах, учёт в RLIMIT_MEMLOCK, MCL_FUTURE/MCL_ONFAULT, регрессионный тест memory/mlock
 
 ## Ближайшие шаги
 
 - [ ] Первая загрузка на реальной машине и первая запись в список проверенного оборудования
-- [ ] Семейство mlock (mlock, mlock2, munlock, mlockall, munlockall): populate страниц и лимит RLIMIT_MEMLOCK
 
 ## Дальше
 

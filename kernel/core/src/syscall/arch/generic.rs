@@ -77,6 +77,7 @@ macro_rules! import_generic_syscall_entries {
             memfd_create::sys_memfd_create,
             mkdir::sys_mkdirat,
             mknod::sys_mknodat,
+            mlock::{sys_mlock, sys_mlock2, sys_mlockall, sys_munlock, sys_munlockall},
             mmap::sys_mmap,
             mount::sys_mount,
             move_mount::sys_move_mount,
@@ -395,6 +396,10 @@ macro_rules! define_syscalls_with_generic_syscall_table {
             SYS_FADVISE64 = 223              => sys_fadvise64(args[..4]);
             SYS_MPROTECT = 226               => sys_mprotect(args[..3]);
             SYS_MSYNC = 227                  => sys_msync(args[..3]);
+            SYS_MLOCK = 228                  => sys_mlock(args[..2]);
+            SYS_MUNLOCK = 229                => sys_munlock(args[..2]);
+            SYS_MLOCKALL = 230               => sys_mlockall(args[..1]);
+            SYS_MUNLOCKALL = 231             => sys_munlockall(args[..0]);
             SYS_MADVISE = 233                => sys_madvise(args[..3]);
             SYS_RT_TGSIGQUEUEINFO = 240      => sys_rt_tgsigqueueinfo(args[..4]);
             SYS_ACCEPT4 = 242                => sys_accept4(args[..4]);
@@ -411,6 +416,7 @@ macro_rules! define_syscalls_with_generic_syscall_table {
             SYS_MEMFD_CREATE = 279           => sys_memfd_create(args[..2]);
             SYS_EXECVEAT = 281               => sys_execveat(args[..5], &mut user_ctx);
             SYS_MEMBARRIER = 283             => sys_membarrier(args[..2]);
+            SYS_MLOCK2 = 284                 => sys_mlock2(args[..3]);
             SYS_COPY_FILE_RANGE = 285        => sys_copy_file_range(args[..6]);
             SYS_PREADV2 = 286                => sys_preadv2(args[..6]);
             SYS_PWRITEV2 = 287               => sys_pwritev2(args[..6]);

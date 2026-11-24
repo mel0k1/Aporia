@@ -77,6 +77,7 @@ use super::{
     memfd_create::sys_memfd_create,
     mkdir::{sys_mkdir, sys_mkdirat},
     mknod::{sys_mknod, sys_mknodat},
+    mlock::{sys_mlock, sys_mlock2, sys_mlockall, sys_munlock, sys_munlockall},
     mmap::sys_mmap,
     mount::sys_mount,
     move_mount::sys_move_mount,
@@ -325,6 +326,10 @@ impl_syscall_nums_and_dispatch_fn! {
     SYS_SCHED_GETSCHEDULER = 145 => sys_sched_getscheduler(args[..1]);
     SYS_SCHED_GET_PRIORITY_MAX = 146 => sys_sched_get_priority_max(args[..1]);
     SYS_SCHED_GET_PRIORITY_MIN = 147 => sys_sched_get_priority_min(args[..1]);
+    SYS_MLOCK = 149            => sys_mlock(args[..2]);
+    SYS_MUNLOCK = 150          => sys_munlock(args[..2]);
+    SYS_MLOCKALL = 151         => sys_mlockall(args[..1]);
+    SYS_MUNLOCKALL = 152       => sys_munlockall(args[..0]);
     SYS_PIVOT_ROOT = 155       => sys_pivot_root(args[..2]);
     SYS_PRCTL = 157            => sys_prctl(args[..5]);
     SYS_ARCH_PRCTL = 158       => sys_arch_prctl(args[..2]);
@@ -426,6 +431,7 @@ impl_syscall_nums_and_dispatch_fn! {
     SYS_MEMFD_CREATE = 319     => sys_memfd_create(args[..2]);
     SYS_EXECVEAT = 322         => sys_execveat(args[..5], &mut user_ctx);
     SYS_MEMBARRIER = 324       => sys_membarrier(args[..2]);
+    SYS_MLOCK2 = 325           => sys_mlock2(args[..3]);
     SYS_COPY_FILE_RANGE = 326  => sys_copy_file_range(args[..6]);
     SYS_PREADV2 = 327          => sys_preadv2(args[..6]);
     SYS_PWRITEV2 = 328         => sys_pwritev2(args[..6]);
