@@ -18,11 +18,11 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - run: rustup toolchain install
-      - run: cargo fmt --check --all
-      - run: cargo fmt --check --manifest-path osdk/Cargo.toml
-      - run: cargo fmt --check --manifest-path tools/sctrace/Cargo.toml
-      - run: cargo fmt --check --manifest-path kernel/libs/comp-sys/cargo-component/Cargo.toml
-      - run: cargo fmt --check --manifest-path kernel/libs/comp-sys/controlled/Cargo.toml
-      - run: cargo fmt --check --manifest-path kernel/libs/comp-sys/component/Cargo.toml
-      - run: cargo fmt --check --manifest-path kernel/libs/comp-sys/component-macro/Cargo.toml
+      - run: rustup toolchain install $(rg -o 'channel = "(.+)"' -r '$1' rust-toolchain.toml) --profile minimal --component rustfmt
+      - run: cargo +$(rg -o 'channel = "(.+)"' -r '$1' rust-toolchain.toml) fmt --check --all
+      - run: cargo +$(rg -o 'channel = "(.+)"' -r '$1' rust-toolchain.toml) fmt --check --manifest-path osdk/Cargo.toml
+      - run: cargo +$(rg -o 'channel = "(.+)"' -r '$1' rust-toolchain.toml) fmt --check --manifest-path tools/sctrace/Cargo.toml
+      - run: cargo +$(rg -o 'channel = "(.+)"' -r '$1' rust-toolchain.toml) fmt --check --manifest-path kernel/libs/comp-sys/cargo-component/Cargo.toml
+      - run: cargo +$(rg -o 'channel = "(.+)"' -r '$1' rust-toolchain.toml) fmt --check --manifest-path kernel/libs/comp-sys/controlled/Cargo.toml
+      - run: cargo +$(rg -o 'channel = "(.+)"' -r '$1' rust-toolchain.toml) fmt --check --manifest-path kernel/libs/comp-sys/component/Cargo.toml
+      - run: cargo +$(rg -o 'channel = "(.+)"' -r '$1' rust-toolchain.toml) fmt --check --manifest-path kernel/libs/comp-sys/component-macro/Cargo.toml
