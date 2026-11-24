@@ -1,3 +1,7 @@
+//! This module implements the CPU load average calculation.
+//!
+//! Reference: <https://github.com/torvalds/linux/blob/46132e3/kernel/sched/loadavg.c>
+
 use core::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
 use aster_util::fixed_point::FixedU32;
@@ -6,21 +10,39 @@ use ostd::{
     timer::{self, TIMER_FREQ},
 };
 
+/// Fixed-point representation of the load average.
+///
+/// This is an equivalent of an u32 with 21 bits for the integer part and 11 bits for the fractional part.
 pub(crate) type LoadAvgFixed = FixedU32<11>;
 
+/// 5 sec intervals
 const LOAD_FREQ: u64 = 5 * TIMER_FREQ + 1;
+/// 1/exp(5sec/1min) as fixed-point
 const EXP_1: LoadAvgFixed = LoadAvgFixed::from_raw(1884);
+/// 1/exp(5sec/5min)
 const EXP_5: LoadAvgFixed = LoadAvgFixed::from_raw(2014);
+/// 1/exp(5sec/15min)
 const EXP_15: LoadAvgFixed = LoadAvgFixed::from_raw(2037);
 
+/// Load average of all CPU cores.
+///
+/// The load average is calculated as an exponential moving average of the load
+/// over the last 1, 5, and 15 minutes.
 static LOAD_AVG: RwLock<[LoadAvgFixed; 3], LocalIrqDisabled> = RwLock::new([LoadAvgFixed::ZERO; 3]);
 
+/// Next time the load average will be updated (in jiffies).
 static LOAD_AVG_NEXT_UPDATE: AtomicU64 = AtomicU64::new(0);
 
+/// Returns the calculated load average of the system.
 pub(crate) fn get_loadavg() -> [LoadAvgFixed; 3] {
     *LOAD_AVG.read()
 }
 
+/// Updates the load average of the system.
+///
+/// This function should be called periodically to update the load average.
+/// The `get_load` function should return the load (the number of queued tasks) of the system.
+/// See `sched::stats::scheduler_stats::set_stats_from_scheduler()` for an example.
 pub(crate) fn update_loadavg<F>(get_load: F)
 where
     F: Fn() -> u32,

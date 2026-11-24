@@ -1,3 +1,13 @@
+//! The remove recipes: the shared unlink/rmdir recipe on [`OverlayInode`],
+//! parameterized by [`RemoveKind`].
+//!
+//! An unlink or rmdir removes a name from the merged view: afterwards that name resolves
+//! negatively for every lookup, while the lower layers keep whatever objects they held.
+//!
+//! Where the upper entry is the name's only witness, the removal deletes it outright; everywhere
+//! else a published whiteout hides the name, with the upper directory first replaced through a
+//! prepared empty workdir temp whenever it still holds entries.
+
 use crate::{
     fs::{
         file::InodeType,
@@ -22,19 +32,31 @@ enum RemoveKind {
     Rmdir,
 }
 
+/// Records the action a removal performs: one variant per upper state that survives the gates.
 #[derive(Clone, Copy, Debug)]
 enum RemoveAction {
+    /// Applies where the upper entry is the name's only witness: the removal deletes it.
     DeletePureUpper,
+    /// Applies where the upper holds no entry: a whiteout hides the name the lower layers carry.
     WhiteoutLowerOnly,
+    /// Applies where the upper entry is not the name's only witness: a whiteout must displace it.
     ReplaceUpperWithWhiteout,
 }
 
+/// Fixes the projection and the name of one removal as one pair.
+///
+/// It is built inside each step that needs it, never carried across a lock boundary, and holds no
+/// layer fact, so nothing it pairs can go stale while the locks are taken.
 struct RemoveTarget {
+    /// Holds the name's fresh projection, resolved by this request's own lookup.
     inode: Arc<OverlayInode>,
+    /// Carries the name, derived once from the caller's dentry and owned here.
     name: String,
 }
 
 impl OverlayInode {
+    /// Serves as the unlink entry the VFS calls: it resolves the removed child's parent and runs
+    /// the removal.
     pub(in super::super) fn unlink_impl(&self, child_dentry: &Dentry) -> Result<()> {
         let parent_dentry = child_dentry
             .parent()
@@ -44,6 +66,8 @@ impl OverlayInode {
         self.remove_target(child_dentry, RemoveKind::Unlink)
     }
 
+    /// Serves as the rmdir entry the VFS calls: it resolves the removed child's parent and runs
+    /// the removal.
     pub(in super::super) fn rmdir_impl(&self, child_dentry: &Dentry) -> Result<()> {
         let parent_dentry = child_dentry
             .parent()
@@ -53,6 +77,10 @@ impl OverlayInode {
         self.remove_target(child_dentry, RemoveKind::Rmdir)
     }
 
+    /// Answers the verdicts before the parent is promoted.
+    ///
+    /// A doomed removal pays no copy-up. The name keeps the family's historical `removal` infix,
+    /// its one spelling exception.
     fn refuse_removal_early(&self, child_dentry: &Dentry, kind: RemoveKind) -> Result<()> {
         let target = self.resolve_remove_target(child_dentry)?;
         let target_guard = target.inode.lock();
@@ -60,6 +88,7 @@ impl OverlayInode {
         Ok(())
     }
 
+    /// Sends the removal of one name to the arm its verdict names.
     fn remove_target(&self, child_dentry: &Dentry, kind: RemoveKind) -> Result<()> {
         let mut dir_guard = self.lock();
         let target = self.resolve_remove_target(child_dentry)?;
@@ -81,6 +110,7 @@ impl OverlayInode {
             Lookup::Positive(inode) => inode,
             Lookup::Negative(_) => return Err(errno!(ENOENT)),
         };
+
         if inode.is_stale_upper_target(child_dentry) {
             return Err(errno!(
                 ESTALE,
@@ -90,6 +120,7 @@ impl OverlayInode {
         Ok(RemoveTarget { inode, name })
     }
 
+    /// Decides the action one removal performs from the target's upper state and its lower probe.
     fn decide_remove_action(
         &self,
         target: &RemoveTarget,
@@ -99,6 +130,7 @@ impl OverlayInode {
         let fs = self.fs_arc();
         let namespace = fs.policy().xattr_namespace();
         let target_upper = target.inode.upper.get();
+
         let lower_positive = if target_upper.is_some() {
             match self.lower_entry(&target.name) {
                 Ok(found) => found.is_some(),
@@ -124,10 +156,8 @@ impl OverlayInode {
                     "a non-directory cannot be removed as a directory"
                 ));
             }
-            if lower_positive || !is_pure_upper {
-                if !target.inode.is_empty_dir(target_guard)? {
-                    return Err(errno!(ENOTEMPTY, "the overlay directory is not empty"));
-                }
+            if (lower_positive || !is_pure_upper) && !target.inode.is_empty_dir(target_guard)? {
+                return Err(errno!(ENOTEMPTY, "the overlay directory is not empty"));
             }
         } else if target.inode.type_().is_directory() {
             return Err(errno!(EISDIR, "a directory cannot be unlinked"));
@@ -149,6 +179,7 @@ impl OverlayInode {
         })
     }
 
+    /// Deletes the upper entry itself, all a removal needs where the upper alone holds the name.
     fn delete_pure_upper(
         &self,
         target: &RemoveTarget,
@@ -158,6 +189,7 @@ impl OverlayInode {
         let fs = self.fs_arc();
         let target_upper = target.inode.upper.get();
         let upper_parent = self.writable_upper();
+
         if kind == RemoveKind::Rmdir {
             let target_upper_dir = target_upper.ok_or_else(|| {
                 errno!(
@@ -175,10 +207,12 @@ impl OverlayInode {
         };
         result.map_err(translate_stale_upper_enoent)?;
         target.inode.mark_name_taken();
+
         **dir_guard = None;
         Ok(())
     }
 
+    /// Publishes a whiteout at a name the upper holds no entry for.
     fn whiteout_lower_only(
         &self,
         target: &RemoveTarget,
@@ -189,11 +223,13 @@ impl OverlayInode {
         let published = fs.publish_whiteout(upper_parent, &target.name, None);
         if published.is_ok() {
             target.inode.mark_name_taken();
+
             **dir_guard = None;
         }
         published
     }
 
+    /// Replaces the upper entry behind the name with a whiteout.
     fn replace_upper_with_whiteout(
         &self,
         target: &RemoveTarget,
@@ -246,11 +282,14 @@ impl OverlayInode {
             .map_err(translate_stale_upper_enoent);
         if cleared || published.is_ok() {
             target.inode.mark_name_taken();
+
             **dir_guard = None;
         }
         published
     }
 
+    /// Gives the name an empty copy of the occupant to hold it, the real directory landing in the
+    /// workdir, outside the merged view.
     fn exchange_occupant_for_empty_copy(
         &self,
         target: &RemoveTarget,
@@ -260,6 +299,7 @@ impl OverlayInode {
     ) -> Result<()> {
         let fs = self.fs_arc();
         let namespace = fs.policy().xattr_namespace();
+
         if !fs.policy().can_store_private_xattr() {
             return Err(errno!(
                 EOPNOTSUPP,
@@ -268,6 +308,7 @@ impl OverlayInode {
             ));
         }
         OverlayXattrType::Opaque.set_value_on(empty_copy.dentry(), namespace, None)?;
+
         self.copy_eligible_xattrs(occupant, &empty_copy, true)?;
         occupant.copy_metadata_to(empty_copy.dentry())?;
         occupant.copy_timestamps_to(empty_copy.dentry())?;

@@ -1,3 +1,5 @@
+//! Platform-Level Interrupt Controller (PLIC) for RISC-V.
+
 use alloc::{boxed::Box, collections::btree_map::BTreeMap, vec::Vec};
 
 use bit_field::BitField;
@@ -9,10 +11,12 @@ use crate::{
     irq::IrqLine,
 };
 
+/// The Platform-Level Interrupt Controller (PLIC) for RISC-V.
 pub(super) struct Plic {
     phandle: u32,
     io_mem: IoMem<Sensitive>,
     hart_to_target_mapping: BTreeMap<u32, u32>,
+    /// Per-Plic interrupt-source-to-IRQ-number mappings.
     interrupt_number_mappings: Box<[Option<u8>]>,
 }
 
@@ -25,23 +29,28 @@ impl Plic {
         self.interrupt_number_mappings.len() as u32
     }
 
+    /// Sets the priority of an interrupt source.
     pub(super) fn set_priority(&mut self, interrupt_source: u32, priority: u32) {
         assert!(interrupt_source > 0 && interrupt_source < self.num_interrupt_sources());
 
         let offset = Self::PRIORITY_OFFSET + 4 * interrupt_source as usize;
+
         unsafe { self.io_mem.write_once(offset, &priority) };
     }
 
+    /// Checks if an interrupt source is pending.
     pub(super) fn is_pending(&self, interrupt_source: u32) -> bool {
         assert!(interrupt_source > 0 && interrupt_source < self.num_interrupt_sources());
 
         let word_index = interrupt_source as usize / 32;
         let bit_index = interrupt_source as usize % 32;
         let offset = Self::PENDING_OFFSET + 4 * word_index;
+
         let value = unsafe { self.io_mem.read_once::<u32>(offset) };
         (value >> bit_index) & 1 != 0
     }
 
+    /// Sets whether an interrupt source is enabled for a specific target (hart).
     pub(super) fn set_interrupt_enabled(&self, hart: u32, interrupt_source: u32, enabled: bool) {
         assert!(interrupt_source > 0 && interrupt_source < self.num_interrupt_sources());
 
@@ -55,6 +64,7 @@ impl Plic {
         unsafe { self.io_mem.write_once(offset, &value) };
     }
 
+    /// Sets the threshold for a specific target (hart).
     pub(super) fn set_threshold(&self, hart: u32, threshold: u32) {
         let target = *self.hart_to_target_mapping.get(&hart).unwrap();
         let offset = Self::THRESHOLD_OFFSET + Self::THRESHOLD_STRIDE * target as usize;
@@ -62,6 +72,7 @@ impl Plic {
         unsafe { self.io_mem.write_once(offset, &threshold) };
     }
 
+    /// Claims the highest priority pending interrupt for a specific target (hart).
     pub(super) fn claim_interrupt(&self, hart: u32) -> u32 {
         let target = *self.hart_to_target_mapping.get(&hart).unwrap();
         let offset = Self::CLAIM_COMPLETE_OFFSET + Self::CLAIM_COMPLETE_STRIDE * target as usize;
@@ -69,6 +80,7 @@ impl Plic {
         unsafe { self.io_mem.read_once::<u32>(offset) }
     }
 
+    /// Completes the interrupt for a specific target (hart) and interrupt source.
     pub(super) fn complete_interrupt(&self, hart: u32, interrupt_source: u32) {
         assert!(interrupt_source > 0 && interrupt_source < self.num_interrupt_sources());
 
@@ -78,10 +90,12 @@ impl Plic {
         unsafe { self.io_mem.write_once(offset, &interrupt_source) };
     }
 
+    /// Gets an iterator of harts managed by this PLIC.
     pub(super) fn managed_harts(&self) -> impl Iterator<Item = u32> + use<'_> {
         self.hart_to_target_mapping.keys().copied()
     }
 
+    /// Initializes the PLIC.
     pub(super) fn init(&mut self) {
         for interrupt_source in 1..self.num_interrupt_sources() {
             self.set_priority(interrupt_source, 0);

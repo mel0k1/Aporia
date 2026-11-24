@@ -132,6 +132,7 @@ fn read_cstring_vec(
     Err(errno!(E2BIG, "there are too many arguments"))
 }
 
+/// Prepares credential changes.
 fn prepare_exec_cred(elf_path: &Path, ctx: &Context) -> Result<ExecCred> {
     let credentials = ctx.posix_thread.credentials();
     if elf_path
@@ -201,7 +202,9 @@ fn do_execve_no_return(
     *posix_thread.thread_name().lock() = thread_name;
 
     unshare_and_reset_sigdispositions(process);
+
     *thread_local.sig_stack().borrow_mut() = SigStack::default();
+
     process.set_exit_signal(SIGCHLD);
 
     Ok(())
@@ -296,10 +299,12 @@ fn set_cpu_context(
 
     user_context.set_instruction_pointer(elf_load_info.entry_point as _);
     debug!("entry_point: 0x{:x}", elf_load_info.entry_point);
+
     user_context.set_stack_pointer(elf_load_info.user_stack_top as _);
     debug!("user stack top: 0x{:x}", elf_load_info.user_stack_top);
 }
 
+/// Applies prepared credentials.
 fn apply_exec_cred(
     process: &Process,
     credentials: &Credentials<ReadWriteOp>,

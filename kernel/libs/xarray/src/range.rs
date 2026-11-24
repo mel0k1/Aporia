@@ -2,6 +2,12 @@ use ostd::sync::non_null::NonNullPtr;
 
 use crate::{cursor::Cursor, mark::NoneMark};
 
+/// An iterator over a range of entries in an [`XArray`].
+///
+/// The typical way to obtain a `Range` instance is to call [`XArray::range`].
+///
+/// [`XArray`]: super::XArray
+/// [`XArray::range`]: super::XArray::range
 pub struct Range<'a, P, M = NoneMark>
 where
     P: NonNullPtr + Send + Sync,

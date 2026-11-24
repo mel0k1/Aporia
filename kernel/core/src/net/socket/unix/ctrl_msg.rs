@@ -76,6 +76,9 @@ impl Debug for FileMessage {
     }
 }
 
+/// The maximum number of the file descriptors in the control messages.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.15/source/include/net/scm.h#L18>.
 const MAX_NR_FILES: usize = 253;
 
 impl FileMessage {
@@ -126,8 +129,10 @@ impl FileMessage {
 
         let current = Task::current().unwrap();
         let file_table = current.as_thread_local().unwrap().borrow_file_table();
+
         for file in self.files[..nfiles].iter() {
             let fd = file_table.lock_and_insert(file.clone(), FdFlags::empty())?;
+
             writer.write_val::<i32>(&(fd.into()))?;
         }
 
@@ -172,6 +177,9 @@ impl CredMessage {
     }
 }
 
+/// Control message types.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.13/source/include/linux/socket.h#L178>.
 #[expect(non_camel_case_types)]
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, TryFromInt)]
@@ -182,6 +190,15 @@ enum CControlType {
     SCM_PIDFD = 4,
 }
 
+/// Auxiliary data associated with UNIX messages.
+///
+/// In UNIX sockets, one can send payload bytes with multiple control messages. If these control
+/// messages need to be sent to a remote endpoint, they are packaged in this type and transmitted.
+///
+/// We use this type instead of transmitting control messages directly to the remote endpoint
+/// because control messages of the same type (e.g., files) can be merged and missing control
+/// messages of certain types (e.g., credentials) can be supplied automatically according to socket
+/// option settings.
 #[derive(Default)]
 pub(super) struct AuxiliaryData {
     files: Vec<Arc<dyn FileLike>>,
@@ -189,6 +206,7 @@ pub(super) struct AuxiliaryData {
 }
 
 impl AuxiliaryData {
+    /// Builds the auxiliary data from the control messages.
     pub(super) fn from_control(ctrl_msgs: Vec<ControlMessage>) -> Result<Self> {
         let mut files = Vec::new();
         let mut cred = None;
@@ -233,12 +251,14 @@ impl AuxiliaryData {
         Ok(Self { files, cred })
     }
 
+    /// Fills the current credentials if there are no credentials.
     pub(super) fn fill_cred(&mut self) {
         if self.cred.is_none() {
             self.cred = Some(SocketCred::<ReadOp>::new_current());
         }
     }
 
+    /// Generates the control messages from the auxiliary data.
     pub(super) fn generate_control(
         &mut self,
         behavior: ReceiveBehavior,
@@ -270,10 +290,15 @@ impl AuxiliaryData {
         ctrl_msgs
     }
 
+    /// Returns whether the auxiliary data contains nothing.
     pub(super) fn is_empty(&self) -> bool {
         self.files.is_empty() && self.cred.is_none()
     }
 
+    /// Returns whether the auxiliary data can be treated as a subset of the other one.
+    ///
+    /// In stream sockets, we can receive more bytes at once if the current auxiliary data is a
+    /// subset of the subsequent auxiliary data.
     pub(super) fn is_subset_of(&self, other: &Self, is_pass_cred: bool) -> bool {
         if !self.files.is_empty() {
             return false;

@@ -1,3 +1,13 @@
+//! This module implements the `setns` syscall.
+//!
+//! This syscall reassociates the calling thread with a namespace specified by a
+//! file descriptor. The `flags` argument determines which type of namespace can be
+//! joined.
+//!
+//! The file descriptor `fd` can refer to:
+//! 1. A namespace file from `/proc/[pid]/ns/`.
+//! 2. A `PidFile` opened by `pidfd_open` or by opening `/proc/[pid]` directory.
+
 use crate::{
     fs::{
         cgroupfs::CgroupNamespace,

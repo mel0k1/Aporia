@@ -31,11 +31,13 @@ use crate::{
     transport::{ConfigManager, DeviceTransport},
 };
 
+/// The number of virtio block devices, used to assign minor device numbers.
 static NR_BLOCK_DEVICE: AtomicU32 = AtomicU32::new(0);
 
 #[derive(Debug)]
 pub struct BlockDevice {
     device: Arc<DeviceInner>,
+    /// The software staging queue.
     queue: BioRequestSingleQueue,
     id: DeviceId,
     name: String,
@@ -43,6 +45,10 @@ pub struct BlockDevice {
 }
 
 impl BlockDevice {
+    /// Returns the formatted device name.
+    ///
+    /// The device name starts at "vda". The 26th device is "vdz" and the 27th is "vdaa".
+    /// The last one for two lettered suffix is "vdzz" which is followed by "vdaaa".
     fn formatted_device_name(mut index: u32) -> String {
         const VIRTIO_DISK_PREFIX: &str = "vd";
 
@@ -61,6 +67,7 @@ impl BlockDevice {
         name
     }
 
+    /// Creates a new VirtIO-Block driver and registers it.
     pub(crate) fn init(device_transport: DeviceTransport) -> Result<(), VirtioDeviceError> {
         let device = DeviceInner::init(device_transport)?;
 
@@ -73,6 +80,7 @@ impl BlockDevice {
 
         let block_device = Arc::new(BlockDevice {
             device,
+
             queue: BioRequestSingleQueue::with_max_nr_segments_per_bio(
                 (DeviceInner::QUEUE_SIZE - 2) as usize,
             ),
@@ -87,6 +95,8 @@ impl BlockDevice {
         Ok(())
     }
 
+    /// Dequeues a `BioRequest` from the software staging queue and
+    /// processes the request.
     pub fn handle_requests(&self) {
         let request = self.queue.dequeue();
         info!("Handle Request: {:?}", request);
@@ -97,6 +107,7 @@ impl BlockDevice {
         }
     }
 
+    /// Negotiate features for the device specified bits 0~23
     pub(crate) fn negotiate_features(device_features: u64) -> u64 {
         BlockFeatures::negotiated_with_device(device_features).bits()
     }
@@ -142,6 +153,7 @@ struct DeviceInner {
 impl DeviceInner {
     const QUEUE_SIZE: u16 = 64;
 
+    /// Creates and inits the device.
     fn init(mut device_transport: DeviceTransport) -> Result<Arc<Self>, VirtioDeviceError> {
         let config_manager = VirtioBlockConfig::new_manager(device_transport.as_ref());
 
@@ -210,8 +222,10 @@ impl DeviceInner {
         Ok(device)
     }
 
+    /// Handles the IRQ issued from the device.
     fn handle_irq(&self) {
         info!("block device handle IRQ");
+
         loop {
             let complete_request = {
                 let mut queue = self.queue.lock();
@@ -260,6 +274,7 @@ impl DeviceInner {
         info!("block device config space change");
     }
 
+    /// Reads data from the device, this function is non-blocking.
     fn read(&self, bio_request: BioRequest) {
         let id = self.id_allocator.alloc();
         let req_slice = {
@@ -300,6 +315,7 @@ impl DeviceInner {
         };
 
         let num_used_descs = outputs.len() + 1;
+
         if num_used_descs > Self::QUEUE_SIZE as usize {
             panic!("The request size surpasses the queue size");
         }
@@ -325,6 +341,7 @@ impl DeviceInner {
         }
     }
 
+    /// Writes data to the device, this function is non-blocking.
     fn write(&self, bio_request: BioRequest) {
         let id = self.id_allocator.alloc();
         let req_slice = {
@@ -369,6 +386,7 @@ impl DeviceInner {
         };
 
         let num_used_descs = inputs.len() + 1;
+
         if num_used_descs > Self::QUEUE_SIZE as usize {
             panic!("The request size surpasses the queue size");
         }
@@ -393,6 +411,8 @@ impl DeviceInner {
         }
     }
 
+    /// Flushes any cached data from the guest to the persistent storage on the host.
+    /// This will be ignored if the device doesn't support the `VIRTIO_BLK_F_FLUSH` feature.
     fn flush(&self, bio_request: BioRequest) {
         if !self.features.contains(BlockFeatures::FLUSH) {
             bio_request.into_bios().for_each(|bio| {
@@ -445,6 +465,7 @@ impl DeviceInner {
     }
 }
 
+/// A submitted bio request for callback.
 #[derive(Debug)]
 struct SubmittedRequest {
     id: u16,
@@ -457,6 +478,7 @@ impl SubmittedRequest {
     }
 }
 
+/// VirtIOBlock request.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 struct BlockReq {
@@ -467,6 +489,7 @@ struct BlockReq {
 
 const REQ_SIZE: usize = size_of::<BlockReq>();
 
+/// Response of a VirtIOBlock request.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 struct BlockResp {

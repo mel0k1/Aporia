@@ -1,3 +1,11 @@
+//! Big zImage PE/COFF header generation.
+//!
+//! The definition of the PE/COFF header is in the Microsoft PE/COFF specification:
+//! <https://learn.microsoft.com/en-us/windows/win32/debug/pe-format>
+//!
+//! The reference to the Linux PE header definition:
+//! <https://github.com/torvalds/linux/blob/master/include/linux/pe.h>
+
 use std::vec;
 
 use align_ext::AlignExt;
@@ -95,6 +103,7 @@ struct Pe32PlusOptHdr {
 #[repr(C, packed)]
 #[derive(Clone, Copy, Pod, Serialize)]
 struct Pe32PlusOptDataDirEnt {
+    /// The RVA is the address of the table relative to the base address of the image when the table is loaded.
     rva: u32,
     size: u32,
 }
@@ -105,6 +114,11 @@ impl Pe32PlusOptDataDirEnt {
     }
 }
 
+/// The data directories in the PE32+ optional header.
+///
+/// The `data_dirs` number field in the PE32+ optional header is just an illusion that you can choose to have a
+/// subset of the data directories. The actual number of data directories is fixed to 16 and you can only ignore
+/// data directories at the end of the list. We ignore data directories after the 8th as what Linux do.
 #[repr(C, packed)]
 #[derive(Clone, Copy, Pod, Serialize)]
 struct Pe32PlusOptDataDirs {
@@ -230,13 +244,17 @@ pub(crate) fn make_pe_coff_header(setup_elf: &[u8]) -> Vec<u8> {
     let sec_hdr_vec = vec![text, rodata, data];
 
     bin.extend_from_slice(&MZ_MAGIC.to_le_bytes());
+
     bin.extend_from_slice(&[0x0; 0x3c - 0x2]);
+
     bin.extend_from_slice(&(0x3cu32 + size_of::<u32>() as u32).to_le_bytes());
 
     pe_hdr.sections = sec_hdr_vec.len() as u16;
     bin.extend_from_slice(pe_hdr.as_bytes());
+
     bin.extend_from_slice(pe_opt_hdr.as_bytes());
     bin.extend_from_slice(pe_opt_hdr_data_dirs.as_bytes());
+
     for sec_hdr in sec_hdr_vec {
         bin.extend_from_slice(sec_hdr.as_bytes());
     }
@@ -313,6 +331,11 @@ impl PeSectionHdr {
 }
 
 struct AllPeSectionHdrs {
+    /// The base for all virtual addresses in the PE/COFF header.
+    ///
+    /// We need this because we want to set `image_base` in `Pe32PlusOptHdr` to zero. Otherwise
+    /// some UEFI firmware will refuse to load the image. (FIXME: This is what Linux does, but I
+    /// can't find any specification that says we have to do this).
     base: usize,
     text: PeSectionHdr,
     rodata: PeSectionHdr,

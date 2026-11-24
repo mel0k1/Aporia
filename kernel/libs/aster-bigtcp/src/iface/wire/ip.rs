@@ -116,6 +116,7 @@ fn emit_v4(
         ver_ihl: VersionAndIhl::new(Version::V4, size_of::<HeaderV4>()),
         dscp_ecn: DscpAndEcn::new(Dscp::Cs0, Ecn::NotEct),
         totlen: ((ipv4_repr.payload_len + size_of::<HeaderV4>()) as u16).into(),
+
         ident: 0u16.into(),
         flags_frag: FlagsAndFragmentOffset::new(Flags::DF, 0),
         ttl: ipv4_repr.hop_limit,

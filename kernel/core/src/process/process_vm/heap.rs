@@ -24,7 +24,9 @@ pub(crate) struct LockedHeap<'a> {
 
 #[derive(Clone, Debug)]
 struct HeapInner {
+    /// The size of the data segment, used for rlimit checking.
     data_segment_size: usize,
+    /// The heap range.
     heap_range: Range<Vaddr>,
 }
 
@@ -35,6 +37,7 @@ impl Heap {
         }
     }
 
+    /// Creates a new `Heap` with identical contents of an existing one.
     pub(super) fn fork_from(heap_guard: &LockedHeap) -> Self {
         let inner = heap_guard.inner.as_ref().expect("Heap is not initialized");
 
@@ -43,6 +46,7 @@ impl Heap {
         }
     }
 
+    /// Initializes and maps the heap virtual memory.
     pub(super) fn map_and_init_heap(
         &self,
         vmar: &Vmar,
@@ -80,12 +84,17 @@ impl Heap {
         Ok(())
     }
 
+    /// Locks the heap and returns a guard to access the heap information.
     pub(crate) fn lock(&self) -> LockedHeap<'_> {
         LockedHeap {
             inner: self.inner.lock(),
         }
     }
 
+    /// Modifies the end address of the heap.
+    ///
+    /// Returns the new heap end on success, or the current heap end on failure.
+    /// This behavior is consistent with the Linux `brk` syscall.
     pub(crate) fn modify_heap_end(
         &self,
         new_heap_end: Vaddr,
@@ -139,10 +148,12 @@ impl Heap {
 }
 
 impl LockedHeap<'_> {
+    /// Returns the lowest address of the heap.
     pub(crate) fn heap_low(&self) -> Vaddr {
         self.heap_range().start
     }
 
+    /// Returns the current heap range.
     pub(crate) fn heap_range(&self) -> &Range<Vaddr> {
         let inner = self.inner.as_ref().expect("Heap is not initialized");
 
@@ -150,6 +161,7 @@ impl LockedHeap<'_> {
     }
 }
 
+/// Checks whether the new heap range exceeds the data segment size limit.
 fn check_data_rlimit(
     data_segment_size: usize,
     new_heap_range: &Range<Vaddr>,

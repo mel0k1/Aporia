@@ -1,3 +1,5 @@
+//! Implementation of the locking protocol.
+
 use core::{marker::PhantomData, mem::ManuallyDrop, ops::Range, sync::atomic::Ordering};
 
 use align_ext::AlignExt;
@@ -66,6 +68,15 @@ pub(super) fn unlock_range<C: PageTableConfig>(cursor: &mut Cursor<'_, C>) {
     };
 }
 
+/// Finds and locks an intermediate page table node that covers the range.
+///
+/// If that node (or any of its ancestors) does not exist, we need to lock
+/// the parent and create it. After the creation the lock of the parent will
+/// be released and the new node will be locked.
+///
+/// If this function founds that a locked node is stray (because of racing with
+/// page table recycling), it will return `None`. The caller should retry in
+/// this case to lock the proper node.
 fn try_traverse_and_lock_subtree_root<'rcu, C: PageTableConfig>(
     pt: &PageTable<C>,
     guard: &'rcu dyn InAtomicMode,
@@ -85,6 +96,7 @@ fn try_traverse_and_lock_subtree_root<'rcu, C: PageTableConfig>(
         }
 
         let cur_pt_ptr = paddr_to_vaddr(cur_pt_addr) as *mut C::E;
+
         let cur_pte = unsafe { load_pte(cur_pt_ptr.add(start_idx), Ordering::Acquire) };
 
         match cur_pte.to_repr(cur_level) {
@@ -135,6 +147,12 @@ fn try_traverse_and_lock_subtree_root<'rcu, C: PageTableConfig>(
     Some(pt_guard)
 }
 
+/// Acquires the locks for the given range in the sub-tree rooted at the node.
+///
+/// `cur_node_va` must be the virtual address of the `cur_node`. The `va_range`
+/// must be within the range of the `cur_node`. The range must not be empty.
+///
+/// The function will forget all the [`PageTableGuard`] objects in the sub-tree.
 fn dfs_acquire_lock<C: PageTableConfig>(
     guard: &dyn InAtomicMode,
     cur_node: &mut PageTableGuard<'_, C>,
@@ -166,6 +184,12 @@ fn dfs_acquire_lock<C: PageTableConfig>(
     }
 }
 
+/// Releases the locks for the given range in the sub-tree rooted at the node.
+///
+/// # Safety
+///
+/// The caller must ensure that the nodes in the specified sub-tree are locked
+/// and all guards are forgotten.
 unsafe fn dfs_release_lock<'rcu, C: PageTableConfig>(
     guard: &'rcu dyn InAtomicMode,
     mut cur_node: PageTableGuard<'rcu, C>,
@@ -187,6 +211,7 @@ unsafe fn dfs_release_lock<'rcu, C: PageTableConfig>(
                 let child_node_va_end = child_node_va + page_size::<C>(cur_level);
                 let va_start = va_range.start.max(child_node_va);
                 let va_end = va_range.end.min(child_node_va_end);
+
                 unsafe { dfs_release_lock(guard, child_node, child_node_va, va_start..va_end) };
             }
             PteStateRef::Absent | PteStateRef::Mapped(_) => {}
@@ -194,6 +219,21 @@ unsafe fn dfs_release_lock<'rcu, C: PageTableConfig>(
     }
 }
 
+/// Marks all the nodes in the sub-tree rooted at the node as stray, and
+/// returns the num of pages mapped within the sub-tree.
+///
+/// It must be called upon the node after the node is removed from the parent
+/// page table. It also unlocks the nodes in the sub-tree.
+///
+/// This function returns the number of physical frames mapped in the sub-tree.
+///
+/// # Safety
+///
+/// The caller must ensure that all the nodes in the sub-tree are locked
+/// and all guards are forgotten.
+///
+/// This function must not be called upon a shared node, e.g., the second-
+/// top level nodes that the kernel space and user space share.
 pub(super) unsafe fn dfs_mark_stray_and_unlock<C: PageTableConfig>(
     rcu_guard: &dyn InAtomicMode,
     mut sub_tree: PageTableGuard<C>,
@@ -211,6 +251,7 @@ pub(super) unsafe fn dfs_mark_stray_and_unlock<C: PageTableConfig>(
         match child.to_ref() {
             PteStateRef::PageTable(pt) => {
                 let locked_pt = unsafe { pt.make_guard_unchecked(rcu_guard) };
+
                 num_frames += unsafe { dfs_mark_stray_and_unlock(rcu_guard, locked_pt) };
             }
             PteStateRef::Absent | PteStateRef::Mapped(_) => {}

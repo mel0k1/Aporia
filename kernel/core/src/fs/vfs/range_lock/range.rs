@@ -1,7 +1,17 @@
 use crate::prelude::*;
 
+/// The maximum offset in a file.
 pub(crate) const OFFSET_MAX: usize = i64::MAX as usize;
 
+/// A range in a file.
+///
+/// The range is [start, end).
+/// The range is valid if start < end.
+/// The range is empty if start == end.
+/// The range is [0, OFFSET_MAX] if it is not set.
+/// The range is [start, OFFSET_MAX] if only start is set.
+/// The range is [0, end] if only end is set.
+/// The range is [start, end] if both start and end are set.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct FileRange {
     start: usize,
@@ -98,10 +108,15 @@ pub(crate) enum FileRangeChange {
     Shrunk,
 }
 
+/// The position of a range (say A) relative another overlapping range (say B).
 #[derive(Debug)]
 pub(crate) enum OverlapWith {
+    /// The position where range A is to the left of B (A.start <= B.start && A.end < B.end).
     ToLeft,
+    /// The position where range A is to the right of B (A.start > B.start && A.end >= B.end).
     ToRight,
+    /// The position where range A is in the middle of B (A.start > B.start && A.end < B.end).
     InMiddle,
+    /// The position where range A includes B (A.start <= B.start && A.end >= B.end).
     Includes,
 }

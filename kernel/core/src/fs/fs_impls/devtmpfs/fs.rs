@@ -1,3 +1,5 @@
+//! Filesystem registration and the singleton tmpfs backing for devtmpfs.
+
 use spin::Once;
 
 use crate::{

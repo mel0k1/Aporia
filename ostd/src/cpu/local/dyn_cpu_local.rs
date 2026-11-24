@@ -1,3 +1,5 @@
+//! Dynamically-allocated CPU-local objects.
+
 use core::{marker::PhantomData, mem::ManuallyDrop, ptr::NonNull};
 
 use bitvec::prelude::{BitVec, bitvec};
@@ -11,6 +13,21 @@ use crate::{
     util::id_set::Id,
 };
 
+/// A dynamically-allocated storage for a CPU-local variable of type `T`.
+///
+/// Such a CPU-local storage should be allocated and deallocated by
+/// [`DynCpuLocalChunk`], not directly. Dropping it without deallocation
+/// will cause panic.
+///
+/// When dropping a `CpuLocal<T, DynamicStorage<T>>`, we have no way to know
+/// which `DynCpuLocalChunk` the CPU-local object was originally allocated
+/// from. Therefore, we rely on the user to correctly manage the corresponding
+/// `DynCpuLocalChunk`, ensuring that both allocation and deallocation of
+/// `CpuLocal<T, DynamicStorage<T>>` occur within the same chunk.
+///
+/// To properly deallocate the CPU-local object, the user must explicitly call
+/// the appropriate `DynCpuLocalChunk`'s `try_dealloc<T>()`. Otherwise,
+/// dropping it directly will cause a panic.
 pub struct DynamicStorage<T>(NonNull<T>);
 
 unsafe impl<T> AnyStorage<T> for DynamicStorage<T> {
@@ -26,6 +43,9 @@ unsafe impl<T> AnyStorage<T> for DynamicStorage<T> {
 }
 
 impl<T> DynamicStorage<T> {
+    /// Gets the `mut` pointer for the object on a target CPU.
+    ///
+    /// This method is intended for use when initializing or dropping the storage.
     fn get_mut_ptr_on_target(&mut self, cpu: CpuId) -> *mut T {
         self.get_ptr_on_target(cpu).cast_mut()
     }
@@ -52,10 +72,27 @@ impl<T: Sync + alloc::fmt::Debug + 'static> alloc::fmt::Debug for CpuLocal<T, Dy
 }
 
 impl<T> CpuLocal<T, DynamicStorage<T>> {
+    /// Creates a new dynamically-allocated CPU-local object, and
+    /// initializes it with `init_values`.
+    ///
+    /// The given `ptr` points to the variable located on the BSP.
+    ///
+    /// Please do not call this function directly. Instead, use
+    /// [`DynCpuLocalChunk::alloc`].
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that
+    ///  - the new per-CPU object belongs to an existing
+    ///    [`DynCpuLocalChunk`], and does not overlap with any
+    ///    existing CPU-local object;
+    ///  - the `ITEM_SIZE` of the [`DynCpuLocalChunk`] satisfies
+    ///    the layout requirement of `T`.
     unsafe fn __new_dynamic(ptr: *mut T, init_values: &mut impl FnMut(CpuId) -> T) -> Self {
         let mut storage = DynamicStorage(NonNull::new(ptr).unwrap());
         for cpu in all_cpus() {
             let ptr = storage.get_mut_ptr_on_target(cpu);
+
             unsafe {
                 core::ptr::write(ptr, init_values(cpu));
             }
@@ -70,16 +107,23 @@ impl<T> CpuLocal<T, DynamicStorage<T>> {
 
 const CHUNK_SIZE: usize = PAGE_SIZE;
 
+/// Footer metadata to describe a `SSTable`.
 #[derive(Clone, Copy, Debug)]
 struct DynCpuLocalMeta;
 crate::impl_frame_meta_for!(DynCpuLocalMeta);
 
+/// Manages dynamically-allocated CPU-local chunks.
+///
+/// Each CPU owns a chunk of size `CHUNK_SIZE`, and the chunks are laid
+/// out contiguously in the order of CPU IDs. Per-CPU variables lie within
+/// the chunks.
 pub struct DynCpuLocalChunk<const ITEM_SIZE: usize> {
     segment: ManuallyDrop<Segment<DynCpuLocalMeta>>,
     bitmap: BitVec,
 }
 
 impl<const ITEM_SIZE: usize> DynCpuLocalChunk<ITEM_SIZE> {
+    /// Creates a new dynamically-allocated CPU-local chunk.
     pub fn new() -> Result<Self> {
         let total_chunk_size = CHUNK_SIZE * num_cpus();
         let segment = FrameAllocOptions::new()
@@ -95,10 +139,15 @@ impl<const ITEM_SIZE: usize> DynCpuLocalChunk<ITEM_SIZE> {
         })
     }
 
+    /// Returns a pointer to the local chunk owned by the BSP.
     fn start_vaddr(&self) -> Vaddr {
         paddr_to_vaddr(self.segment.paddr())
     }
 
+    /// Allocates a CPU-local object from the chunk, and
+    /// initializes it with `init_values`.
+    ///
+    /// Returns `None` if the chunk is full.
     pub fn alloc<T>(
         &mut self,
         init_values: &mut impl FnMut(CpuId) -> T,
@@ -109,12 +158,17 @@ impl<const ITEM_SIZE: usize> DynCpuLocalChunk<ITEM_SIZE> {
 
         let index = self.bitmap.first_zero()?;
         self.bitmap.set(index, true);
+
         unsafe {
             let vaddr = self.start_vaddr() + index * ITEM_SIZE;
             Some(CpuLocal::__new_dynamic(vaddr as *mut T, init_values))
         }
     }
 
+    /// Gets the index of a dynamically-allocated CPU-local object
+    /// within the chunk.
+    ///
+    /// Returns `None` if the object does not belong to the chunk.
     fn get_item_index<T>(&mut self, cpu_local: &CpuLocal<T, DynamicStorage<T>>) -> Option<usize> {
         let vaddr = cpu_local.storage.0.as_ptr() as Vaddr;
         let start_vaddr = self.start_vaddr();
@@ -129,6 +183,9 @@ impl<const ITEM_SIZE: usize> DynCpuLocalChunk<ITEM_SIZE> {
         Some(offset / ITEM_SIZE)
     }
 
+    /// Attempts to deallocate a previously allocated CPU-local object.
+    ///
+    /// Returns `Err(cpu_local)` if the object does not belong to this chunk.
     pub fn try_dealloc<T>(
         &mut self,
         mut cpu_local: CpuLocal<T, DynamicStorage<T>>,
@@ -140,6 +197,7 @@ impl<const ITEM_SIZE: usize> DynCpuLocalChunk<ITEM_SIZE> {
         self.bitmap.set(index, false);
         for cpu in all_cpus() {
             let ptr = cpu_local.storage.get_mut_ptr_on_target(cpu);
+
             unsafe {
                 core::ptr::drop_in_place(ptr);
             }
@@ -148,10 +206,12 @@ impl<const ITEM_SIZE: usize> DynCpuLocalChunk<ITEM_SIZE> {
         Ok(())
     }
 
+    /// Checks whether the chunk is full.
     pub fn is_full(&self) -> bool {
         self.bitmap.all()
     }
 
+    /// Checks whether the chunk is empty.
     pub fn is_empty(&self) -> bool {
         self.bitmap.not_any()
     }

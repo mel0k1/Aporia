@@ -39,6 +39,7 @@ impl DrmFile {
                 self.check_ioctl_access(DrmIoctlAccess::empty())?;
                 self.drm_drop_master(cmd)
             }
+
             cmd @ GemClose => {
                 self.check_gem_ioctl_access(DrmIoctlAccess::RENDER_ALLOW)?;
                 self.drm_gem_close(cmd)
@@ -55,6 +56,7 @@ impl DrmFile {
                 self.check_gem_ioctl_access(DrmIoctlAccess::empty())?;
                 self.drm_mode_destroy_dumb(cmd)
             }
+
             cmd @ SetClientCap => {
                 self.check_kms_ioctl_access(DrmIoctlAccess::empty())?;
                 self.drm_set_client_cap(cmd)
@@ -172,9 +174,13 @@ impl DrmFile {
 bitflags::bitflags! {
     #[derive(Clone, Copy, Debug)]
     struct DrmIoctlAccess: u32 {
+        /// Requires the client to be authenticated or the current master.
         const AUTH         = 1 << 0;
+        /// Requires the current file to be the DRM master.
         const MASTER       = 1 << 1;
+        /// Requires the caller to have `CAP_SYS_ADMIN`.
         const ROOT_ONLY    = 1 << 2;
+        /// Allows the ioctl on a render node.
         const RENDER_ALLOW = 1 << 3;
     }
 }

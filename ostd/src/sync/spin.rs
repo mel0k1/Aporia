@@ -9,9 +9,26 @@ use core::{
 use super::{LocalIrqDisabled, PreemptDisabled, guard::SpinGuardian};
 use crate::task::atomic_mode::AsAtomicModeGuard;
 
+/// A spin lock.
+///
+/// # Guard behavior
+///
+/// The type `G' specifies the guard behavior of the spin lock. While holding the lock,
+/// - if `G` is [`PreemptDisabled`], preemption is disabled;
+/// - if `G` is [`LocalIrqDisabled`], local IRQs are disabled.
+///
+/// The `G` can also be provided by other crates other than ostd,
+/// if it behaves similar like [`PreemptDisabled`] or [`LocalIrqDisabled`].
+///
+/// The guard behavior can be temporarily upgraded from [`PreemptDisabled`] to
+/// [`LocalIrqDisabled`] using the [`disable_irq`] method.
+///
+/// [`disable_irq`]: Self::disable_irq
 #[repr(transparent)]
 pub struct SpinLock<T: ?Sized, G = PreemptDisabled> {
     phantom: PhantomData<G>,
+    /// Only the last field of a struct may have a dynamically sized type.
+    /// That's why `SpinLockInner` is put in the last field.
     inner: SpinLockInner<T>,
 }
 
@@ -21,6 +38,7 @@ struct SpinLockInner<T: ?Sized> {
 }
 
 impl<T, G> SpinLock<T, G> {
+    /// Creates a new spin lock.
     pub const fn new(val: T) -> Self {
         let lock_inner = SpinLockInner {
             lock: AtomicBool::new(false),
@@ -34,14 +52,17 @@ impl<T, G> SpinLock<T, G> {
 }
 
 impl<T: ?Sized> SpinLock<T, PreemptDisabled> {
+    /// Converts the guard behavior from disabling preemption to disabling IRQs.
     pub fn disable_irq(&self) -> &SpinLock<T, LocalIrqDisabled> {
         let ptr = self as *const SpinLock<T, PreemptDisabled>;
         let ptr = ptr as *const SpinLock<T, LocalIrqDisabled>;
+
         unsafe { &*ptr }
     }
 }
 
 impl<T: ?Sized, G: SpinGuardian> SpinLock<T, G> {
+    /// Acquires the spin lock.
     pub fn lock(&self) -> SpinLockGuard<'_, T, G> {
         let inner_guard = G::guard();
         self.acquire_lock();
@@ -51,6 +72,7 @@ impl<T: ?Sized, G: SpinGuardian> SpinLock<T, G> {
         }
     }
 
+    /// Tries acquiring the spin lock immediately.
     pub fn try_lock(&self) -> Option<SpinLockGuard<'_, T, G>> {
         let inner_guard = G::guard();
         if self.try_acquire_lock() {
@@ -63,6 +85,10 @@ impl<T: ?Sized, G: SpinGuardian> SpinLock<T, G> {
         None
     }
 
+    /// Returns a mutable reference to the underlying data.
+    ///
+    /// This method is zero-cost: By holding a mutable reference to the lock, the compiler has
+    /// already statically guaranteed that access to the data is exclusive.
     pub fn get_mut(&mut self) -> &mut T {
         self.inner.val.get_mut()
     }
@@ -80,6 +106,9 @@ impl<T: ?Sized, G: SpinGuardian> SpinLock<T, G> {
             .is_ok()
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure that it has acquired the lock.
     unsafe fn release_lock(&self) {
         self.inner.lock.store(false, Ordering::Release);
     }
@@ -94,6 +123,7 @@ impl<T: ?Sized + fmt::Debug, G> fmt::Debug for SpinLock<T, G> {
 unsafe impl<T: ?Sized + Send, G> Send for SpinLock<T, G> {}
 unsafe impl<T: ?Sized + Send, G> Sync for SpinLock<T, G> {}
 
+/// A guard that provides exclusive access to the data protected by a [`SpinLock`].
 #[clippy::has_significant_drop]
 #[must_use]
 pub struct SpinLockGuard<'a, T: ?Sized, G: SpinGuardian> {

@@ -1,26 +1,49 @@
+//! Controlling the balancing between CPU-local free pools and the global free pool.
+
 use ostd::cpu::num_cpus;
 
 use super::{BuddyOrder, BuddySet, MAX_LOCAL_BUDDY_ORDER, OnDemandGlobalLock, lesser_order_of};
+
 use crate::chunk::split_to_order;
 
+/// Controls the expected size of cache for each CPU-local free pool.
+///
+/// The expected size will be the size of `GLOBAL_POOL` divided by the number
+/// of the CPUs, and then divided by this constant.
 const CACHE_EXPECTED_PORTION: usize = 2;
 
+/// Returns the expected size of cache for each CPU-local free pool.
+///
+/// It depends on the size of the global free pool.
 fn cache_expected_size(global_size: usize) -> usize {
     global_size / num_cpus() / CACHE_EXPECTED_PORTION
 }
 
+/// Controls the minimal size of cache for each CPU-local free pool.
+///
+/// The minimal will be the expected size divided by this constant.
 const CACHE_MINIMAL_PORTION: usize = 8;
 
+/// Returns the minimal size of cache for each CPU-local free pool.
+///
+/// It depends on the size of the global free pool.
 fn cache_minimal_size(global_size: usize) -> usize {
     cache_expected_size(global_size) / CACHE_MINIMAL_PORTION
 }
 
+/// Controls the maximal size of cache for each CPU-local free pool.
+///
+/// The maximal will be the expected size multiplied by this constant.
 const CACHE_MAXIMAL_MULTIPLIER: usize = 2;
 
+/// Returns the maximal size of cache for each CPU-local free pool.
+///
+/// It depends on the size of the global free pool.
 fn cache_maximal_size(global_size: usize) -> usize {
     cache_expected_size(global_size) * CACHE_MAXIMAL_MULTIPLIER
 }
 
+/// Balances a local cache and the global free pool.
 pub(super) fn balance(
     local: &mut BuddySet<MAX_LOCAL_BUDDY_ORDER>,
     global: &mut OnDemandGlobalLock,
@@ -54,6 +77,7 @@ pub(super) fn balance(
     }
 }
 
+/// Balances from `a` to `b`.
 fn balance_to<const MAX_ORDER1: BuddyOrder, const MAX_ORDER2: BuddyOrder>(
     a: &mut BuddySet<MAX_ORDER1>,
     b: &mut BuddySet<MAX_ORDER2>,

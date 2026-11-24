@@ -1,3 +1,7 @@
+//! Concrete file system implementations.
+//!
+//! This module contains all the specific file system implementations supported by the kernel.
+
 pub(crate) mod cgroupfs;
 pub(crate) mod configfs;
 pub(crate) mod devpts;

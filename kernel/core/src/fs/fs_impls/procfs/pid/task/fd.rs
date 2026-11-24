@@ -21,6 +21,7 @@ use crate::{
     thread::Thread,
 };
 
+/// Represents the inode at `/proc/[pid]/task/[tid]/fd` (and also `/proc/[pid]/fd`).
 pub(super) struct FdDirOps<T> {
     dir: TidDirOps,
     marker: PhantomData<T>,
@@ -167,6 +168,7 @@ pub(super) trait FdOps: Send + Sync + 'static {
     fn ref_from_inode(inode: &Self::NodeType) -> &Self;
 }
 
+/// Represents the inode at `/proc/[pid]/task/[tid]/fd/[n]` (and also `/proc/[pid]/fd/[n]`).
 pub(super) struct FileSymOps {
     tid_dir_ops: TidDirOps,
     file_desc: FileDesc,
@@ -242,6 +244,7 @@ impl ProcSymOps for FileSymOps {
     }
 }
 
+/// Represents the inode at `/proc/[pid]/task/[tid]/fdinfo/[n]` (and also `/proc/[pid]/fdinfo/[n]`).
 pub(super) struct FileInfoOps {
     tid_dir_ops: TidDirOps,
     file_desc: FileDesc,

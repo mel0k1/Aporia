@@ -1,3 +1,6 @@
+
+
+
 use std::{
     collections::{BTreeMap, HashSet},
     env, fs, io,
@@ -68,9 +71,14 @@ impl Config {
         false
     }
 
+    /// ensure the config to be valid. We will check three things.
+    /// 1. The component ident and library name(The last segment of component path) cannot be duplicate.
+    /// 2. The controlled type in whitelist should be in one of defined components.
+    /// 3. The components in whitelist should be defined.
     pub fn check_config(&self) {
         let mut component_idents = HashSet::new();
         let mut lib_names = HashSet::new();
+
 
         for (ident, component_path) in &self.components {
             if component_idents.contains(ident) {
@@ -85,10 +93,12 @@ impl Config {
         }
 
         for (type_, whitelist) in &self.whitelists {
+
             let component_ident = type_.iter().nth(0).unwrap();
             if !component_idents.contains(component_ident) {
                 panic!("The controlled type is not in any component.");
             }
+
             for (component_name, _) in whitelist.iter() {
                 if !component_idents.contains(component_name) {
                     panic!("The component in whitelist is not defined");
@@ -119,6 +129,7 @@ impl WhiteList {
         self.components.iter()
     }
 }
+
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Path {
@@ -234,13 +245,20 @@ fn parse_whitelist_item(
     }
 }
 
+/// Search for the configuration file.
+///
+/// # Errors
+///
+/// Returns any unexpected filesystem error encountered when searching for the config file
 pub fn lookup_conf_file() -> io::Result<Option<PathBuf>> {
+    /// Possible filename to search for.
     const CONFIG_FILE_NAMES: [&str; 4] = [
         "Components.toml",
         ".Components.toml",
         "components.toml",
         ".components.toml",
     ];
+
 
     let current = PathBuf::from(env::var_os("COMPONENT_CONFIG_DIR").unwrap());
     let mut found_config: Option<PathBuf> = None;

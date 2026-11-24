@@ -1,20 +1,42 @@
+//! Event types and codes.
+//!
+//! This file is based on the USB HUT 1.12 specification
+//! (see <http://www.usb.org/developers/hidpage>) and follows the
+//! Linux input event codes standard for maximum compatibility.
+//!
+//! The USB HUT standard ensures consistent event type and value
+//! definitions across different input devices and platforms.
+
 use bitflags::bitflags;
 use bitvec::prelude::*;
 
 bitflags! {
+    /// Input event types.
     #[derive(Clone, Copy, Debug, PartialEq)]
     pub struct EventTypes: u32 {
+        /// Synchronization events.
         const SYN       = 1 << 0x00;
+        /// Key press/release events.
         const KEY       = 1 << 0x01;
+        /// Relative movement events. (mouse, trackball, etc.)
         const REL       = 1 << 0x02;
+        /// Absolute position events. (touchpad, tablet, etc.)
         const ABS       = 1 << 0x03;
+        /// Miscellaneous events.
         const MSC       = 1 << 0x04;
+        /// Switch events.
         const SW        = 1 << 0x05;
+        /// LED events.
         const LED       = 1 << 0x11;
+        /// Sound events.
         const SND       = 1 << 0x12;
+        /// Repeat events.
         const REP       = 1 << 0x14;
+        /// Force feedback events.
         const FF        = 1 << 0x15;
+        /// Power management events.
         const PWR       = 1 << 0x16;
+        /// Force feedback status events.
         const FF_STATUS = 1 << 0x17;
     }
 }
@@ -26,10 +48,16 @@ impl Default for EventTypes {
 }
 
 impl EventTypes {
+    /// Creates a new empty set of event type flags.
     pub const fn new() -> Self {
         Self::empty()
     }
 
+    /// Gets the event index as a `u16` value for this event type.
+    ///
+    /// # Panics
+    ///
+    /// This method will panic if there are multiple event bits set in `self`.
     pub const fn as_index(&self) -> u16 {
         let bits = self.bits();
         assert!(
@@ -55,6 +83,7 @@ impl EventTypes {
     }
 }
 
+/// Synchronization events.
 #[repr(u16)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SynEvent {
@@ -64,6 +93,7 @@ pub enum SynEvent {
     Dropped = 0x03,
 }
 
+/// Relative axes.
 #[repr(u16)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RelCode {
@@ -81,9 +111,12 @@ pub enum RelCode {
     WheelHiRes = 0x0b,
     HWheelHiRes = 0x0c,
 }
+/// The maximum value for relative axes.
 const REL_MAX: usize = 0x0f;
+/// The number of relative axes.
 const REL_COUNT: usize = REL_MAX + 1;
 
+/// A set of [`RelCode`] represented as a bitmap.
 #[derive(Clone, Debug)]
 pub struct RelCodeSet(BitVec<u8>);
 
@@ -94,30 +127,36 @@ impl Default for RelCodeSet {
 }
 
 impl RelCodeSet {
+    /// Creates an empty set.
     pub fn new() -> Self {
         Self(BitVec::repeat(false, REL_COUNT))
     }
 
+    /// Sets a relative code in the set.
     pub fn set(&mut self, rel_code: RelCode) {
         let index = rel_code as usize;
         self.0.set(index, true);
     }
 
+    /// Clears a relative code from the set.
     pub fn clear(&mut self, rel_code: RelCode) {
         let index = rel_code as usize;
         self.0.set(index, false);
     }
 
+    /// Checks if the set contains a relative code.
     pub fn contain(&self, rel_code: RelCode) -> bool {
         let index = rel_code as usize;
         self.0.get(index).map(|b| *b).unwrap()
     }
 
+    /// Returns the bitmap as a byte slice.
     pub fn as_raw_slice(&self) -> &[u8] {
         self.0.as_raw_slice()
     }
 }
 
+/// A set of [`KeyCode`] represented as a bitmap.
 #[derive(Clone, Debug)]
 pub struct KeyCodeSet(BitVec<u8>);
 
@@ -128,35 +167,46 @@ impl Default for KeyCodeSet {
 }
 
 impl KeyCodeSet {
+    /// Creates an empty set.
     pub fn new() -> Self {
         Self(BitVec::repeat(false, KEY_COUNT))
     }
 
+    /// Sets a key code in the set.
     pub fn set(&mut self, key_code: KeyCode) {
         let index = key_code as usize;
         self.0.set(index, true);
     }
 
+    /// Clears a key code from the set.
     pub fn clear(&mut self, key_code: KeyCode) {
         let index = key_code as usize;
         self.0.set(index, false);
     }
 
+    /// Checks if the set contains a key code.
     pub fn contain(&self, key_code: KeyCode) -> bool {
         let index = key_code as usize;
         self.0.get(index).map(|b| *b).unwrap()
     }
 
+    /// Checks if the set contains any key codes in the `range`.
+    ///
+    /// # Panics
+    ///
+    /// This method will panic if the `range` contains invalid key codes.
     pub fn contain_any(&self, range: core::ops::Range<usize>) -> bool {
         assert!(range.is_empty() || range.end <= KEY_COUNT);
         range.into_iter().any(|i| *self.0.get(i).unwrap())
     }
 
+    /// Returns the bitmap as a byte slice.
     pub fn as_raw_slice(&self) -> &[u8] {
         self.0.as_raw_slice()
     }
 }
 
+/// Common keyboard and mouse keys.
 #[repr(u16)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum KeyCode {
@@ -293,7 +343,9 @@ pub enum KeyCode {
     BtnBack = 0x116,
 }
 
+/// The maximum value for key codes.
 const KEY_MAX: usize = 0x120;
+/// The number of key codes.
 const KEY_COUNT: usize = KEY_MAX + 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

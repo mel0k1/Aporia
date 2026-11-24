@@ -1,3 +1,8 @@
+//! Hardware RNG misc-device support.
+//!
+//! This module registers the `/dev/hwrng` character device and tracks the
+//! currently selected [`EntropyDevice`] backend.
+
 use aster_virtio::device::entropy::{self, device::EntropyDevice};
 use device_id::{DeviceId, MinorId};
 
@@ -15,8 +20,10 @@ use crate::{
 
 const HWRNG_MINOR: u32 = 183;
 
+/// The currently in-use hardware RNG device.
 static RNG_CURRENT: Mutex<Option<Arc<EntropyDevice>>> = Mutex::new(None);
 
+/// The `/dev/hwrng` device.
 #[derive(Debug)]
 struct HwRngDevice {
     id: DeviceId,
@@ -50,6 +57,7 @@ impl Device for HwRngDevice {
     }
 }
 
+/// A file handle opened from `/dev/hwrng`.
 struct HwRngFile;
 
 impl Pollable for HwRngFile {

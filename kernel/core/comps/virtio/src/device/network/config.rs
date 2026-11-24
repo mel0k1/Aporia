@@ -7,6 +7,7 @@ use ostd_pod::FromZeros;
 use crate::transport::{ConfigManager, VirtioTransport};
 
 bitflags! {
+    /// Virtio network feature bits.
     #[derive(Clone, Copy, Debug, PartialEq)]
     pub(super) struct NetworkFeatures: u64 {
         const VIRTIO_NET_F_CSUM                = 1 << 0;
@@ -52,6 +53,7 @@ impl NetworkFeatures {
     }
 }
 
+/// Virtio network device status.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(super) struct Status(u16);
@@ -60,6 +62,8 @@ bitflags! {
     impl Status: u16 {
         const VIRTIO_NET_S_LINK_UP  = 1;
         const VIRTIO_NET_S_ANNOUNCE = 2;
+
+
 
         const _                     = !0;
     }
@@ -92,6 +96,7 @@ impl VirtioNetConfig {
 impl ConfigManager<VirtioNetConfig> {
     pub(super) fn read_config(&self) -> VirtioNetConfig {
         let mut net_config = VirtioNetConfig::new_zeroed();
+
         for (i, mac_byte) in net_config.mac.iter_mut().enumerate() {
             *mac_byte = self
                 .read_once::<u8>(offset_of!(VirtioNetConfig, mac) + i)

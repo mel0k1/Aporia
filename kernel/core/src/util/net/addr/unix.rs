@@ -3,10 +3,15 @@ use core::mem::offset_of;
 use super::family::CSocketAddrFamily;
 use crate::{net::socket::unix::UnixSocketAddr, prelude::*};
 
+/// UNIX domain socket address.
+///
+/// See <https://www.man7.org/linux/man-pages/man7/unix.7.html>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(super) struct CSocketAddrUnix {
+    /// Address family (AF_UNIX).
     sun_family: u16,
+    /// Pathname.
     sun_path: [u8; Self::PATH_MAX_LEN],
 }
 
@@ -19,6 +24,15 @@ impl CSocketAddrUnix {
     const MAX_LEN: usize = size_of::<Self>();
 }
 
+/// Converts a [`UnixSocketAddr`] to bytes representing a [`CSocketAddrUnix`].
+///
+/// We don't actually create a [`CSocketAddrUnix`]. Instead, we create its byte representation
+/// directly for ease of operation.
+///
+/// # Panics
+///
+/// This method will panic if the pathname in [`UnixSocketAddr`] is too long to be stored in
+/// the `sun_path` field of `CUnixSocketAddr`.
 pub(super) fn into_c_bytes_and<R, F>(value: &UnixSocketAddr, f: F) -> R
 where
     F: FnOnce(&[u8]) -> R,
@@ -48,6 +62,10 @@ where
     f(&bytes[..CSocketAddrUnix::PATH_OFFSET + copied])
 }
 
+/// Converts bytes representing a [`CSocketAddrUnix`] to a [`UnixSocketAddr`].
+///
+/// We accept the byte representation of a [`CSocketAddrUnix`] directly, instead of
+/// [`CSocketAddrUnix`] itself, for ease of operation.
 pub(super) fn from_c_bytes(bytes: &[u8]) -> Result<UnixSocketAddr> {
     if bytes.len() < CSocketAddrUnix::MIN_LEN {
         return Err(errno!(EINVAL, "the socket address length is too small"));

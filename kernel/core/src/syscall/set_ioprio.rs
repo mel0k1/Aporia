@@ -42,6 +42,7 @@ pub(super) fn sys_ioprio_set(
     }
 }
 
+/// Validates the I/O priority class and checks permission for real-time I/O.
 fn check_ioprio_class(ioprio: u32, ctx: &Context) -> Result<()> {
     let class = IoPrioClass::try_from((ioprio >> IOPRIO_CLASS_SHIFT) & IOPRIO_CLASS_MASK)?;
 
@@ -78,6 +79,7 @@ const IOPRIO_CLASS_SHIFT: u32 = 13;
 const IOPRIO_CLASS_MASK: u32 = 0b111;
 const IOPRIO_LEVEL_MASK: u32 = 0b111;
 
+/// Valid I/O priority classes in the Linux ABI.
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, TryFromInt)]
 enum IoPrioClass {

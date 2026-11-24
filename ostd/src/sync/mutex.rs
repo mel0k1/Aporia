@@ -7,6 +7,7 @@ use core::{
 
 use super::WaitQueue;
 
+/// A mutex with waitqueue.
 pub struct Mutex<T: ?Sized> {
     lock: AtomicBool,
     queue: WaitQueue,
@@ -14,6 +15,7 @@ pub struct Mutex<T: ?Sized> {
 }
 
 impl<T> Mutex<T> {
+    /// Creates a new mutex.
     pub const fn new(val: T) -> Self {
         Self {
             lock: AtomicBool::new(false),
@@ -24,20 +26,33 @@ impl<T> Mutex<T> {
 }
 
 impl<T: ?Sized> Mutex<T> {
+    /// Acquires the mutex.
+    ///
+    /// This method runs in a block way until the mutex can be acquired.
     #[track_caller]
     pub fn lock(&self) -> MutexGuard<'_, T> {
         self.queue.wait_until(|| self.try_lock())
     }
 
+    /// Tries to acquire the mutex immediately.
     pub fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
         self.acquire_lock()
             .then(|| unsafe { MutexGuard::new(self) })
     }
 
+    /// Returns a mutable reference to the underlying data.
+    ///
+    /// This method is zero-cost: By holding a mutable reference to the lock, the compiler has
+    /// already statically guaranteed that access to the data is exclusive.
     pub fn get_mut(&mut self) -> &mut T {
         self.val.get_mut()
     }
 
+    /// Releases the mutex and wake up one thread which is blocked on this mutex.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that it has acquired the lock.
     unsafe fn unlock(&self) {
         unsafe { self.release_lock() };
         self.queue.wake_one();
@@ -49,6 +64,9 @@ impl<T: ?Sized> Mutex<T> {
             .is_ok()
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure that it has acquired the lock.
     unsafe fn release_lock(&self) {
         self.lock.store(false, Ordering::Release);
     }
@@ -63,6 +81,7 @@ impl<T: ?Sized + fmt::Debug> fmt::Debug for Mutex<T> {
 unsafe impl<T: ?Sized + Send> Send for Mutex<T> {}
 unsafe impl<T: ?Sized + Send> Sync for Mutex<T> {}
 
+/// A guard that provides exclusive access to the data protected by a [`Mutex`].
 #[clippy::has_significant_drop]
 #[must_use]
 pub struct MutexGuard<'a, T: ?Sized> {
@@ -70,10 +89,16 @@ pub struct MutexGuard<'a, T: ?Sized> {
 }
 
 impl<'a, T: ?Sized> MutexGuard<'a, T> {
+    /// # Safety
+    ///
+    /// The caller must ensure that the given reference of [`Mutex`] lock has been successfully
+    /// acquired in the current context. When the created [`MutexGuard`] is dropped, it will unlock
+    /// the [`Mutex`].
     unsafe fn new(mutex: &'a Mutex<T>) -> Self {
         MutexGuard { mutex }
     }
 
+    /// Returns the [`Mutex`] associated with this guard.
     pub fn get_lock(guard: &Self) -> &'a Mutex<T> {
         guard.mutex
     }

@@ -22,6 +22,7 @@ use crate::{
 
 pub type UdpSocket<E> = Socket<UdpSocketInner, E>;
 
+/// States needed by [`UdpSocketBg`].
 pub struct UdpSocketInner {
     socket: SpinLock<Box<RawUdpSocket>, BottomHalfDisabled>,
     need_dispatch: AtomicBool,
@@ -41,6 +42,7 @@ impl<E: Ext> Inner<E> for UdpSocketInner {
 pub(crate) type UdpSocketBg<E> = SocketBg<UdpSocketInner, E>;
 
 impl<E: Ext> UdpSocketBg<E> {
+    /// Tries to process an incoming packet and returns whether the packet is processed.
     pub(crate) fn process(
         &self,
         cx: &mut Context,
@@ -75,6 +77,7 @@ impl<E: Ext> UdpSocketBg<E> {
         ip_repr.dst_addr() == *self.bound.addr() && udp_repr.dst_port == self.bound.port()
     }
 
+    /// Tries to generate an outgoing packet and dispatches the generated packet.
     pub(crate) fn dispatch<D>(&self, cx: &mut Context, dispatch: D)
     where
         D: FnOnce(&mut Context, &IpRepr, &UdpRepr, &[u8]),
@@ -95,12 +98,18 @@ impl<E: Ext> UdpSocketBg<E> {
             .store(socket.send_queue() > 0, Ordering::Relaxed);
     }
 
+    /// Returns whether the socket _may_ generate an outgoing packet.
+    ///
+    /// The check is intended to be lock-free and fast, but may have false positives.
     pub(crate) fn need_dispatch(&self) -> bool {
         self.inner.need_dispatch.load(Ordering::Relaxed)
     }
 }
 
 impl<E: Ext> UdpSocket<E> {
+    /// Binds to a specified endpoint.
+    ///
+    /// Polling the iface is _not_ required after this method succeeds.
     pub fn new_bind(
         bound: BoundUdpPort<E>,
         observer: E::UdpEventObserver,
@@ -139,6 +148,9 @@ impl<E: Ext> UdpSocket<E> {
         Ok(socket)
     }
 
+    /// Sends some data.
+    ///
+    /// Polling the iface is _always_ required after this method succeeds.
     pub fn send<F, R>(
         &self,
         size: usize,
@@ -165,6 +177,9 @@ impl<E: Ext> UdpSocket<E> {
         Ok(result)
     }
 
+    /// Receives some data.
+    ///
+    /// Polling the iface is _not_ required after this method succeeds.
     pub fn recv<CopyFn, R>(
         &self,
         behavior: ReceiveBehavior,
@@ -187,6 +202,7 @@ impl<E: Ext> UdpSocket<E> {
         Ok(result)
     }
 
+    /// Calls `f` with an immutable reference to the associated [`RawUdpSocket`].
     pub fn raw_with<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&RawUdpSocket) -> R,

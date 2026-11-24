@@ -9,6 +9,13 @@ use bitvec::{
 
 use crate::prelude::*;
 
+/// A disk I/O-friendly bitmap for ID management (e.g., block or inode IDs).
+///
+/// An ID bitmap has the same size as a block, i.e., `BLOCK_SIZE`.
+/// Each bit in the bitmap represents one ID:
+/// bit 0 at the i-th position of the bitmap means the i-th ID is free
+/// and bit 1 means the ID is in use.
+/// As such, the bitmap can contain contain at most `BLOCK_SIZE` * 8 bits/IDs.
 #[derive(Clone)]
 pub(crate) struct IdBitmap {
     buf: Box<[u8]>,
@@ -17,6 +24,11 @@ pub(crate) struct IdBitmap {
 }
 
 impl IdBitmap {
+    /// Creates a new ID bitmap out of a given buffer, whose first `len`-bits represent valid IDs.
+    ///
+    /// # Panics
+    ///
+    /// This method panics if `len` is greater than [`IdBitmap::capacity()`].
     pub(crate) fn from_buf(buf: Box<[u8]>, len: u16) -> Self {
         assert!(len <= Self::capacity());
         let mut bitmap = Self {
@@ -29,15 +41,20 @@ impl IdBitmap {
         bitmap
     }
 
+    /// Returns the length of the ID bitmap, i.e., the maximum number of IDs.
     #[expect(unused)]
     pub(crate) const fn len(&self) -> u16 {
         self.len
     }
 
+    /// Returns the capacity of the ID bitmap.
+    ///
+    /// The capacity is the size of the underlying buffer in bits.
     pub(crate) const fn capacity() -> u16 {
         BLOCK_SIZE as u16 * 8
     }
 
+    /// Returns a reference to the underlying buffer of `BLOCK_SIZE` bytes.
     pub(crate) fn as_bytes(&self) -> &[u8] {
         &self.buf
     }
@@ -50,10 +67,18 @@ impl IdBitmap {
         &mut self.buf.as_mut_bits()[..self.len as usize]
     }
 
+    /// Returns true if the `id` is allocated.
+    ///
+    /// # Panics
+    ///
+    /// If the `id` is out of bounds, this method will panic.
     pub(crate) fn is_allocated(&self, id: u16) -> bool {
         self.bit_slice()[id as usize]
     }
 
+    /// Allocates and returns a new `id`.
+    ///
+    /// If allocation is not possible, it returns `None`.
     pub(crate) fn alloc(&mut self) -> Option<u16> {
         if self.first_available_id < self.len {
             let id = self.first_available_id;
@@ -65,6 +90,11 @@ impl IdBitmap {
         }
     }
 
+    /// Allocates a consecutive range of new `id`s.
+    ///
+    /// The `count` is the number of consecutive `id`s to allocate. If it is 0, return `None`.
+    ///
+    /// If allocation is not possible, it returns `None`.
     pub(crate) fn alloc_consecutive(&mut self, count: u16) -> Option<Range<u16>> {
         if count == 0 {
             return None;
@@ -106,6 +136,11 @@ impl IdBitmap {
         Some(allocated_range)
     }
 
+    /// Releases the allocated `id`.
+    ///
+    /// # Panics
+    ///
+    /// If the `id` is out of bounds, this method will panic.
     pub(crate) fn free(&mut self, id: u16) {
         debug_assert!(self.bit_slice()[id as usize]);
 
@@ -115,6 +150,11 @@ impl IdBitmap {
         }
     }
 
+    /// Releases the consecutive range of allocated `id`s.
+    ///
+    /// # Panics
+    ///
+    /// If the `range` is out of bounds, this method will panic.
     pub(crate) fn free_consecutive(&mut self, range: Range<u16>) {
         if range.is_empty() {
             return;
@@ -132,6 +172,7 @@ impl IdBitmap {
         }
     }
 
+    /// Updates the `first_available_id` field to the first zero index at or after `start`.
     fn update_first_available_id(&mut self, start: u16) {
         let len = self.len;
         let bit_slice = self

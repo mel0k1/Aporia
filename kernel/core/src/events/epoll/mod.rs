@@ -5,6 +5,7 @@ mod file;
 
 pub(crate) use file::EpollFile;
 
+/// An epoll control command.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum EpollCtl {
     Add(FileDesc, EpollEvent, EpollFlags),
@@ -13,6 +14,7 @@ pub(crate) enum EpollCtl {
 }
 
 bitflags! {
+    /// Linux's epoll flags.
     #[derive(Clone, Copy, Debug, PartialEq)]
     pub(crate) struct EpollFlags: u32 {
         const EXCLUSIVE    = (1 << 28);
@@ -22,13 +24,23 @@ bitflags! {
     }
 }
 
+/// An epoll event.
+///
+/// This could be used as either an input of epoll ctl or an output of epoll wait.
+/// The memory layout is compatible with that of C's struct epoll_event.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct EpollEvent {
+    /// I/O events.
+    ///
+    /// When `EpollEvent` is used as inputs, this is treated as a mask of events.
+    /// When `EpollEvent` is used as outputs, this is the active events.
     pub events: IoEvents,
+    /// A 64-bit, user-given data.
     pub user_data: u64,
 }
 
 impl EpollEvent {
+    /// Create a new epoll event.
     pub(crate) fn new(events: IoEvents, user_data: u64) -> Self {
         Self { events, user_data }
     }

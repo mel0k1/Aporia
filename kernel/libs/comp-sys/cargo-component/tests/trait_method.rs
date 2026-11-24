@@ -1,3 +1,8 @@
+
+
+
+//! This test checks that if cargo-component can control method and trait method
+
 mod test_utils;
 
 #[test]

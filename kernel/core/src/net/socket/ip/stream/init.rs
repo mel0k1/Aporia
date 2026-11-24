@@ -30,7 +30,25 @@ use crate::{
 
 pub(super) struct InitStream {
     bound_port: Option<BoundTcpPort>,
+    /// Indicates if the last `connect()` is considered to be done.
+    ///
+    /// If `connect()` is called but we're still in the `InitStream`, this means that the
+    /// connection is refused.
+    ///
+    ///  * If the connection is refused synchronously, the error code is returned by the
+    ///    `connect()` system call, and after that we always consider the `connect()` to be already
+    ///    done.
+    ///
+    ///  * If the connection is refused asynchronously (e.g., non-blocking sockets or interrupted
+    ///    `connect()`), the last `connect()` is not considered to have been done until another
+    ///    `connect()`, which checks and resets the boolean value and returns an appropriate error
+    ///    code.
     is_connect_done: bool,
+    /// Indicates whether the socket error is `ECONNREFUSED`.
+    ///
+    /// This boolean value is set to true when the connection is refused and set to false when the
+    /// error code is reported via `getsockopt(SOL_SOCKET, SO_ERROR)`, `send()`, `recv()`, or
+    /// `connect()`.
     is_conn_refused: AtomicBool,
 }
 

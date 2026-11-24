@@ -71,11 +71,26 @@ mod ioctl_defs {
         util::ioctl::{NoData, OutData},
     };
 
+    /// Returns the device size in bytes.
     pub(super) type BlkGetSize64 = ioc!(BLKGETSIZE64, 0x12, 114, OutData<u64>);
 
+    /// Returns the logical sector size of the block device.
+    ///
+    /// This is the smallest unit of I/O the device can address and,
+    /// importantly, the minimum alignment required for `O_DIRECT` I/O on
+    /// files backed by this device. Both buffer address and offset must be a
+    /// multiple of this value.
+    ///
+    /// Benchmarks and filesystem tests (for example, `xfstests`, LTP
+    /// `preadv03`/`pwritev03`) rely on this ioctl to size `O_DIRECT` buffers.
+    /// If the effective alignment enforced by the filesystem layered on top
+    /// is larger than the hardware sector, such as `ext2`'s 4 KiB block, this
+    /// ioctl must return that larger value. Otherwise user programs will align
+    /// correctly for the device but still hit `EINVAL` at the filesystem.
     pub(super) type BlkGetSectorSize = ioc!(BLKSSZGET, 0x12, 104, NoData);
 }
 
+/// Represents a block device inode in the filesystem.
 #[derive(Debug)]
 struct BlockFile(Arc<dyn BlockDevice>);
 
@@ -103,6 +118,7 @@ impl Device for BlockFile {
     }
 }
 
+/// Represents an opened block device file ready for I/O operations.
 struct OpenBlockFile(Arc<dyn BlockDevice>);
 
 impl FileOps for OpenBlockFile {

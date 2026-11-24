@@ -10,14 +10,30 @@ use crate::{
 };
 
 cpu_local_cell! {
+    /// The `Arc<Task>` (casted by [`Arc::into_raw`]) that is the current task.
     static CURRENT_TASK_PTR: CpuLocalPtr<Task> = CpuLocalPtr::null();
+    /// The previous task on the processor before switching to the current task.
+    /// It is used for delayed resource release since it would be the current
+    /// task's job to recycle the previous resources.
     static PREVIOUS_TASK_PTR: CpuLocalPtr<Task> = CpuLocalPtr::null();
 }
 
+/// Returns a pointer to the current task running on the processor.
+///
+/// It returns `None` if the function is called in the bootstrap context.
 pub(super) fn current_task() -> Option<NonNull<Task>> {
     NonNull::new(CURRENT_TASK_PTR.load().as_ptr().cast_mut())
 }
 
+/// Calls this function to switch to other task
+///
+/// If current task is none, then it will use the default task context and it
+/// will not return to this function again.
+///
+/// # Panics
+///
+/// This function will panic if called while holding preemption locks or with
+/// local IRQ disabled.
 #[track_caller]
 pub(super) fn switch_to_task(next_task: Arc<Task>) {
     super::atomic_mode::might_sleep();
@@ -41,9 +57,11 @@ pub(super) fn switch_to_task(next_task: Arc<Task>) {
 
     let current_task_ctx_ptr = if !current_task_ptr.is_null() {
         let current_task = unsafe { &*current_task_ptr };
+
         current_task.ctx.get()
     } else {
         unsafe { first_context_switch(next_task_ctx_ptr) };
+
         unreachable!("`first_context_switch` should never return");
     };
 
@@ -71,6 +89,11 @@ fn before_switching_to(next_task: &Task, irq_guard: &DisabledLocalIrqGuard) {
     }
 }
 
+/// Does cleanups after switching to a task.
+///
+/// # Safety
+///
+/// This function must be called only once after switching to a task.
 pub(super) unsafe fn after_switching_to() {
     let prev = PREVIOUS_TASK_PTR.load().as_ptr();
     let prev = if !prev.is_null() {

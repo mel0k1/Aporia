@@ -1,3 +1,12 @@
+//! Defines the IPC namespace abstraction.
+//!
+//! An IPC namespace isolates System V IPC resources from other namespaces.
+//! It currently manages semaphore sets only, while message queues and shared
+//! memory remain to be added.
+//!
+//! Each namespace stores its semaphore sets in a per-namespace map keyed by
+//! IPC key and uses a dedicated ID allocator to assign semaphore identifiers.
+
 use aster_rights::ReadOp;
 use spin::Once;
 
@@ -18,13 +27,26 @@ use crate::{
     security::lsm::hooks as lsm_hooks,
 };
 
+/// The IPC namespace.
+///
+/// An IPC namespace isolates System V IPC objects
+/// (semaphores, message queues, shared memory).
+/// Each namespace maintains its own independent set
+/// of IPC resources and identifier allocator.
+///
+/// Lock ordering:
+/// `sem_ids` -> `SemaphoreSet::inner`.
 pub(crate) struct IpcNamespace {
+    /// Semaphore sets within this namespace.
     sem_ids: IpcIds<SemaphoreSet>,
+    /// Owner user namespace.
     owner: Arc<UserNamespace>,
+    /// Stashed dentry for nsfs.
     stashed_dentry: StashedDentry,
 }
 
 impl IpcNamespace {
+    /// Returns a reference to the singleton initial IPC namespace.
     pub(crate) fn get_init_singleton() -> &'static Arc<IpcNamespace> {
         static INIT: Once<Arc<IpcNamespace>> = Once::new();
 
@@ -50,6 +72,9 @@ impl IpcNamespace {
         })
     }
 
+    /// Clones a new IPC namespace from `self`.
+    ///
+    /// The new namespace starts with an empty set of IPC resources.
     pub(crate) fn new_clone(
         &self,
         owner: Arc<UserNamespace>,
@@ -63,6 +88,7 @@ impl IpcNamespace {
         Ok(Self::new(owner))
     }
 
+    /// Calls `op` with the semaphore set identified by `semid`.
     pub(crate) fn with_sem_set<T, F>(
         &self,
         semid: IpcId,
@@ -78,6 +104,11 @@ impl IpcNamespace {
         })?
     }
 
+    /// Removes the semaphore set identified by `semid`.
+    ///
+    /// The caller (`posix_thread`) should be the creator or the owner of the
+    /// semaphore set, or hold `CAP_SYS_ADMIN` in the owner user namespace.
+    /// Otherwise, this method will fail.
     pub(crate) fn remove_sem_set(&self, semid: IpcId, posix_thread: &PosixThread) -> Result<()> {
         let euid = posix_thread.credentials().euid();
         let can_remove_fn = |sem_set: &SemaphoreSet| -> Result<()> {
@@ -103,6 +134,7 @@ impl IpcNamespace {
         self.sem_ids.remove(semid, can_remove_fn)
     }
 
+    /// Returns the existing semaphore set or creates a new one.
     pub(crate) fn get_or_create_sem_set(
         &self,
         key: IpcKey,
@@ -167,6 +199,7 @@ impl IpcNamespace {
         Ok(())
     }
 
+    /// Creates a new semaphore set and returns its ID.
     fn create_sem_set(
         &self,
         num_sems: usize,

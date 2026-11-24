@@ -1,3 +1,5 @@
+//! Platform-specific code for the RISC-V platform.
+
 #![expect(dead_code)]
 
 pub mod boot;
@@ -16,6 +18,16 @@ pub mod trap;
 #[cfg(feature = "cvm_guest")]
 pub(crate) fn init_cvm_guest() {}
 
+/// Architecture-specific initialization on the bootstrapping processor.
+///
+/// It should be called when the heap and frame allocators are available.
+///
+/// # Safety
+///
+/// 1. This function must be called only once in the boot context of the
+///    bootstrapping processor.
+/// 2. This function must be called after the kernel page table is activated on
+///    the bootstrapping processor.
 pub(crate) unsafe fn late_init_on_bsp() {
     unsafe { trap::init_on_cpu() };
 
@@ -32,6 +44,17 @@ pub(crate) unsafe fn late_init_on_bsp() {
     unsafe { crate::io::init(io_mem_builder) };
 }
 
+/// Initializes application-processor-specific state.
+///
+/// On RISC-V, Application Processors (APs) are harts that are not the
+/// bootstrapping hart.
+///
+/// # Safety
+///
+/// 1. This function must be called only once on each application processor.
+/// 2. This function must be called after the BSP's call to [`late_init_on_bsp`]
+///    and before any other architecture-specific code in this module is called
+///    on this AP.
 pub(crate) unsafe fn init_on_ap() {
     unsafe { trap::init_on_cpu() };
 
@@ -42,14 +65,28 @@ pub(crate) unsafe fn init_on_ap() {
     unsafe { timer::init_on_ap() };
 }
 
+/// Returns the frequency of TSC. The unit is Hz.
 pub fn tsc_freq() -> u64 {
     timer::get_timebase_freq()
 }
 
+/// Reads the current value of the processor's time-stamp counter (TSC).
 pub fn read_tsc() -> u64 {
     riscv::register::time::read64()
 }
 
+/// Reads a hardware generated 64-bit random value.
+///
+/// Returns `None` if no random value was generated.
+///
+/// This implementation uses the RISC-V Entropy Source Extension (Zkr) which
+/// provides access to a physical entropy source via the `seed` CSR.
+///
+/// Reference:
+/// - "RISC-V Cryptography Extensions Volume I: Scalar & Entropy Source Instructions"
+///   - <https://docs.riscv.org/reference/isa/extensions/crypto-scalar/_attachments/riscv-crypto-spec-scalar.pdf>
+///   - Section 2.9: Zkr - Entropy Source Extension
+///   - Section 4.1: The `seed` CSR
 pub fn read_random() -> Option<u64> {
     use cpu::extension::{IsaExtensions, has_extensions};
 
@@ -71,6 +108,7 @@ pub fn read_random() -> Option<u64> {
     let read_entropy = || -> Option<u16> {
         for _ in 0..RETRY_LIMIT {
             let seed_val: usize;
+
             unsafe {
                 core::arch::asm!(
                     "csrrw {0}, seed, zero",

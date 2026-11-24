@@ -1,8 +1,25 @@
 use crate::prelude::*;
 
+/// A trait that can copies structures from/to the user space in a backward-compatible way.
 pub(crate) trait CopyCompat {
+    /// Reads a POD structure from the user space in a backward-compatible way.
+    ///
+    /// The method's behavior is described below to ensure backward compatibility:
+    ///  - If the `size` specified by the user is greater than the kernel structure's size (i.e.,
+    ///    `size_of::<T>()`), the kernel structure's trailing part will be filled with zero.
+    ///  - If the `size` specified by the user is smaller than the kernel structure's size (i.e.,
+    ///    `size_of::<T>()`), this method will fail with [`Errno::E2BIG`] if the user structure's
+    ///    trailing part contains non-zero values.
     fn read_val_compat<T: Pod>(&self, src: Vaddr, size: usize) -> Result<T>;
 
+    /// Writes a POD structure to the user space in a backward-compatible way.
+    ///
+    /// The method's behavior is described below to ensure backward compatibility:
+    ///  - If the `size` specified by the user is greater than the kernel structure's size (i.e.,
+    ///    `size_of::<T>()`), the user structure's trailing part will be filled with zero.
+    ///  - If the `size` specified by the user is smaller than the kernel structure's size (i.e.,
+    ///    `size_of::<T>()`), this method will return a [`TrailingBytes`] instance and the caller
+    ///    can use it to check if the kernel structure's trailing part contains non-zero values.
     fn write_val_compat<'a, T: Pod>(
         &self,
         dest: Vaddr,
@@ -50,10 +67,12 @@ impl CopyCompat for CurrentUserSpace<'_> {
     }
 }
 
+/// The kernel structure's trailing bytes after [`CopyCompat::write_val_compat`].
 #[expect(dead_code)]
 #[must_use]
 pub(crate) struct TrailingBytes<'a>(&'a [u8]);
 
 impl TrailingBytes<'_> {
+    /// Ignores the trailing bytes.
     pub(crate) fn ignore_trailing(self) {}
 }

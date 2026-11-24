@@ -1,11 +1,15 @@
 use crate::pixel::Pixel;
 
+/// A finite-state machine (FSM) to handle ANSI escape sequences.
 #[derive(Debug)]
 pub(super) struct EscapeFsm {
     state: WaitFor,
     params: [Option<u32>; MAX_PARAMS],
 }
 
+/// The mode for "Erase in Display" (ED) commands.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.13/source/drivers/tty/vt/vt.c#L1488>.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum EraseInDisplay {
     CursorToEnd,
@@ -14,12 +18,17 @@ pub(super) enum EraseInDisplay {
     EntireScreenAndScrollback,
 }
 
+/// A trait to execute operations from ANSI escape sequences.
 pub(super) trait EscapeOp {
+    /// Sets the cursor position.
     fn set_cursor(&mut self, x: usize, y: usize);
 
+    /// Sets the foreground color.
     fn set_fg_color(&mut self, val: Pixel);
+    /// Sets the background color.
     fn set_bg_color(&mut self, val: Pixel);
 
+    /// Erases part or all of the display.
     fn erase_in_display(&mut self, mode: EraseInDisplay);
 }
 
@@ -28,41 +37,70 @@ const MAX_OSC_LEN: u8 = 128;
 
 #[derive(Clone, Copy, Debug)]
 enum WaitFor {
+    /// Waits for an ESC to start the ANSI escape sequence.
     Escape,
+    /// Waits for a bracket after the ESC.
+    ///
+    /// "ESC[" will start a Control Sequence Introducer (CSI) sequence and "ESC]" will start a
+    /// Operating System Command (OSC) sequence.
     Bracket,
+    /// Waits for CSI parameters.
+    ///
+    /// This will be terminated by a byte in the range 0x40 through 0x7E.
     Csi {
         idx: u8,
         is_private: bool,
         in_intermediate: bool,
     },
-    Osc {
-        len: u8,
-        is_last_esc: bool,
-    },
+    /// Waits for OSC payload.
+    ///
+    /// This will be terminated by a bell (BEL, 0x07) or a String Terminator (ST, "ESC\").
+    Osc { len: u8, is_last_esc: bool },
 }
 
+/// Foreground and background colors.
+///
+/// See <https://en.wikipedia.org/wiki/ANSI_escape_code#3-bit_and_4-bit>.
 #[rustfmt::skip]
 const COLORS: [Pixel; 16] = [
+
     Pixel { red: 0, green: 0, blue: 0 },
+
     Pixel { red: 170, green: 0, blue: 0 },
+
     Pixel { red: 0, green: 170, blue: 0 },
+
     Pixel { red: 170, green: 85, blue: 0 },
+
     Pixel { red: 0, green: 0, blue: 170 },
+
     Pixel { red: 170, green: 0, blue: 170 },
+
     Pixel { red: 0, green: 170, blue: 170 },
+
     Pixel { red: 170, green: 170, blue: 170 },
+
     Pixel { red: 85, green: 85, blue: 85 },
+
     Pixel { red: 255, green: 85, blue: 85 },
+
     Pixel { red: 85, green: 255, blue: 85 },
+
     Pixel { red: 255, green: 255, blue: 85 },
+
     Pixel { red: 85, green: 85, blue: 255 },
+
     Pixel { red: 255, green: 85, blue: 255 },
+
     Pixel { red: 85, green: 255, blue: 255 },
+
     Pixel { red: 255, green: 255, blue: 255 },
 ];
 
 impl EscapeFsm {
+    /// The ESC character.
     const ESC: u8 = 0x1b;
+    /// The BEL character.
     const BEL: u8 = 0x07;
 
     pub(super) fn new() -> Self {
@@ -72,6 +110,10 @@ impl EscapeFsm {
         }
     }
 
+    /// Tries to eat a byte as part of the ANSI escape sequence.
+    ///
+    /// Returns `true` if the byte is consumed by the FSM and should not be rendered as text.
+    /// Returns `false` if the byte is not part of an escape sequence and should be rendered.
     pub(super) fn eat<T: EscapeOp>(&mut self, byte: u8, op: &mut T) -> bool {
         match self.state {
             WaitFor::Escape => {
@@ -137,6 +179,7 @@ impl EscapeFsm {
         }
     }
 
+    /// Parses CSI arguments.
     fn parse_csi<T: EscapeOp>(
         &mut self,
         byte: u8,
@@ -215,6 +258,7 @@ impl EscapeFsm {
         }
     }
 
+    /// Handles the "Control Sequence Introducer" sequence.
     fn handle_csi<T: EscapeOp>(
         &self,
         final_byte: u8,
@@ -258,6 +302,7 @@ impl EscapeFsm {
         }
     }
 
+    /// Handles the "Select Graphic Rendition" sequence.
     fn handle_sgr<T: EscapeOp>(&self, num_params: usize, op: &mut T) {
         let mut cursor = 0;
         while cursor < num_params {
@@ -283,6 +328,7 @@ impl EscapeFsm {
                     });
                     cursor += 4;
                 }
+
                 39 => op.set_fg_color(Pixel::WHITE),
                 90..=97 => op.set_fg_color(COLORS[op_code as usize - 90 + 8]),
 
@@ -299,6 +345,7 @@ impl EscapeFsm {
                     });
                     cursor += 4;
                 }
+
                 49 => op.set_bg_color(Pixel::BLACK),
                 100..=107 => op.set_bg_color(COLORS[op_code as usize - 100 + 8]),
 
@@ -307,6 +354,9 @@ impl EscapeFsm {
         }
     }
 
+    /// Gets the 256-color used by Linux TTY.
+    ///
+    /// Reference: <https://elixir.bootlin.com/linux/v6.16.7/source/drivers/tty/vt/vt.c#L1599>
     fn get_256_color(i: u8) -> Pixel {
         let mut i = i as u16;
         let (red, green, blue) = match i {
@@ -322,6 +372,7 @@ impl EscapeFsm {
                 let b = if i & 4 != 0 { 0xff } else { 0x55 };
                 (r, g, b)
             }
+
             16..=231 => {
                 i -= 16;
                 let b = i % 6 * 255 / 6;
@@ -331,6 +382,7 @@ impl EscapeFsm {
                 let r = i * 255 / 6;
                 (r as u8, g as u8, b as u8)
             }
+
             _ => {
                 let g = (i * 10 - 2312) as u8;
                 (g, g, g)
@@ -340,6 +392,7 @@ impl EscapeFsm {
         Pixel { red, green, blue }
     }
 
+    /// Gets the parameter at the given index, or returns the default value if it is absent.
     fn param_or(&self, i: usize, default: u32) -> u32 {
         self.params.get(i).and_then(|p| *p).unwrap_or(default)
     }

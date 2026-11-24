@@ -10,6 +10,9 @@ use ostd::{
     sync::RwLock,
 };
 
+/// Multiplexing Irqs. The two interrupt types (configuration space change and queue interrupt)
+/// of the virtio-mmio device share the same IRQ, so `MultiplexIrq` are used to distinguish them.
+/// Besides, virtio-mmio requires ack_interrupt after interrupt is handled.
 pub(super) struct MultiplexIrq {
     irq: IrqLine,
     queue_callbacks: Vec<Box<IrqCallbackFunction>>,
@@ -40,6 +43,7 @@ impl MultiplexIrq {
             let irq = multiplex_irq.read();
 
             let interrupt_status = irq.interrupt_status.read_once().unwrap();
+
             irq.interrupt_ack.write_once(&interrupt_status).unwrap();
 
             if interrupt_status & 0x01 != 0 {

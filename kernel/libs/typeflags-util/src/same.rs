@@ -1,3 +1,6 @@
+//! Traits used to check if two types are the same, returning a Bool.
+//! This check happens at compile time
+
 use crate::bool::{Bool, False, True};
 
 pub trait SameAs<T> {

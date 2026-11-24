@@ -1,3 +1,5 @@
+//! Intel VMX platform lifecycle management.
+
 pub(super) mod context_switch;
 mod instructions;
 pub(super) mod invept;
@@ -81,12 +83,19 @@ impl VmxGuardState {
 
 static VMX_GUARD_STATE: Mutex<VmxGuardState> = Mutex::new(VmxGuardState::new());
 
+/// A guard that keeps VMX operation enabled.
 #[must_use]
 pub(super) struct VmxGuard {
     _private: (),
 }
 
 impl VmxGuard {
+    /// Acquires a lease on the VMX platform lifecycle.
+    ///
+    /// # Panics
+    ///
+    /// Panics if this method or [`Drop::drop`] is called in
+    /// [atomic mode](crate::task::atomic_mode).
     pub(super) fn acquire_vmx() -> Result<VmxGuard> {
         atomic_mode::might_sleep();
 
@@ -164,6 +173,7 @@ impl VmxGuardState {
 }
 
 impl VmxCpuState {
+    /// Enables VMX on the current CPU.
     fn enable_vmx() {
         let irq_guard = crate::irq::disable_local();
         let cpu_state = VMX_CPU_STATE.get_with(&irq_guard);
@@ -190,6 +200,7 @@ impl VmxCpuState {
                 return;
             }
         };
+
         if let Err(err) = unsafe { invept::check_ept_support(&irq_guard) } {
             cpu_state.last_error = Some(err);
             return;
@@ -209,6 +220,11 @@ impl VmxCpuState {
         cpu_state.last_error = None;
     }
 
+    /// Disables VMX on the current CPU.
+    ///
+    /// # Safety
+    ///
+    /// No VMX users may remain, and new users must be excluded throughout the call.
     unsafe fn disable_vmx() {
         let irq_guard = crate::irq::disable_local();
         let cpu_state = VMX_CPU_STATE.get_with(&irq_guard);
@@ -314,6 +330,7 @@ fn read_and_validate_capability(vmx_cr4: u64, _irq_guard: &DisabledLocalIrqGuard
         let capability = unsafe { rdmsr(control.capability_msr(vmx_basic)) };
         let can_set = control.required_bits | control.runtime_bits;
         let can_clear = control.forbidden_bits | control.runtime_bits;
+
         if (capability >> 32) as u32 & can_set != can_set || capability as u32 & can_clear != 0 {
             return Err(Error::NotEnoughResources);
         }
@@ -326,14 +343,26 @@ fn control_register_is_valid(value: u64, fixed0: u64, fixed1: u64) -> bool {
     value & fixed0 == fixed0 && value & !fixed1 == 0
 }
 
+/// Initializes the VMXON region with the given revision ID.
+///
+/// # Safety
+///
+/// 1. `region_paddr` points to a valid, page-aligned VMXON region.
+/// 2. The VMXON region is not enabled and is exclusively owned by the caller.
 unsafe fn initialize_vmxon_region(region_paddr: usize, revision_id: u32) {
     let region_ptr = paddr_to_vaddr(region_paddr) as *mut u32;
 
     unsafe { region_ptr.write(revision_id) };
 }
 
+/// Clears `CR4.VMXE` without changing any other `CR4` bits.
+///
+/// # Safety
+///
+/// The current CPU must be outside VMX operation.
 unsafe fn clear_vmx_enable(_irq_guard: &DisabledLocalIrqGuard) {
     let cr4 = Cr4::read_raw();
+
     unsafe { Cr4::write_raw(cr4 & !Cr4Flags::VIRTUAL_MACHINE_EXTENSIONS.bits()) };
 }
 
@@ -349,18 +378,21 @@ mod test {
         }
 
         let guard1 = VmxGuard::acquire_vmx().expect("Failed to acquire VMX guard");
+
         assert_eq!(
             unsafe { instructions::vmptrst(&crate::irq::disable_local()) },
             u64::MAX
         );
 
         let guard2 = VmxGuard::acquire_vmx().expect("Failed to acquire VMX guard");
+
         assert_eq!(
             unsafe { instructions::vmptrst(&crate::irq::disable_local()) },
             u64::MAX
         );
 
         drop(guard1);
+
         assert_eq!(
             unsafe { instructions::vmptrst(&crate::irq::disable_local()) },
             u64::MAX

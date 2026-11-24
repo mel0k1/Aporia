@@ -63,6 +63,7 @@ impl ToEarlyBootInfo for BootInformation<'_> {
 
         let initramfs_ptr = paddr_to_vaddr(module_tag.start_address() as usize);
         let initramfs_len = module_tag.module_size() as usize;
+
         let initramfs =
             unsafe { core::slice::from_raw_parts(initramfs_ptr as *const u8, initramfs_len) };
 
@@ -130,6 +131,13 @@ impl ToEarlyBootInfo for BootInformation<'_> {
     }
 }
 
+/// The entry point of the Rust code portion of Asterinas (with multiboot2 parameters).
+///
+/// # Safety
+///
+/// - This function must be called only once at a proper timing in the BSP's boot assembly code.
+/// - The caller must follow C calling conventions and put the right arguments in registers.
+/// - If this function is called, entry points of other boot protocols must never be called.
 #[unsafe(no_mangle)]
 unsafe extern "sysv64" fn __multiboot2_entry(boot_magic: u32, boot_params: u64) -> ! {
     assert_eq!(boot_magic, multiboot2::MAGIC);

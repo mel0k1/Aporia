@@ -1,3 +1,4 @@
+//! MemTable.
 use core::ops::Range;
 
 use super::{AsKV, RangeQueryCtx, RecordKey, RecordValue, SyncId, tx_lsm_tree::OnDropRecodeFn};
@@ -6,6 +7,8 @@ use crate::{
     prelude::*,
 };
 
+/// Manager for an mutable `MemTable` and an immutable `MemTable`
+/// in a `TxLsmTree`.
 pub(super) struct MemTableManager<K: RecordKey<K>, V> {
     mutable: Mutex<MemTable<K, V>>,
     immutable: RwLock<MemTable<K, V>>,
@@ -13,6 +16,12 @@ pub(super) struct MemTableManager<K: RecordKey<K>, V> {
     is_full: CvarMutex<bool>,
 }
 
+/// MemTable for LSM-Tree.
+///
+/// Manages organized key-value records in memory with a capacity.
+/// Each `MemTable` is sync-aware (tagged with current sync ID).
+/// Both synced and unsynced records can co-exist.
+/// Also supports user-defined callback when a record is dropped.
 pub(super) struct MemTable<K: RecordKey<K>, V> {
     table: BTreeMap<K, ValueEx<V>>,
     size: usize,
@@ -22,6 +31,8 @@ pub(super) struct MemTable<K: RecordKey<K>, V> {
     on_drop_record: Option<Arc<OnDropRecodeFn<K, V>>>,
 }
 
+/// An extended value which is sync-aware.
+/// At most one unsynced and one synced records can coexist at the same time.
 #[derive(Clone, Debug)]
 pub(super) enum ValueEx<V> {
     Synced(V),
@@ -30,6 +41,8 @@ pub(super) enum ValueEx<V> {
 }
 
 impl<K: RecordKey<K>, V: RecordValue> MemTableManager<K, V> {
+    /// Creates a new `MemTableManager` given the current master sync ID,
+    /// the capacity and the callback when dropping records.
     pub(super) fn new(
         sync_id: SyncId,
         capacity: usize,
@@ -50,6 +63,7 @@ impl<K: RecordKey<K>, V: RecordValue> MemTableManager<K, V> {
         }
     }
 
+    /// Gets the target value of the given key from the `MemTable`s.
     pub(super) fn get(&self, key: &K) -> Option<V> {
         if let Some(value) = self.mutable.lock().get(key) {
             return Some(*value);
@@ -62,6 +76,7 @@ impl<K: RecordKey<K>, V: RecordValue> MemTableManager<K, V> {
         None
     }
 
+    /// Gets the range of values from the `MemTable`s.
     pub(super) fn get_range(&self, range_query_ctx: &mut RangeQueryCtx<K, V>) -> bool {
         let is_completed = self.mutable.lock().get_range(range_query_ctx);
         if is_completed {
@@ -71,6 +86,8 @@ impl<K: RecordKey<K>, V: RecordValue> MemTableManager<K, V> {
         self.immutable.read().get_range(range_query_ctx)
     }
 
+    /// Puts a key-value pair into the mutable `MemTable`, and
+    /// return whether the mutable `MemTable` is full.
     pub(super) fn put(&self, key: K, value: V) -> bool {
         let mut is_full = self.is_full.lock().unwrap();
         while *is_full {
@@ -87,10 +104,14 @@ impl<K: RecordKey<K>, V: RecordValue> MemTableManager<K, V> {
         *is_full
     }
 
+    /// Sync the mutable `MemTable` with the given sync ID.
     pub(super) fn sync(&self, sync_id: SyncId) {
         self.mutable.lock().sync(sync_id)
     }
 
+    /// Switch two `MemTable`s. Should only be called in a situation that
+    /// the mutable `MemTable` becomes full and the immutable `MemTable` is
+    /// ready to be cleared.
     pub(super) fn switch(&self) -> Result<()> {
         let mut is_full = self.is_full.lock().unwrap();
         debug_assert!(*is_full);
@@ -104,6 +125,7 @@ impl<K: RecordKey<K>, V: RecordValue> MemTableManager<K, V> {
         core::mem::swap(&mut *mutable, &mut *immutable);
 
         debug_assert!(mutable.is_empty() && immutable.at_capacity());
+
         mutable.sync(sync_id);
 
         *is_full = false;
@@ -111,12 +133,15 @@ impl<K: RecordKey<K>, V: RecordValue> MemTableManager<K, V> {
         Ok(())
     }
 
+    /// Gets the immutable `MemTable` instance (read-only).
     pub(super) fn immutable_memtable(&self) -> RwLockReadGuard<'_, MemTable<K, V>> {
         self.immutable.read()
     }
 }
 
 impl<K: RecordKey<K>, V: RecordValue> MemTable<K, V> {
+    /// Creates a new `MemTable`, given the capacity, the current sync ID,
+    /// and the callback of dropping record.
     pub(super) fn new(
         cap: usize,
         sync_id: SyncId,
@@ -132,11 +157,13 @@ impl<K: RecordKey<K>, V: RecordValue> MemTable<K, V> {
         }
     }
 
+    /// Gets the target value given the key.
     pub(super) fn get(&self, key: &K) -> Option<&V> {
         let value_ex = self.table.get(key)?;
         Some(value_ex.get())
     }
 
+    /// Range query, returns whether the request is completed.
     pub(super) fn get_range(&self, range_query_ctx: &mut RangeQueryCtx<K, V>) -> bool {
         debug_assert!(!range_query_ctx.is_completed());
         let target_range = range_query_ctx.range_uncompleted().unwrap();
@@ -148,6 +175,7 @@ impl<K: RecordKey<K>, V: RecordValue> MemTable<K, V> {
         range_query_ctx.is_completed()
     }
 
+    /// Puts a new K-V record to the table, drop the old one.
     pub(super) fn put(&mut self, key: K, value: V) -> Option<V> {
         let dropped_value = if let Some(value_ex) = self.table.get_mut(&key) {
             if let Some(dropped) = value_ex.put(value) {
@@ -178,6 +206,7 @@ impl<K: RecordKey<K>, V: RecordValue> MemTable<K, V> {
         dropped_value
     }
 
+    /// Sync the table, update the sync ID, drop the replaced one.
     pub(super) fn sync(&mut self, sync_id: SyncId) {
         debug_assert!(self.sync_id <= sync_id);
         if self.sync_id == sync_id {
@@ -209,31 +238,38 @@ impl<K: RecordKey<K>, V: RecordValue> MemTable<K, V> {
         }
 
         self.sync_id = sync_id;
+
         let _ = self
             .unsynced_range
             .get_or_insert_with(|| K::new_zeroed()..K::new_zeroed());
     }
 
+    /// Return the sync ID of this table.
     pub(super) fn sync_id(&self) -> SyncId {
         self.sync_id
     }
 
+    /// Return an iterator over the table.
     pub(super) fn iter(&self) -> impl Iterator<Item = (&K, &ValueEx<V>)> {
         self.table.iter()
     }
 
+    /// Return the number of records in the table.
     pub(super) fn size(&self) -> usize {
         self.size
     }
 
+    /// Return whether the table is empty.
     pub(super) fn is_empty(&self) -> bool {
         self.size == 0
     }
 
+    /// Return whether the table is full.
     pub(super) fn at_capacity(&self) -> bool {
         self.size >= self.cap
     }
 
+    /// Clear all records from the table.
     pub(super) fn clear(&mut self) {
         self.table.clear();
         self.size = 0;
@@ -242,10 +278,12 @@ impl<K: RecordKey<K>, V: RecordValue> MemTable<K, V> {
 }
 
 impl<V: RecordValue> ValueEx<V> {
+    /// Creates a new unsynced value.
     pub(super) fn new(value: V) -> Self {
         Self::Unsynced(value)
     }
 
+    /// Gets the most recent value.
     pub(super) fn get(&self) -> &V {
         match self {
             Self::Synced(v) => v,
@@ -254,6 +292,7 @@ impl<V: RecordValue> ValueEx<V> {
         }
     }
 
+    /// Puts a new value, return the replaced value if any.
     fn put(&mut self, value: V) -> Option<V> {
         let existed = core::mem::take(self);
 
@@ -273,6 +312,7 @@ impl<V: RecordValue> ValueEx<V> {
         }
     }
 
+    /// Sync the value, return the replaced value if any.
     fn sync(&mut self) -> Option<V> {
         debug_assert!(self.contains_unsynced());
         let existed = core::mem::take(self);
@@ -290,6 +330,7 @@ impl<V: RecordValue> ValueEx<V> {
         }
     }
 
+    /// Whether the value contains an unsynced value.
     pub(super) fn contains_unsynced(&self) -> bool {
         match self {
             ValueEx::Unsynced(_) | ValueEx::SyncedAndUnsynced(_, _) => true,

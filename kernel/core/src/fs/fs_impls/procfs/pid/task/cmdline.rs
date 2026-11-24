@@ -9,6 +9,7 @@ use crate::{
     thread::Thread,
 };
 
+/// Represents the inode at `/proc/[pid]/task/[tid]/cmdline` (and also `/proc/[pid]/cmdline`).
 pub(super) struct CmdlineFileOps(TidDirOps);
 
 impl CmdlineFileOps {

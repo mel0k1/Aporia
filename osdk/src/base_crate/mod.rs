@@ -1,3 +1,6 @@
+//! The base crate is the OSDK generated crate that is ultimately built by cargo.
+//! It will depend on the to-be-built kernel crate or the to-be-tested crate.
+
 use std::{
     fs,
     io::{Read, Result},
@@ -14,6 +17,8 @@ const LINKER_SCRIPTS: &[(&str, &str)] = &[
     ("aarch64.ld", include_str!("aarch64.ld.template")),
 ];
 
+/// Compares two files byte-by-byte to check if they are identical.
+/// Returns `Ok(true)` if files are identical, `Ok(false)` if they are different, or `Err` if any I/O operation fails.
 fn are_files_identical(file1: &PathBuf, file2: &PathBuf) -> Result<bool> {
     let metadata1 = fs::metadata(file1)?;
     let metadata2 = fs::metadata(file2)?;
@@ -60,12 +65,22 @@ fn are_base_crate_reuse_inputs_identical(
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BaseCrateType {
+    /// The base crate is for running the target kernel crate.
     Run,
+    /// The base crate is for testing the target crate.
     Test,
+    /// The base crate is for other actions using Cargo.
     #[expect(unused)]
     Other,
 }
 
+/// Create a new base crate that will be built by cargo.
+///
+/// The dependencies of the base crate will be the target crate. If
+/// `link_unit_test_kernel` is set to true, the base crate will also depend on
+/// the `ostd-test-kernel` crate.
+///
+/// It returns the path to the base crate.
 pub fn new_base_crate(
     base_type: BaseCrateType,
     base_crate_path_stem: impl AsRef<Path>,
@@ -82,6 +97,7 @@ pub fn new_base_crate(
             })
         .to_string(),
     );
+
     if base_type == BaseCrateType::Run && base_crate_path.exists() {
         let base_crate_tmp_path = base_crate_path.join("tmp");
         do_new_base_crate(
@@ -146,6 +162,7 @@ fn do_new_base_crate(
     };
 
     fs::create_dir_all(&base_crate_path).unwrap();
+
     fs::create_dir_all(base_crate_path.as_ref().join("src")).unwrap();
 
     let cargo_toml = include_str!("Cargo.toml.template");
@@ -161,6 +178,7 @@ fn do_new_base_crate(
     }
 
     let main_rs = include_str!("main.rs.template");
+
     let main_rs = main_rs.replace("#TARGET_NAME#", &dep_crate_name.replace('-', "_"));
     fs::write("src/main.rs", main_rs).unwrap();
 

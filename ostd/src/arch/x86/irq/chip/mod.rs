@@ -17,17 +17,32 @@ use crate::{
 mod ioapic;
 mod pic;
 
+/// An IRQ chip.
+///
+/// This abstracts the hardware IRQ chips (or IRQ controllers), allowing the bus or device drivers
+/// to enable [`IrqLine`]s (via, e.g., [`map_gsi_pin_to`]) regardless of the specifics of the IRQ chip.
+///
+/// In the x86 architecture, the underlying hardware is typically either 8259 Programmable
+/// Interrupt Controller (PIC) or I/O Advanced Programmable Interrupt Controller (I/O APIC).
+///
+/// [`map_gsi_pin_to`]: Self::map_gsi_pin_to
 pub struct IrqChip {
     io_apics: SpinLock<Box<[IoApic]>>,
     overrides: Box<[IsaOverride]>,
 }
 
 struct IsaOverride {
+    /// ISA IRQ source.
     source: u8,
+    /// GSI target.
     target: u32,
 }
 
 impl IrqChip {
+    /// Maps an IRQ pin specified by a GSI number to an IRQ line.
+    ///
+    /// ACPI represents all interrupts as "flat" values known as global system interrupts (GSIs).
+    /// So GSI numbers are well defined on all systems where the ACPI support is present.
     pub fn map_gsi_pin_to(
         &'static self,
         irq_line: IrqLine,
@@ -64,6 +79,13 @@ impl IrqChip {
         io_apic.disable(index_in_io_apic).unwrap();
     }
 
+    /// Maps an IRQ pin specified by an ISA interrupt number to an IRQ line.
+    ///
+    /// Industry Standard Architecture (ISA) is the 16-bit internal bus of IBM PC/AT. For
+    /// compatibility reasons, legacy devices such as keyboards connected via the i8042 PS/2
+    /// controller still use it.
+    ///
+    /// This method is x86-specific.
     pub fn map_isa_pin_to(
         &'static self,
         irq_line: IrqLine,
@@ -79,11 +101,24 @@ impl IrqChip {
         self.map_gsi_pin_to(irq_line, gsi_index)
     }
 
+    /// Counts the number of I/O APICs.
+    ///
+    /// If I/O APICs are in use, this method counts how many I/O APICs are in use, otherwise, this
+    /// method return zero.
+    ///
+    /// This method exists due to a workaround used in virtio-mmio bus probing. It should be
+    /// removed once the workaround is retired. Therefore, only use this method if absolutely
+    /// necessary.
+    ///
+    /// This method is x86-specific.
     pub fn count_io_apics(&self) -> usize {
         self.io_apics.lock().len()
     }
 }
 
+/// An [`IrqLine`] mapped to an IRQ pin managed by an [`IrqChip`].
+///
+/// When the object is dropped, the IRQ line will be unmapped by the IRQ chip.
 pub struct MappedIrqLine {
     irq_line: IrqLine,
     gsi_index: u32,
@@ -119,6 +154,7 @@ impl Drop for MappedIrqLine {
     }
 }
 
+/// The [`IrqChip`] singleton.
 pub static IRQ_CHIP: Once<IrqChip> = Once::new();
 
 pub(in crate::arch) fn init(io_mem_builder: &IoMemAllocatorBuilder) {

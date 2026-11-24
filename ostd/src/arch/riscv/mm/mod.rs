@@ -45,22 +45,37 @@ impl PagingConstsTrait for PagingConsts {
 }
 
 bitflags::bitflags! {
+    /// Possible flags for a page table entry.
     #[derive(Clone, Copy, Debug)]
     pub(crate) struct PteFlags: usize {
+        /// Specifies whether the mapped frame or page table is valid.
         const VALID      = 1 << 0;
+        /// Controls whether reads to the mapped frames are allowed.
         const READABLE   = 1 << 1;
+        /// Controls whether writes to the mapped frames are allowed.
         const WRITABLE   = 1 << 2;
+        /// Controls whether execution code in the mapped frames are allowed.
         const EXECUTABLE = 1 << 3;
+        /// Controls whether accesses from userspace (i.e. U-mode) are permitted.
         const USER       = 1 << 4;
+        /// Indicates that the mapping is present in all address spaces, so it isn't flushed from
+        /// the TLB on an address space switch.
         const GLOBAL     = 1 << 5;
+        /// Whether the memory area represented by this entry is accessed.
         const ACCESSED   = 1 << 6;
+        /// Whether the memory area represented by this entry is modified.
         const DIRTY      = 1 << 7;
 
+        /// First bit ignored by MMU.
         const RSV1       = 1 << 8;
+        /// Second bit ignored by MMU.
         const RSV2       = 1 << 9;
 
+        /// PBMT: Non-cacheable, idempotent, weakly-ordered (RVWMO), main memory.
         const PBMT_NC    = 1 << 61;
+        /// PBMT: Non-cacheable, non-idempotent, strongly-ordered (I/O ordering), I/O.
         const PBMT_IO    = 1 << 62;
+        /// Naturally aligned power-of-2.
         const NAPOT      = 1 << 63;
     }
 }
@@ -89,6 +104,12 @@ pub(crate) fn can_sync_dma() -> bool {
     has_extensions(IsaExtensions::ZICBOM)
 }
 
+/// # Safety
+///
+/// The caller must ensure that
+///  - the virtual address range and DMA direction correspond correctly to a
+///    DMA region;
+///  - `can_sync_dma()` is `true`.
 pub(crate) unsafe fn sync_dma_range(mut range: Range<Vaddr>, is_from_device: bool) {
     use core::arch::asm;
 
@@ -124,6 +145,12 @@ pub(crate) unsafe fn sync_dma_range(mut range: Range<Vaddr>, is_from_device: boo
     }
 }
 
+/// Activates the given root-level page table.
+///
+/// # Safety
+///
+/// Changing the root-level page table is unsafe, because it's possible to violate memory safety by
+/// changing the page mapping.
 pub(crate) unsafe fn activate_page_table(root_paddr: Paddr) {
     assert!(root_paddr.is_multiple_of(PagingConsts::BASE_PAGE_SIZE));
     let ppn = root_paddr >> 12;
@@ -146,6 +173,7 @@ pub(crate) fn current_page_table_paddr() -> Paddr {
 #[derive(Clone, Copy, Debug, Default, Pod)]
 pub(crate) struct PageTableEntry(usize);
 
+/// Parses a bit-flag bits `val` in the representation of `from` to `to` in bits.
 macro_rules! parse_flags {
     ($val:expr, $from:expr, $to:expr) => {
         (($val as usize & $from.bits() as usize) >> $from.bits().ilog2() << $to.bits().ilog2())

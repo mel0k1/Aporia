@@ -1,3 +1,5 @@
+//! The timer support.
+
 use super::trap::TrapFrame;
 
 #[expect(dead_code)]

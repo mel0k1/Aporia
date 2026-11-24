@@ -1,7 +1,20 @@
+//! Inode-local cache for ext2 indirect metadata blocks.
+
 use hashbrown::HashMap;
 
 use crate::fs::fs_impls::ext2::{Ext2, prelude::*};
 
+/// Inode-local cache for ext2 indirect metadata blocks.
+///
+/// Resident indirect blocks belong to exactly one inode and are owned by the
+/// corresponding `BlockPtrTree`. Dirty indirect blocks remain associated with
+/// that inode until they are synced or removed.
+///
+/// # Invariants
+///
+/// - Cached blocks are never shared across inodes.
+/// - Dirty blocks must remain reachable until they are either written back or
+///   discarded as part of freeing their owning subtree.
 #[derive(Debug)]
 pub(super) struct IndirectBlockManager {
     cache: HashMap<Ext2Bid, IndirectBlock>,
@@ -9,6 +22,7 @@ pub(super) struct IndirectBlockManager {
 }
 
 impl IndirectBlockManager {
+    /// Creates a new indirect block manager.
     pub(super) fn new(fs: Weak<Ext2>) -> Self {
         Self {
             cache: HashMap::new(),
@@ -16,6 +30,7 @@ impl IndirectBlockManager {
         }
     }
 
+    /// Returns a shared reference to the indirect block at `bid`, loading it if needed.
     pub(super) fn find(&mut self, bid: Ext2Bid) -> Result<&IndirectBlock> {
         self.ensure_cached(bid)?;
         Ok(self
@@ -24,6 +39,7 @@ impl IndirectBlockManager {
             .expect("indirect block must be cached after ensure_cached"))
     }
 
+    /// Returns a mutable reference to the indirect block at `bid`, loading it if needed.
     pub(super) fn find_mut(&mut self, bid: Ext2Bid) -> Result<&mut IndirectBlock> {
         self.ensure_cached(bid)?;
         Ok(self
@@ -32,6 +48,7 @@ impl IndirectBlockManager {
             .expect("indirect block must be cached after ensure_cached"))
     }
 
+    /// Reads all non-zero child block pointers from an indirect block.
     pub(super) fn read_child_bids(&mut self, bid: Ext2Bid) -> Result<Vec<Ext2Bid>> {
         let ptrs_per_block = BLOCK_SIZE / size_of::<u32>();
         let block = self.find(bid)?;
@@ -46,15 +63,18 @@ impl IndirectBlockManager {
         Ok(child_bids)
     }
 
+    /// Inserts an indirect block into the cache.
     pub(super) fn insert(&mut self, block: IndirectBlock) -> Result<()> {
         self.cache.insert(block.bid(), block);
         Ok(())
     }
 
+    /// Removes an indirect block from the cache without writing it back.
     pub(super) fn remove(&mut self, bid: Ext2Bid) -> Option<IndirectBlock> {
         self.cache.remove(&bid)
     }
 
+    /// Writes all dirty cached indirect blocks back to the device.
     pub(super) fn sync(&mut self) -> Result<()> {
         let fs = self.fs()?;
         let dirty_bids: Vec<Ext2Bid> = self
@@ -119,6 +139,12 @@ impl IndirectBlockManager {
     }
 }
 
+/// One resident indirect metadata block.
+///
+/// Each `IndirectBlock` is a single page-frame that holds one ext2 indirect
+/// metadata block (i.e. an array of `u32` block-number pointers). It tracks
+/// its own device block address (`bid`) and a dirty flag so that write-back
+/// can be skipped for clean entries.
 #[derive(Debug)]
 pub(super) struct IndirectBlock {
     block: Frame<()>,
@@ -127,6 +153,7 @@ pub(super) struct IndirectBlock {
 }
 
 impl IndirectBlock {
+    /// Allocates an uninitialized indirect block frame.
     pub(super) fn alloc_uninit() -> Result<Self> {
         Ok(Self {
             block: FrameAllocOptions::new().zeroed(false).alloc_frame()?,
@@ -135,6 +162,7 @@ impl IndirectBlock {
         })
     }
 
+    /// Allocates a zeroed indirect block and marks it dirty.
     pub(super) fn alloc_new(bid: Ext2Bid) -> Result<Self> {
         Ok(Self {
             block: FrameAllocOptions::new().alloc_frame()?,
@@ -143,6 +171,7 @@ impl IndirectBlock {
         })
     }
 
+    /// Reads the block pointer at slot `idx`.
     pub(super) fn read_bid(&self, idx: usize) -> Result<Ext2Bid> {
         let slot_offset = self.slot_offset(idx);
         self.block
@@ -150,6 +179,7 @@ impl IndirectBlock {
             .map_err(|_| errno!(EIO, "failed to read indirect pointer"))
     }
 
+    /// Writes a block pointer at slot `idx` and marks the block dirty.
     pub(super) fn write_bid(&mut self, idx: usize, bid: Ext2Bid) -> Result<()> {
         let slot_offset = self.slot_offset(idx);
         self.block
@@ -159,10 +189,12 @@ impl IndirectBlock {
         Ok(())
     }
 
+    /// Returns whether the block has been modified since the last write-back.
     pub(super) fn is_dirty(&self) -> bool {
         self.dirty
     }
 
+    /// Returns the device block address of this indirect block.
     pub(super) fn bid(&self) -> Ext2Bid {
         self.bid
     }

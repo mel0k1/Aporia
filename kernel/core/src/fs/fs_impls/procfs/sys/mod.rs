@@ -21,6 +21,7 @@ mod fs;
 mod kernel;
 mod vm;
 
+/// Represents the inode at `/proc/sys`.
 pub(in procfs) struct SysDirOps;
 
 impl SysDirOps {

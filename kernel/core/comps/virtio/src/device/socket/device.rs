@@ -1,3 +1,5 @@
+//! The device object of virtio-vsock.
+
 use alloc::{boxed::Box, string::ToString, sync::Arc};
 use core::sync::atomic::{AtomicU64, Ordering};
 
@@ -22,6 +24,8 @@ use crate::{
     transport::{ConfigManager, DeviceTransport},
 };
 
+/// Socket devices, which facilitate data transfer between the guest and device without using the
+/// Ethernet or IP protocols.
 pub struct SocketDevice {
     config_manager: ConfigManager<VirtioVsockConfig>,
     guest_cid: AtomicU64,
@@ -34,10 +38,12 @@ pub struct SocketDevice {
 }
 
 impl SocketDevice {
+    /// Negotiates the subset of device features supported by this driver.
     pub(crate) fn negotiate_features(features: u64) -> u64 {
         (VsockFeatures::from_bits_truncate(features) & VsockFeatures::supported_features()).bits()
     }
 
+    /// Initializes a virtio-vsock device from `transport` and registers it globally.
     pub(crate) fn init(mut device_transport: DeviceTransport) -> Result<(), VirtioDeviceError> {
         let config_manager = VirtioVsockConfig::new_manager(device_transport.as_ref());
         let guest_cid = VirtioVsockConfig::read_guest_cid(&config_manager);
@@ -89,18 +95,24 @@ impl SocketDevice {
         Ok(())
     }
 
+    /// Locks the transmit queue.
     pub fn lock_tx(&self) -> SpinLockGuard<'_, TxQueue, BottomHalfDisabled> {
         self.tx_queue.lock()
     }
 
+    /// Locks the receive queue.
     pub fn lock_rx(&self) -> SpinLockGuard<'_, RxQueue, BottomHalfDisabled> {
         self.rx_queue.lock()
     }
 
+    /// Returns the current guest CID reported by the device configuration space.
     pub fn guest_cid(&self) -> u64 {
         self.guest_cid.load(Ordering::Relaxed)
     }
 
+    /// Registers the callback invoked after a packet is received.
+    ///
+    /// The function may be called only once; subsequent calls take no effect.
     pub fn init_rx_callback(&self, callback: fn()) {
         self.rx_callback.call_once(|| callback);
     }
@@ -111,6 +123,9 @@ impl SocketDevice {
         }
     }
 
+    /// Registers the callback invoked after a transport event is received.
+    ///
+    /// The function may be called only once; subsequent calls take no effect.
     pub fn init_event_callback(&self, callback: fn()) {
         self.event_callback.call_once(|| callback);
     }
@@ -134,6 +149,9 @@ impl SocketDevice {
         }
     }
 
+    /// Reloads the guest CID from the device configuration space.
+    ///
+    /// This is used after transport reset events, which may change the local CID.
     pub fn reload_guest_id(&self) {
         let guest_cid = VirtioVsockConfig::read_guest_cid(&self.config_manager);
         self.guest_cid.store(guest_cid, Ordering::Relaxed);

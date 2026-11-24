@@ -2,18 +2,21 @@ pub mod bin;
 pub mod file;
 pub mod vm_image;
 
+use bin::{AsterBin, AsterBinType};
+use file::{BundleFile, Initramfs};
 use std::{
     io::{BufRead, BufReader, Write},
     os::unix::net::UnixStream,
-    path::{Path, PathBuf},
     process::{self, ExitStatus},
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, Instant},
 };
-
-use bin::{AsterBin, AsterBinType};
-use file::{BundleFile, Initramfs};
 use tempfile::NamedTempFile;
 use vm_image::{AsterVmImage, AsterVmImageType};
+
+use std::{
+    path::{Path, PathBuf},
+    time::SystemTime,
+};
 
 use crate::{
     arch::Arch,
@@ -27,15 +30,28 @@ use crate::{
     util::{DirGuard, new_command_checked_exists},
 };
 
+/// Timeout for monitor reads; this is intentionally longer than the daemon
+/// supervision poll interval because monitor responses are socket-based.
 const MONITOR_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
+/// How long to wait for QEMU to create its monitor socket after it is spawned.
+///
+/// QEMU usually creates the socket within tens of milliseconds, but it can take
+/// a second or more on a busy machine, e.g., when several kernels are being
+/// built and booted at the same time.
 const MONITOR_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// The osdk bundle artifact that stores as `bundle` directory.
+///
+/// This `Bundle` struct is used to track a bundle on a filesystem. Every modification to the bundle
+/// would result in file system writes. But the bundle will not be removed from the file system when
+/// the `Bundle` is dropped.
 pub struct Bundle {
     manifest: BundleManifest,
     path: PathBuf,
 }
 
+/// The osdk bundle artifact manifest that stores as `bundle.toml`.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct BundleManifest {
     pub initramfs: Option<Initramfs>,
@@ -69,12 +85,15 @@ pub(crate) fn classify_qemu_exit_status(exit_status: ExitStatus) -> QemuExit {
     let kernel_exit_code = qemu_exit_code >> 1;
     match kernel_exit_code {
         0x10 => QemuExit::Success,
+
         0x20 => QemuExit::Failed,
+
         _ => QemuExit::Unknown,
     }
 }
 
 impl Bundle {
+    /// This function creates a new `Bundle` without adding any files.
     pub fn new(path: impl AsRef<Path>, config: &Config, action: ActionChoice) -> Self {
         std::fs::create_dir_all(path.as_ref()).unwrap();
         let config_initramfs = match action {
@@ -219,6 +238,7 @@ impl Bundle {
 
     pub fn run(&self, config: &Config, action: ActionChoice) {
         let exit_status = self.run_qemu_and_wait(config, action);
+
         match classify_qemu_exit_status(exit_status) {
             QemuExit::Success => {}
             QemuExit::Failed => std::process::exit(1),
@@ -276,6 +296,7 @@ impl Bundle {
             BootMethod::GrubQcow2 => {
                 let vm_image = self.manifest.vm_image.as_ref().unwrap();
                 assert!(matches!(vm_image.typ(), AsterVmImageType::Qcow2(_)));
+
                 let bootdev_opts = action
                     .qemu
                     .bootdev_append_options
@@ -430,6 +451,7 @@ impl Bundle {
         exit_status
     }
 
+    /// Move the vm_image into the bundle.
     pub fn consume_vm_image(&mut self, vm_image: AsterVmImage) {
         if self.manifest.vm_image.is_some() {
             panic!("vm_image already exists");
@@ -438,6 +460,7 @@ impl Bundle {
         self.write_manifest_to_fs();
     }
 
+    /// Move the aster_bin into the bundle.
     pub fn consume_aster_bin(&mut self, aster_bin: AsterBin) {
         if self.manifest.aster_bin.is_some() {
             panic!("aster_bin already exists");
@@ -478,6 +501,13 @@ impl Bundle {
     }
 }
 
+/// Connects to the QEMU monitor socket at `socket_path`.
+///
+/// QEMU creates the socket while it starts up, so this function keeps
+/// retrying until a connection succeeds. If QEMU exits or the socket is still
+/// not ready after `MONITOR_CONNECT_TIMEOUT`, it prints which one happened and
+/// returns `Errno::ExecuteCommand`. If a termination signal is received while
+/// waiting, it returns `Errno::Interrupted` so the caller can clean up.
 fn connect_to_qemu_monitor(
     socket_path: &Path,
     qemu_child: &mut process::Child,

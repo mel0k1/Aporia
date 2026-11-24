@@ -1,3 +1,9 @@
+//! Virtiofs device request handling.
+//!
+//! This module defines [`FileSystemDevice`], which initializes the virtiofs
+//! queues, tracks in-flight requests, and sends typed FUSE operations to the
+//! server.
+
 mod queue;
 mod request;
 mod session;
@@ -32,13 +38,30 @@ use crate::{
     transport::DeviceTransport,
 };
 
+/// Maximum data pages packed into one FUSE read request as DMA buffers.
+///
+/// A read request reserves one virtqueue descriptor for its request header and
+/// one for its reply header. Batching beyond this limit must be split across
+/// multiple requests.
 pub const MAX_READ_DATA_PAGES_PER_REQUEST: usize = queue::MAX_DMA_BUFS_PER_REQUEST - 2;
 
+/// Maximum data pages packed into one FUSE write request as DMA buffers.
+///
+/// A write request reserves one descriptor each for its request header, reply
+/// header, and write reply payload. Batching beyond this limit must be split
+/// across multiple requests.
 pub const MAX_WRITE_DATA_PAGES_PER_REQUEST: usize = queue::MAX_DMA_BUFS_PER_REQUEST - 3;
 
 static FILESYSTEM_DEVICES: Once<SpinLock<Vec<Arc<FileSystemDevice>>, LocalIrqDisabled>> =
     Once::new();
 
+/// A virtiofs device that issues FUSE requests to a server.
+///
+/// # Locking
+///
+/// FUSE requests may be submitted while the caller holds sleepable VFS
+/// guards. The request path takes virtio-fs locks in this order:
+/// VFS sleepable guard -> selected request queue `SpinLock`.
 pub struct FileSystemDevice {
     transport: SpinLock<DeviceTransport, LocalIrqDisabled>,
     hiprio_queue: Arc<FsRequestQueue>,
@@ -66,12 +89,20 @@ impl FileSystemDevice {
             request_queues,
             to_device_pool: VirtiofsDmaPool::new(to_device_arena_pool),
             from_device_pool: VirtiofsDmaPool::new(from_device_arena_pool),
+
             next_unique: AtomicU64::new(1),
             tag,
             notify_supported,
         }
     }
 
+    /// Submits a FUSE operation and returns a waiter for request completion.
+    ///
+    /// # Locking
+    ///
+    /// Builds the request before taking the selected request queue `SpinLock`.
+    /// The submit path may sleep waiting for free queue descriptors, but the
+    /// queue lock is never held across that wait.
     fn submit_fuse_op<Op: FuseOperation>(
         &self,
         nodeid: FuseNodeId,
@@ -279,6 +310,7 @@ fn register_device(device: Arc<FileSystemDevice>) {
         .push(device);
 }
 
+/// Finds the virtio-fs device registered with the given `tag`.
 pub fn find_device_by_tag(tag: &str) -> Option<Arc<FileSystemDevice>> {
     let devices = FILESYSTEM_DEVICES.get()?;
     let devices = devices.lock();
@@ -288,6 +320,8 @@ pub fn find_device_by_tag(tag: &str) -> Option<Arc<FileSystemDevice>> {
         .cloned()
 }
 
+/// Virtio-fs reserves queue 0 for high-priority requests such as `FUSE_FORGET`.
 const HIPRIO_QUEUE_INDEX: u16 = 0;
 
+/// The default queue size for any queue in virtio-fs.
 const DEFAULT_QUEUE_SIZE: u16 = 128;

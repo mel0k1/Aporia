@@ -155,6 +155,7 @@ fn setxattr(
     Ok(())
 }
 
+/// The context to describe the target file for xattr operations.
 pub(super) enum XattrFileCtx<'a> {
     Path(CString),
     PathNoFollow(CString),

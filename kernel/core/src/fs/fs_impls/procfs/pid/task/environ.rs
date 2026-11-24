@@ -9,6 +9,7 @@ use crate::{
     thread::Thread,
 };
 
+/// Represents the inode at `/proc/[pid]/task/[tid]/environ` (and also `/proc/[pid]/environ`).
 pub(super) struct EnvironFileOps(TidDirOps);
 
 impl EnvironFileOps {

@@ -1,8 +1,21 @@
+//! Common parameter value types for the cmdline framework.
+//!
+//! This module provides Linux-style parsers that are frequently used by kernel
+//! command lines so users of this framework don't need to rewrite them.
+
 use alloc::vec::Vec;
 use core::num::{NonZeroU32, NonZeroUsize};
 
 use crate::parse::{ParamError, ParseParamValue};
 
+/// Linux-style CPU list.
+///
+/// Examples:
+/// - `"1"`
+/// - `"1,2,10-20"`
+/// - `"100-2000:2/25"` (range with stride and optional group size)
+///
+/// The stored representation is a list of segments; expansion is optional.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CpuList {
     segments: Vec<CpuListSegment>,
@@ -12,7 +25,10 @@ pub struct CpuList {
 pub struct CpuListSegment {
     start: u32,
     end: u32,
+    /// Step within range, default 1.
     stride: NonZeroU32,
+    /// Optional group size (the `/N` part). When present, stride selection is
+    /// applied within each group window.
     group: Option<NonZeroU32>,
 }
 
@@ -25,6 +41,9 @@ impl CpuList {
         self.segments.iter().any(|s| segment_contains(s, cpu))
     }
 
+    /// Expands to concrete CPU IDs, returning at most `max_elems` elements.
+    ///
+    /// Note: If the CPU list expands to more than `max_elems`, the result is truncated.
     pub fn expand_bounded(&self, max_elems: usize) -> Vec<u32> {
         if max_elems == 0 {
             return Vec::new();
@@ -66,18 +85,22 @@ impl CpuList {
 }
 
 impl CpuListSegment {
+    /// Returns the start of the segment (the `N` in `N` or the `N` in `N-M`).
     pub fn start(&self) -> u32 {
         self.start
     }
 
+    /// Returns the end of the segment (the `M` in `N-M`).
     pub fn end(&self) -> u32 {
         self.end
     }
 
+    /// Returns the stride of the segment (the `S` in `N-M:S`).
     pub fn stride(&self) -> NonZeroU32 {
         self.stride
     }
 
+    /// Returns the group size of the segment (the `G` in `N-M:S/G`).
     pub fn group(&self) -> Option<NonZeroU32> {
         self.group
     }
@@ -176,6 +199,11 @@ fn parse_u32(s: &str) -> Result<u32, ParamError> {
     s.parse::<u32>().map_err(|_| ParamError::InvalidValue)
 }
 
+/// Linux-style MMIO device descriptor.
+///
+/// This type parses values in the form `<size>@<base>:<irq>[:<id>]`.
+/// `size` supports binary suffixes (`K`, `M`, `G`, and `T`), while `base`,
+/// `irq`, and `id` may be decimal or hexadecimal with a `0x` prefix.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MmioDevice {
     base: usize,
@@ -185,18 +213,22 @@ pub struct MmioDevice {
 }
 
 impl MmioDevice {
+    /// Returns the base address of the MMIO region.
     pub fn base(&self) -> usize {
         self.base
     }
 
+    /// Returns the size of the MMIO region.
     pub fn size(&self) -> NonZeroUsize {
         self.size
     }
 
+    /// Returns the interrupt line described by the command-line value.
     pub fn irq(&self) -> NonZeroU32 {
         self.irq
     }
 
+    /// Returns the optional device ID.
     pub fn id(&self) -> Option<u32> {
         self.id
     }
@@ -274,6 +306,16 @@ fn parse_u32_with_hex_prefix(value: &str) -> Option<u32> {
     }
 }
 
+/// Linux-style metric-suffixed u64 value.
+///
+/// Supports binary multiples (KiB-style):
+/// - `K` = 1024
+/// - `M` = 1024^2
+/// - `G` = 1024^3
+/// - `T` = 1024^4
+/// - `P` = 1024^5
+///
+/// Case-insensitive.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct MetricU64(pub u64);
 

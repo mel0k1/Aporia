@@ -1,3 +1,20 @@
+//! Unimplemented kernel command-line parameters and placeholder handlers.
+//!
+//! This module declares kernel parameters that the framework recognizes but does
+//! not implement behavior for yet. Parameters registered here are consumed by
+//! the dispatcher (they are not forwarded to the init process) and a warning
+//! is logged when they are present.
+
+/// Defines kernel command-line parameters that are intentionally left unimplemented.
+///
+/// Matching tokens are consumed (not forwarded to `init`) and a warning is logged when
+/// such parameters appear.
+///
+/// # Examples
+///
+/// ```ignore
+/// define_unimplemented_param!("foo", "bar");
+/// ```
 #[macro_export]
 macro_rules! define_unimplemented_param {
     ($($name:expr),+ $(,)?) => {

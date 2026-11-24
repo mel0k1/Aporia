@@ -1,3 +1,8 @@
+//! Ranged integer types.
+//!
+//! This module provides generic ranged integer types that enforce value always stay
+//! within the specified range.
+
 macro_rules! define_ranged_integer {
     ($visibility: vis, $name: ident, $type: ty) => {
         #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]

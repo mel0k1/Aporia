@@ -9,12 +9,21 @@ use crate::{
     sync::non_null::NonNullPtr,
 };
 
+/// A struct that can work as `&'a Frame<M>`.
 pub struct FrameRef<'a, M: AnyFrameMeta + ?Sized> {
     inner: ManuallyDrop<Frame<M>>,
     _marker: PhantomData<&'a Frame<M>>,
 }
 
 impl<M: AnyFrameMeta + ?Sized> FrameRef<'_, M> {
+    /// Borrows the [`Frame`] at the physical address as a [`FrameRef`].
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that:
+    ///  - the frame outlives the created reference, so that the reference can
+    ///    be seen as borrowed from that frame.
+    ///  - the type of the [`FrameRef`] (`M`) matches the borrowed frame.
     pub(crate) unsafe fn borrow_paddr(raw: Paddr) -> Self {
         Self {
             inner: ManuallyDrop::new(unsafe { Frame::from_raw(raw) }),

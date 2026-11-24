@@ -1,3 +1,8 @@
+//! This module offers `/proc/version` file support, which provides
+//! information about the kernel version.
+//!
+//! Reference: <https://man7.org/linux/man-pages/man5/proc_version.5.html>
+
 use aster_util::printer::VmPrinter;
 
 use crate::{
@@ -10,6 +15,7 @@ use crate::{
     prelude::*,
 };
 
+/// Represents the inode at `/proc/version`.
 pub(super) struct VersionFileOps;
 
 impl VersionFileOps {

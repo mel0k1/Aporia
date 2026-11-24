@@ -1,6 +1,7 @@
 use linux_bzimage_builder::PayloadEncoding;
 
 use super::{Boot, BootScheme, Grub, GrubScheme, Qemu, QemuScheme, inherit_optional};
+
 use crate::{cli::CommonArgs, config::Arch};
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -16,6 +17,8 @@ pub struct BuildScheme {
     pub features: Vec<String>,
     #[serde(default)]
     pub no_default_features: bool,
+    /// Whether to turn on the support for the
+    /// [Linux legacy x86 32-bit boot protocol](https://www.kernel.org/doc/html/v5.6/x86/boot.html)
     #[serde(default)]
     pub linux_x86_legacy_boot: bool,
     #[serde(default)]
@@ -32,6 +35,7 @@ pub struct Build {
     pub features: Vec<String>,
     #[serde(default)]
     pub no_default_features: bool,
+
     pub override_configs: Vec<String>,
     #[serde(default)]
     pub linux_x86_legacy_boot: bool,
@@ -101,6 +105,7 @@ impl BuildScheme {
             features.extend(self.features.clone());
             features
         };
+
         if parent.linux_x86_legacy_boot {
             self.linux_x86_legacy_boot = true;
         }

@@ -1,3 +1,5 @@
+//! A global allocator implementation of many slab caches.
+
 use core::{
     alloc::{AllocError, Layout},
     cell::RefCell,
@@ -42,6 +44,7 @@ impl CommonSizeClass {
             1025..=2048 => CommonSizeClass::Bytes2048,
             _ => return None,
         };
+
         let align_class = match layout.align() {
             1 | 2 | 4 | 8 => CommonSizeClass::Bytes8,
             16 => CommonSizeClass::Bytes16,
@@ -77,6 +80,9 @@ impl CommonSizeClass {
     }
 }
 
+/// Get the type of the slot from the layout.
+///
+/// It should be used to define [`ostd::global_heap_allocator_slot_map`].
 pub const fn type_from_layout(layout: Layout) -> Option<SlotInfo> {
     if let Some(class) = CommonSizeClass::from_layout(layout) {
         return Some(SlotInfo::SlabSlot(class as usize));
@@ -147,7 +153,12 @@ impl Heap {
 
 static GLOBAL_POOL: SpinLock<Heap, LocalIrqDisabled> = SpinLock::new(Heap::new());
 
+/// The maximum size in bytes of the object cache of each slot size class.
 const OBJ_CACHE_MAX_SIZE: usize = 8 * PAGE_SIZE;
+/// The expected size in bytes of the object cache of each slot size class.
+///
+/// If the cache exceeds the maximum size or is empty, it will be adjusted to
+/// this size.
 const OBJ_CACHE_EXPECTED_SIZE: usize = 2 * PAGE_SIZE;
 
 struct ObjectCache<const SLOT_SIZE: usize> {
@@ -269,6 +280,11 @@ cpu_local! {
     static LOCAL_POOL: RefCell<LocalCache> = RefCell::new(LocalCache::new());
 }
 
+/// The global heap allocator provided by OSDK.
+///
+/// It is a singleton that provides heap allocation for the kernel. If
+/// multiple instances of this struct are created, all the member functions
+/// will eventually access the same allocator.
 pub struct HeapAllocator;
 
 impl GlobalHeapAllocator for HeapAllocator {

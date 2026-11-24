@@ -1,8 +1,11 @@
+//! RISC-V ISA extensions.
+
 use bitflags::bitflags;
 use spin::Once;
 
 use crate::arch::boot::DEVICE_TREE;
 
+/// Detects available RISC-V ISA extensions.
 pub(in crate::arch) fn init() {
     let mut global_isa_extensions = IsaExtensions::all();
 
@@ -37,6 +40,7 @@ pub(in crate::arch) fn init() {
     GLOBAL_ISA_EXTENSIONS.call_once(|| global_isa_extensions);
 }
 
+/// Checks if the specified set of ISA extensions are available.
 pub fn has_extensions(required: IsaExtensions) -> bool {
     GLOBAL_ISA_EXTENSIONS.get().unwrap().contains(required)
 }
@@ -97,6 +101,7 @@ fn parse_isa_extensions_list(isa_extensions: &fdt::node::NodeProperty) -> IsaExt
 
 static GLOBAL_ISA_EXTENSIONS: Once<IsaExtensions> = Once::new();
 
+/// A macro for RISC-V ISA extension definition and lookup table generation.
 macro_rules! define_isa_extensions {
     (
         $(
@@ -104,6 +109,7 @@ macro_rules! define_isa_extensions {
         )*
     ) => {
         bitflags! {
+            /// RISC-V ISA extensions.
             #[derive(Clone, Copy, Debug)]
             pub struct IsaExtensions: u128 {
                 $(
@@ -130,6 +136,7 @@ struct ExtensionData {
 }
 
 define_isa_extensions! {
+
     A =  0, "a", "Atomic instructions";
     C =  2, "c", "Compressed instructions";
     D =  3, "d", "Double-precision floating-point";
@@ -139,6 +146,7 @@ define_isa_extensions! {
     M = 12, "m", "Integer multiplication and division";
     Q = 16, "q", "Quad-precision floating-point";
     V = 21, "v", "Vector extension";
+
 
     SSCOFPMF    = 26, "sscofpmf",    "Supervisor-mode counter overflow and privilege mode filtering";
     SSTC        = 27, "sstc",        "Supervisor-mode timer interrupts";

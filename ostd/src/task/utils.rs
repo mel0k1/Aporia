@@ -1,5 +1,6 @@
 use alloc::fmt;
 
+/// Always [`Sync`], but unsafe to reference the data.
 pub(super) struct ForceSync<T>(T);
 
 impl<T> fmt::Debug for ForceSync<T> {
@@ -11,10 +12,17 @@ impl<T> fmt::Debug for ForceSync<T> {
 unsafe impl<T> Sync for ForceSync<T> {}
 
 impl<T> ForceSync<T> {
+    /// Creates an instance with `data` as the inner data.
     pub(super) fn new(data: T) -> Self {
         Self(data)
     }
 
+    /// Returns a reference to the inner data.
+    ///
+    /// # Safety
+    ///
+    /// If the data type is not [`Sync`], the caller must ensure that the data is not accessed
+    /// concurrently.
     pub(super) unsafe fn get(&self) -> &T {
         &self.0
     }

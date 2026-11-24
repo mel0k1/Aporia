@@ -12,12 +12,25 @@ use crate::{
     prelude::*,
 };
 
+/// An inode abstraction used in the sysfs file system.
 pub(super) struct SysFsInode {
+    /// The corresponding node in the SysTree.
     node_kind: SysTreeNodeKind,
+    /// The metadata of this inode.
+    ///
+    /// Most of the metadata (e.g., file size, timestamps)
+    /// can be determined upon the creation of an inode,
+    /// and are thus kept intact inside the immutable `metadata` field.
+    /// Currently, the only mutable metadata is `mode`,
+    /// which allows user space to `chmod` an inode on sysfs.
     metadata: Metadata,
+    /// The extension of this inode.
     extension: Extension,
+    /// The file mode (permissions) of this inode, protected by a lock.
     mode: RwLock<InodeMode>,
+    /// Weak reference to the parent inode.
     parent: Weak<SysFsInode>,
+    /// Weak self-reference for cyclic data structures.
     this: Weak<SysFsInode>,
 }
 

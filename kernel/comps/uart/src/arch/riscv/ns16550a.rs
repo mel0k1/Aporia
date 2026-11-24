@@ -1,3 +1,5 @@
+//! NS16550A UART console support.
+
 use alloc::string::ToString;
 
 use fdt::node::FdtNode;
@@ -15,6 +17,7 @@ use crate::console::{Uart, UartConsole};
 
 pub(super) const FDT_COMPATIBLES: [&str; 1] = ["ns16550a"];
 
+/// Access to serial registers via `IoMem`.
 struct SerialAccess {
     io_mem: IoMem,
 }
@@ -29,6 +32,7 @@ impl Ns16550aAccess for SerialAccess {
     }
 }
 
+/// IRQ line for UART serial.
 static IRQ_LINE: Once<MappedIrqLine> = Once::new();
 
 pub(super) fn init(fdt_node: FdtNode) {

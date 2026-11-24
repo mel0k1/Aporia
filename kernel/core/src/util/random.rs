@@ -5,6 +5,9 @@ use crate::prelude::*;
 
 static RNG: Once<SpinLock<StdRng>> = Once::new();
 
+/// Fill `dest` with random bytes.
+///
+/// It's cryptographically secure, as documented in [`rand::rngs::StdRng`].
 pub(crate) fn getrandom(dst: &mut [u8]) {
     RNG.get().unwrap().lock().fill_bytes(dst);
 }

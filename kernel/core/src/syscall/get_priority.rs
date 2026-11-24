@@ -16,10 +16,12 @@ pub(super) fn sys_get_priority(which: i32, who: u32, ctx: &Context) -> Result<Sy
         let mut nice = Nice::MAX.value().get();
         for process in processes.iter() {
             let proc_nice = process.nice().load(Ordering::Relaxed).value().get();
+
             if proc_nice < nice {
                 nice = proc_nice;
             }
         }
+
         20 - nice
     };
 
@@ -61,8 +63,11 @@ fn collect_processes(prio_target: PriorityTarget) -> Vec<Arc<Process>> {
 
 #[derive(Debug)]
 pub(super) enum PriorityTarget {
+    /// Apply to the process of the specified process ID.
     Process(Pid),
+    /// Apply to the processes that belong to the specified process group.
     ProcessGroup(Pgid),
+    /// Apply to the processes that are running under the specified user.
     User(Uid),
 }
 

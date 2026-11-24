@@ -1,3 +1,9 @@
+//! Flattened Device Tree (FDT) utilities.
+//!
+//! This crate provides some useful extension traits
+//! for `FdtNode` from [the `fdt` crate](https://crates.io/crates/fdt)
+//! on supported CPU architectures.
+
 #![no_std]
 #![deny(unsafe_code)]
 #![cfg(any(

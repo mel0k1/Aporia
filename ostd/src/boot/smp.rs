@@ -1,3 +1,5 @@
+//! Symmetric multiprocessing (SMP) boot support.
+
 use alloc::{boxed::Box, collections::btree_map::BTreeMap, vec::Vec};
 
 use spin::Once;
@@ -19,7 +21,9 @@ static AP_BOOT_INFO: Once<ApBootInfo> = Once::new();
 const AP_BOOT_STACK_SIZE: usize = PAGE_SIZE * 64;
 
 struct ApBootInfo {
+    /// Raw boot information for each AP.
     per_ap_raw_info: Box<[PerApRawInfo]>,
+    /// Boot information for each AP.
     #[cfg_attr(target_arch = "x86_64", expect(dead_code))]
     per_ap_info: Box<[PerApInfo]>,
 }
@@ -29,6 +33,11 @@ struct PerApInfo {
     boot_stack_pages: Segment<KernelMeta>,
 }
 
+/// Raw boot information for APs.
+///
+/// This is "raw" information that the assembly code (run by APs at startup,
+/// before ever entering the Rust entry point) will directly access. So the
+/// layout is important. **Update the assembly code if the layout is changed!**
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub(crate) struct PerApRawInfo {
@@ -41,6 +50,16 @@ unsafe impl Sync for PerApRawInfo {}
 
 static HW_CPU_ID_MAP: SpinLock<BTreeMap<u32, HwCpuId>> = SpinLock::new(BTreeMap::new());
 
+/// Boots all application processors.
+///
+/// This function should be called late in the system startup. The system must at
+/// least ensure that the scheduler, ACPI table, memory allocation, and IPI module
+/// have been initialized.
+///
+/// # Safety
+///
+/// This function can only be called in the boot context of the BSP where APs have
+/// not yet been booted.
 pub(crate) unsafe fn boot_all_aps() {
     report_online_and_hw_cpu_id(crate::cpu::CpuId::bsp().as_usize().try_into().unwrap());
 
@@ -77,6 +96,7 @@ pub(crate) unsafe fn boot_all_aps() {
 
     let info_ptr = AP_BOOT_INFO.get().unwrap().per_ap_raw_info.as_ptr();
     let pt_ptr = crate::mm::page_table::boot_pt::with_borrow(|pt| pt.root_address()).unwrap();
+
     unsafe { crate::arch::boot::smp::bringup_all_aps(info_ptr, pt_ptr, num_cpus as u32) };
 
     wait_for_all_aps_started(num_cpus);
@@ -86,10 +106,21 @@ pub(crate) unsafe fn boot_all_aps() {
 
 static AP_LATE_ENTRY: Once<fn()> = Once::new();
 
+/// Registers the entry function for the application processor.
+///
+/// Once the entry function is registered, all the application processors
+/// will jump to the entry function immediately.
 pub fn register_ap_entry(entry: fn()) {
     AP_LATE_ENTRY.call_once(|| entry);
 }
 
+/// The AP's entry point of the Rust code portion of Asterinas.
+///
+/// # Safety
+///
+/// - This function must be called only once on each AP at a proper timing in the AP's boot
+///   assembly code, or via a thin Rust wrapper that does not access uninitialized AP states.
+/// - The caller must follow C calling conventions and put the right arguments in registers.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn ap_early_entry(cpu_id: u32) -> ! {
     unsafe { crate::cpu::init_on_ap(cpu_id) };
@@ -141,6 +172,13 @@ fn wait_for_all_aps_started(num_cpus: usize) {
     }
 }
 
+/// Constructs a boxed slice that maps [`CpuId`] to [`HwCpuId`].
+///
+/// # Panics
+///
+/// This method will panic if it is called either before all APs have booted or more than once.
+///
+/// [`CpuId`]: crate::cpu::CpuId
 pub(crate) fn construct_hw_cpu_id_mapping() -> Box<[HwCpuId]> {
     let mut hw_cpu_id_map = HW_CPU_ID_MAP.lock();
     assert_eq!(hw_cpu_id_map.len(), crate::cpu::num_cpus());

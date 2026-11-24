@@ -11,9 +11,14 @@ pub(super) mod ack;
 pub(super) mod common;
 pub(super) mod header;
 
+/// A wire-format message body whose fields are interpreted by the request handler.
 pub(crate) trait SegmentBody: Pod + From<Self::CLegacyType> {
     type CLegacyType: Pod = Self;
 
+    /// Reads the segment body from the `reader`.
+    ///
+    /// Returns the body and the remaining payload length after body alignment padding,
+    /// excluding trailing message alignment padding.
     fn read_from(
         header: &CMsgSegHdr,
         reader: &mut dyn MultiRead,
@@ -46,6 +51,7 @@ pub(crate) trait SegmentBody: Pod + From<Self::CLegacyType> {
         Ok(ContinueRead::Parsed((body, remaining_len)))
     }
 
+    /// Writes the segment body to the `writer`.
     fn write_to(&self, writer: &mut dyn MultiWrite) -> Result<()> {
         writer.write_val_trunc(self)?;
 

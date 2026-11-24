@@ -1,18 +1,29 @@
+//! Classification of logical block ranges as mapped runs or sparse holes.
+
 use super::block_manager::BlockPtrTree;
 use crate::fs::ext2::prelude::*;
 
+/// Ext2 block-range classification for the current logical interval.
 #[derive(Debug, Eq, PartialEq)]
 pub(super) enum IoRange {
+    /// A contiguous mapped device-block range.
     Mapped(Range<Ext2Bid>),
+    /// A hole in the file expressed as a logical-block interval.
     Hole(Range<Iblock>),
 }
 
+/// Iterator over mapped runs and sparse holes in a logical block range.
+///
+/// Each item preserves the range classification needed by block-backed I/O:
+/// contiguous device-block mappings remain grouped,
+/// and sparse logical ranges remain explicit holes.
 pub(super) struct IoRangeIter<'a> {
     range: Range<Iblock>,
     block_ptr_tree: RwMutexReadGuard<'a, BlockPtrTree>,
 }
 
 impl<'a> IoRangeIter<'a> {
+    /// Creates an iterator over the logical block `range` using `block_ptr_tree` for lookups.
     pub(super) fn new(
         range: Range<Iblock>,
         block_ptr_tree: RwMutexReadGuard<'a, BlockPtrTree>,
@@ -23,6 +34,11 @@ impl<'a> IoRangeIter<'a> {
         }
     }
 
+    /// Returns the next logical run for block-I/O planning.
+    ///
+    /// `IoRange::Mapped` returns one run whose logical blocks are backed by
+    /// contiguous physical device blocks. `IoRange::Hole` returns a known hole
+    /// run that may stop early at direct/indirect region boundaries.
     pub(super) fn next(&mut self) -> Result<Option<IoRange>> {
         if self.range.is_empty() {
             return Ok(None);
@@ -81,6 +97,7 @@ mod test {
         block_ptrs[0] = 50;
         block_ptrs[1] = 51;
         block_ptrs[2] = 52;
+
         block_ptrs[7] = 60;
         block_ptrs[8] = 61;
 

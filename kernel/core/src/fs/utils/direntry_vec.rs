@@ -3,14 +3,17 @@ use aster_util::slot_vec::SlotVec;
 use crate::{fs::vfs::inode::Inode, prelude::*};
 
 pub(crate) trait DirEntryVecExt {
+    /// Finds the entry by the `name`.
     fn find_entry_by_name(&self, name: &str) -> Option<&Arc<dyn Inode>>;
 
+    /// Puts the entry given by `f` into the vector if it is not found by the `name`.
     fn put_entry_if_not_found(
         &mut self,
         name: &str,
         f: impl FnOnce() -> Arc<dyn Inode>,
     ) -> &Arc<dyn Inode>;
 
+    /// Removes the entry by the `name`.
     fn remove_entry_by_name(&mut self, name: &str) -> Option<(String, Arc<dyn Inode>)>;
 }
 

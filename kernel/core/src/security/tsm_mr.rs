@@ -1,3 +1,20 @@
+//! TDX measurement registers (TSM-MR) sysfs interface.
+//!
+//! This module exposes Intel TDX measurement registers to userspace under
+//! `/sys/devices/virtual/misc/tdx_guest/measurements/`. Each file corresponds
+//! to one register:
+//!
+//! | Path | Register | Writable |
+//! |------|----------|----------|
+//! | `mrconfigid` | `MRCONFIGID` | No |
+//! | `mrowner` | `MROWNER` | No |
+//! | `mrownerconfig` | `MROWNERCONFIG` | No |
+//! | `mrtd:sha384` | `MRTD` | No |
+//! | `rtmr0:sha384` … `rtmr3:sha384` | `RTMR[0..3]` | Yes |
+//!
+//! For more information about the TSM-MR ABI, see the Linux kernel
+//! [documentation](https://www.kernel.org/doc/Documentation/ABI/testing/sysfs-devices-virtual-misc-tdx_guest).
+
 use alloc::sync::Arc;
 
 use aster_systree::{
@@ -20,6 +37,8 @@ pub(super) fn init() {
     aster_device::register_legacy_virtual_node("misc", tdx_guest_node).unwrap();
 }
 
+/// A systree node representing the `/sys/devices/virtual/misc/tdx_guest`
+/// directory.
 #[derive(Debug)]
 struct TdxGuestSysNodeRoot {
     fields: BranchNodeFields<dyn SysObj, Self>,
@@ -51,6 +70,18 @@ inherit_sys_branch_node!(TdxGuestSysNodeRoot, fields, {
 #[derive(Debug)]
 struct Measurement {
     fields: NormalNodeFields<Self>,
+    /// Whether the cached TDX report is in sync with current hardware state.
+    ///
+    /// Set to `false` by `write_attr` after a successful
+    /// [`tdxguest::extend_tdx_mr`] call, because the extend changes RTMR
+    /// hardware state that is not yet reflected in the cached
+    /// `TDREPORT_STRUCT`.  Set back to `true` by `read_attr_at` once it has
+    /// re-generated the report via [`tdxguest::get_tdx_mr_refresh`].
+    ///
+    /// Invariant: when `in_sync` is `true`, the cached report correctly
+    /// reflects the current value of every RTMR.  Static registers
+    /// (`MRCONFIGID`, `MROWNER`, `MROWNERCONFIG`, `MRTD`) are fixed at TD
+    /// creation time and are always in sync regardless of this flag.
     in_sync: RwMutex<bool>,
 }
 
@@ -59,6 +90,19 @@ struct MeasurementAttr {
     name: &'static str,
     perms: SysPerms,
     reg: MeasurementReg,
+    /// Whether reading this attribute requires refreshing the cached TDX report
+    /// first.
+    ///
+    /// Static registers (`MRCONFIGID`, `MROWNER`, `MROWNERCONFIG`, `MRTD`) are
+    /// written by the TDX module at TD creation time and can never change at
+    /// runtime, so `false` is correct for them — the cached `TDREPORT_STRUCT`
+    /// is always authoritative.
+    ///
+    /// RTMRs can be extended at any time via [`tdxguest::extend_tdx_mr`], which
+    /// changes hardware state without updating the cache.  For these registers
+    /// `refresh_on_read` is `true`, and `read_attr_at` will conditionally
+    /// re-generate the report (via [`tdxguest::get_tdx_mr_refresh`]) whenever
+    /// [`Measurement::in_sync`] is `false`.
     refresh_on_read: bool,
 }
 

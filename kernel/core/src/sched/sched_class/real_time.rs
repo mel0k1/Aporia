@@ -49,6 +49,19 @@ impl RealTimePolicy {
     }
 }
 
+/// The scheduling attribute for the REAL-TIME scheduling class.
+///
+/// This structure provides not-only the priority of the thread,
+/// but also the time slice for the thread, measured in [`sched_clock`]s.
+///
+/// - If the time slice is not set, the thread is considered to be a FIFO
+///   thread, and will be executed to its end if there no thread with a
+///   lower priority.
+/// - If the time slice is set, the thread is considered to be an RR
+///   (round-robin) thread, and will be executed for the time slice, and
+///   then it will be put back to the inactive array.
+///
+/// [`sched_clock`]: super::sched_clock
 #[derive(Debug)]
 pub(crate) struct RealTimeAttr {
     prio: AtomicU8,
@@ -123,6 +136,17 @@ impl PrioArray {
     }
 }
 
+/// The per-cpu run queue for the REAL-TIME scheduling class.
+///
+/// The REAL-TIME scheduling class is implemented as a classic O(1)
+/// priority algorithm.
+///
+/// It uses a bit array to track which priority levels have runnable
+/// threads, and a vector of queues to store the threads.
+///
+/// Threads are popped & dequeued from the active array (`array[index]`), and
+/// are enqueued into the inactive array (`array[!index]`). When the active array
+/// is empty, the 2 arrays are swapped by `index`.
 #[derive(Debug)]
 pub(super) struct RealTimeClassRq {
     #[expect(unused)]

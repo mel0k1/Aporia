@@ -1,3 +1,5 @@
+
+
 #![short_vis_path::add(test_multiple_arguments, two_idents)]
 
 pub(in test_multiple_arguments) type VisibleToParent = ();

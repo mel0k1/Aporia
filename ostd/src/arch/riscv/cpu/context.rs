@@ -1,3 +1,5 @@
+//! CPU execution context control.
+
 use alloc::boxed::Box;
 use core::{arch::global_asm, fmt::Debug};
 
@@ -16,6 +18,7 @@ use crate::{
     user::{ReturnReason, UserContextApi, UserContextApiInternal, UserModeHooks},
 };
 
+/// Userspace CPU context, including general-purpose registers and exception information.
 #[repr(C)]
 #[derive(Clone, Debug, Default)]
 pub struct UserContext {
@@ -23,6 +26,7 @@ pub struct UserContext {
     exception: Option<CpuException>,
 }
 
+/// General registers.
 #[expect(missing_docs)]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
@@ -61,21 +65,40 @@ pub struct GeneralRegs {
     pub t6: usize,
 }
 
+/// RISC-V CPU exceptions.
+///
+/// Every enum variant corresponds to one exception defined by the RISC-V
+/// architecture. Variants that naturally carry an error code (in stval
+/// register) expose it through their associated data fields.
 #[derive(Clone, Copy, Debug)]
 pub enum CpuException {
+    /// Instruction address misalignment exception.
     InstructionMisaligned,
+    /// Instruction access fault exception.
     InstructionFault,
+    /// Illegal instruction exception.
     IllegalInstruction(FaultInstruction),
+    /// Breakpoint exception.
     Breakpoint,
+    /// Load address misalignment exception.
     LoadMisaligned(FaultAddress),
+    /// Load access fault exception.
     LoadFault(FaultAddress),
+    /// Store address misalignment exception.
     StoreMisaligned(FaultAddress),
+    /// Store access fault exception.
     StoreFault(FaultAddress),
+    /// Environment call from user mode.
     UserEnvCall,
+    /// Environment call from supervisor mode.
     SupervisorEnvCall,
+    /// Instruction page fault exception.
     InstructionPageFault(FaultAddress),
+    /// Load page fault exception.
     LoadPageFault(FaultAddress),
+    /// Store page fault exception.
     StorePageFault(FaultAddress),
+    /// Unknown.
     Unknown,
 }
 
@@ -107,31 +130,41 @@ impl CpuException {
     }
 }
 
+/// Data address of data access exceptions.
 pub type FaultAddress = usize;
 
+/// Illegal instruction that caused exception.
 #[derive(Clone, Copy, Debug)]
 pub enum FaultInstruction {
+    /// Normal 4-byte instruction.
     Normal(u32),
+    /// Compressed 2-byte instruction. Used only when compressed (C) extension
+    /// is enabled.
     Compressed(u16),
 }
 
 impl UserContext {
+    /// Returns a reference to the general registers.
     pub fn general_regs(&self) -> &GeneralRegs {
         &self.user_context.general
     }
 
+    /// Returns a mutable reference to the general registers.
     pub fn general_regs_mut(&mut self) -> &mut GeneralRegs {
         &mut self.user_context.general
     }
 
+    /// Takes the CPU exception out.
     pub fn take_exception(&mut self) -> Option<CpuException> {
         self.exception.take()
     }
 
+    /// Gets the value of the thread-local storage pointer.
     pub fn tls_pointer(&self) -> usize {
         self.tp()
     }
 
+    /// Sets the value of the thread-local storage pointer.
     pub fn set_tls_pointer(&mut self, tls: usize) {
         self.set_tp(tls)
     }
@@ -269,15 +302,21 @@ cpu_context_impl_getter_setter!(
     [t6, set_t6]
 );
 
+/// The FPU context of user task.
 #[derive(Clone, Debug)]
 pub enum FpuContext {
+    /// FPU context for F extension (32-bit floating point).
     F(Box<FFpuContext>),
+    /// FPU context for D extension (64-bit floating point).
     D(Box<DFpuContext>),
+    /// FPU context for Q extension (128-bit floating point).
     Q(Box<QFpuContext>),
+    /// No FPU context (no FPU extensions enabled).
     None,
 }
 
 impl FpuContext {
+    /// Creates a new FPU context.
     pub fn new() -> Self {
         if has_extensions(IsaExtensions::Q) {
             Self::Q(Box::default())
@@ -290,6 +329,7 @@ impl FpuContext {
         }
     }
 
+    /// Saves CPU's current FPU context to this instance.
     pub fn save(&mut self) {
         match self {
             Self::F(ctx) => ctx.save(),
@@ -299,6 +339,7 @@ impl FpuContext {
         }
     }
 
+    /// Loads CPU's FPU context from this instance.
     pub fn load(&self) {
         match self {
             Self::F(ctx) => ctx.load(),
@@ -308,6 +349,7 @@ impl FpuContext {
         }
     }
 
+    /// Returns the FPU context as a byte slice.
     pub fn as_bytes(&self) -> &[u8] {
         match self {
             Self::F(ctx) => ctx.as_bytes(),
@@ -317,6 +359,7 @@ impl FpuContext {
         }
     }
 
+    /// Returns the FPU context as a mutable byte slice.
     pub fn as_bytes_mut(&mut self) -> &mut [u8] {
         match self {
             Self::F(ctx) => ctx.as_mut_bytes(),
@@ -333,6 +376,7 @@ impl Default for FpuContext {
     }
 }
 
+/// FPU context for F extension (32-bit floating point).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
 pub struct FFpuContext {
@@ -340,6 +384,7 @@ pub struct FFpuContext {
     fcsr: u32,
 }
 
+/// FPU context for D extension (64-bit floating point).
 #[padding_struct]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
@@ -348,6 +393,7 @@ pub struct DFpuContext {
     fcsr: u32,
 }
 
+/// FPU context for Q extension (128-bit floating point).
 #[padding_struct]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]

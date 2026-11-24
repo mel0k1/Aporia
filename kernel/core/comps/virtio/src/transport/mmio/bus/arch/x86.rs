@@ -19,6 +19,9 @@ pub(super) fn probe_for_device() {
 static VIRTIO_MMIO_CMDLINE_DEVICES: Once<Vec<MmioDevice>> = Once::new();
 aster_cmdline::define_repeatable_kv_param!("virtio_mmio.device", VIRTIO_MMIO_CMDLINE_DEVICES);
 
+/// Probes Linux-compatible `virtio_mmio.device=<size>@<base>:<irq>[:<id>]` parameters.
+///
+/// This format follows Linux's `virtio_mmio.device` kernel parameter.
 fn probe_from_kernel_cmdline() {
     let Some(devices) = VIRTIO_MMIO_CMDLINE_DEVICES.get() else {
         return;
@@ -53,8 +56,10 @@ fn probe_from_kernel_cmdline() {
 fn probe_from_microvm_constants() {
     const QEMU_MMIO_BASE: usize = 0xFEB0_0000;
     const QEMU_MMIO_SIZE: usize = 512;
+
     const QEMU_IOAPIC1_GSI_BASE: u32 = 16;
     const QEMU_IOAPIC1_NUM_TRANS: u32 = 8;
+
     const QEMU_IOAPIC2_GSI_BASE: u32 = 24;
     const QEMU_IOAPIC2_NUM_TRANS: u32 = 24;
 
@@ -112,9 +117,13 @@ fn try_register_mmio_device(
 
 #[derive(Clone, Copy, Debug)]
 enum MmioRegisterError {
+    /// MMIO region not available.
     MmioUnavailable,
+    /// Not a VirtIO-MMIO slot.
     MagicMismatch,
+    /// No device present.
     NoDevice,
+    /// IRQ line not available.
     IrqUnavailable,
 }
 
@@ -128,6 +137,7 @@ impl From<MmioValidateError> for MmioRegisterError {
 }
 
 impl MmioRegisterError {
+    /// Returns `true` if it should terminate a linear MMIO scan.
     fn is_fatal(self) -> bool {
         matches!(self, Self::MmioUnavailable | Self::MagicMismatch)
     }

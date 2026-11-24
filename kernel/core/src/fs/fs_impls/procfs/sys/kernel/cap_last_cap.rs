@@ -10,6 +10,7 @@ use crate::{
     process::credentials::capabilities::CapSet,
 };
 
+/// Represents the inode at `/proc/sys/kernel/cap_last_cap`.
 pub(super) struct CapLastCapFileOps;
 
 impl CapLastCapFileOps {

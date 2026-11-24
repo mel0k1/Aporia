@@ -1,3 +1,5 @@
+//! Thread implementation.
+
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use aster_util::per_cpu_counter::PerCpuCounter;
@@ -68,17 +70,24 @@ pub(super) fn init_in_first_kthread() {
     softirqd::init_in_first_kthread();
 }
 
+/// A thread is a wrapper on top of a task.
 #[derive(Debug)]
 pub(crate) struct Thread {
+    /// Low-level task.
     task: Weak<Task>,
+    /// POSIX thread information or kernel thread information.
     data: Box<dyn Send + Sync + Any>,
 
+    /// Thread status.
     is_exited: AtomicBool,
+    /// Thread CPU affinity.
     cpu_affinity: AtomicCpuSet,
+    /// Thread scheduling attribute.
     sched_attr: SchedAttr,
 }
 
 impl Thread {
+    /// Never call these function directly
     pub(crate) fn new(
         task: Weak<Task>,
         data: impl Send + Sync + Any,
@@ -94,20 +103,27 @@ impl Thread {
         }
     }
 
+    /// Returns the current thread.
+    ///
+    /// This function returns `None` if the current task is not associated with
+    /// a thread, or if called within the bootstrap context.
     pub(crate) fn current() -> Option<Arc<Self>> {
         Task::current()?.as_thread().cloned()
     }
 
+    /// Returns the task associated with this thread.
     #[expect(dead_code)]
     pub(crate) fn task(&self) -> Arc<Task> {
         self.task.upgrade().unwrap()
     }
 
+    /// Runs this thread at once.
     #[track_caller]
     pub(crate) fn run(&self) {
         self.task.upgrade().unwrap().run();
     }
 
+    /// Returns whether the thread is exited.
     pub(crate) fn is_exited(&self) -> bool {
         self.is_exited.load(Ordering::Acquire)
     }
@@ -116,6 +132,7 @@ impl Thread {
         self.is_exited.store(true, Ordering::Release);
     }
 
+    /// Returns the reference to the atomic CPU affinity.
     pub(crate) fn atomic_cpu_affinity(&self) -> &AtomicCpuSet {
         &self.cpu_affinity
     }
@@ -124,11 +141,17 @@ impl Thread {
         &self.sched_attr
     }
 
+    /// Yields the execution to another thread.
+    ///
+    /// This method will return once the current thread is scheduled again.
     #[track_caller]
     pub(crate) fn yield_now() {
         Task::yield_now()
     }
 
+    /// Joins the execution of the thread.
+    ///
+    /// This method will return after the thread exits.
     #[cfg_attr(not(ktest), expect(dead_code))]
     #[track_caller]
     pub(crate) fn join(&self) {
@@ -137,12 +160,15 @@ impl Thread {
         }
     }
 
+    /// Returns the associated data.
     pub(crate) fn data(&self) -> &(dyn Send + Sync + Any) {
         &*self.data
     }
 }
 
+/// A trait to provide the `as_thread` method for tasks.
 pub(crate) trait AsThread {
+    /// Returns the associated [`Thread`].
     fn as_thread(&self) -> Option<&Arc<Thread>>;
 }
 

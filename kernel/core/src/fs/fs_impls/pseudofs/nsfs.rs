@@ -33,16 +33,19 @@ pub(super) fn init() {
     let _ = NsFs::mount_node();
 }
 
+/// A pseudo filesystem for namespace files.
 struct NsFs {
     _private: (),
 }
 
 impl NsFs {
+    /// Returns the singleton instance of the ns file system.
     pub(self) fn singleton() -> &'static Arc<NaivePseudoFs> {
         static NSFS: Once<Arc<NaivePseudoFs>> = Once::new();
         NaivePseudoFs::singleton(&NSFS, "nsfs", NSFS_MAGIC)
     }
 
+    /// Creates a pseudo `Path` for a namespace file.
     pub(self) fn new_path<T: NsCommonOps>(ino: u64, ns: Arc<T>) -> Path {
         let ns_inode = {
             let fs = Arc::downgrade(Self::singleton());
@@ -55,12 +58,14 @@ impl NsFs {
         })
     }
 
+    /// Returns the pseudo mount node of the ns file system.
     pub(self) fn mount_node() -> &'static Arc<Mount> {
         static NSFS_MOUNT: Once<Arc<Mount>> = Once::new();
         NSFS_MOUNT.call_once(|| Mount::new_pseudo(Self::singleton().clone()).unwrap())
     }
 }
 
+/// An inode representing a namespace entry in [`NsFs`].
 pub(in crate::fs) struct NsInode<T: NsCommonOps> {
     common: PseudoInode,
     ns: Arc<T>,
@@ -152,11 +157,13 @@ impl<T: NsCommonOps> FileOps for NsInode<T> {
     ) -> Result<usize>;
 }
 
+/// A file handle referencing a live namespace.
 pub(crate) struct NsFile<T: NsCommonOps> {
     ns: Arc<T>,
 }
 
 impl<T: NsCommonOps> NsFile<T> {
+    /// Returns a reference to the underlying namespace.
     pub(crate) fn ns(&self) -> &Arc<T> {
         &self.ns
     }
@@ -215,6 +222,7 @@ impl<T: NsCommonOps> PerOpenFileOps for NsFile<T> {
                 cmd.write(&uid.into())?;
                 Ok(0)
             }
+
             _ => Err(errno!(ENOTTY, "the ioctl command is unknown")),
         })
     }
@@ -252,6 +260,7 @@ impl<T: NsCommonOps> FileOps for NsFile<T> {
     }
 }
 
+/// Opens a namespace as a file and returns the file descriptor.
 fn open_ns_as_file<T: NsCommonOps>(ns: &Arc<T>) -> Result<FileDesc> {
     let path = ns.get_path();
     let inode_handle = InodeHandle::new(path.clone(), AccessMode::O_RDONLY, StatusFlags::empty())?;
@@ -262,22 +271,53 @@ fn open_ns_as_file<T: NsCommonOps>(ns: &Arc<T>) -> Result<FileDesc> {
     file_table.lock_and_insert(Arc::new(inode_handle), FdFlags::CLOEXEC)
 }
 
+/// Common operations shared by all namespace types.
+///
+/// Implementors represent a specific kind of namespace (e.g., UTS, mount, user)
+/// and must provide the associated metadata and traversal methods required by
+/// [`NsFs`] and [`NsFile`].
 pub(crate) trait NsCommonOps: Any + Send + Sync + 'static + Sized {
+    /// The human-readable name of this namespace kind (derived from [`Self::TYPE`]).
     const NAME: &str = Self::TYPE.as_str();
 
+    /// The [`NsType`] discriminant for this namespace kind.
     const TYPE: NsType;
 
+    /// Returns the owner user namespace.
+    ///
+    /// Every namespace is owned by the user namespace in which it was created.
+    /// The only exception is the initial user namespace, which has no owner;
+    /// in that case this method returns `None`.
     fn owner_user_ns(&self) -> Option<&Arc<UserNamespace>>;
 
+    /// Returns the parent namespace, if one exists.
+    ///
+    /// This is meaningful only for hierarchical namespace types (user and PID
+    /// namespaces). Non-hierarchical namespaces should return `EINVAL`.
     fn parent(&self) -> Result<&Arc<Self>>;
 
+    /// Returns the dentry cache used to maintain the namespace's [`NsFs`] entry.
+    ///
+    /// Each namespace instance embeds a [`StashedDentry`] so that repeated
+    /// lookups of its pseudo-filesystem path can reuse the same [`Dentry`]
+    /// instead of allocating a new one every time.
     fn stashed_dentry(&self) -> &StashedDentry;
 
+    /// Returns the pseudo filesystem [`Path`] associated with this namespace.
+    ///
+    /// The path is lazily created on first access and cached via
+    /// [`StashedDentry`] for subsequent calls.
     fn get_path(self: &Arc<Self>) -> Path {
         self.stashed_dentry().get_path(self)
     }
 }
 
+/// A lazily-populated cache for a namespace's [`Dentry`] in [`NsFs`].
+///
+/// When a namespace is first asked for its pseudo-filesystem path, a new
+/// [`Dentry`] is allocated and stored here as a [`Weak`] reference.
+/// Subsequent requests reuse the cached dentry if it is still alive;
+/// otherwise a fresh one is created and the cache is updated.
 pub(crate) struct StashedDentry {
     ino: u64,
     dentry: Mutex<Weak<Dentry>>,
@@ -304,6 +344,7 @@ impl Ord for StashedDentry {
 }
 
 impl StashedDentry {
+    /// Creates a new, empty cache (no dentry allocated yet).
     pub(crate) fn new() -> Self {
         let ino = NsFs::singleton().alloc_id();
         Self {
@@ -312,6 +353,8 @@ impl StashedDentry {
         }
     }
 
+    /// Returns the [`Path`] for the given namespace, reusing a cached
+    /// [`Dentry`] when possible or creating a new one if the cache is stale.
     pub(self) fn get_path<T: NsCommonOps>(&self, ns: &Arc<T>) -> Path {
         let mut dentry = self.dentry.lock();
         if let Some(dentry) = dentry.upgrade() {
@@ -378,19 +421,30 @@ mod ioctl_defs {
         util::ioctl::{InData, NoData, OutData},
     };
 
+    /// Returns a file descriptor of the owner user namespace.
     pub(crate) type GetUserNs       = ioc!(NS_GET_USERNS,     0xb701, NoData);
+    /// Returns a file descriptor of the parent namespace.
     pub(crate) type GetParent       = ioc!(NS_GET_PARENT,     0xb702, NoData);
+    /// Gets the type of the namespace (e.g., user, pid, mnt, etc.).
     pub(crate) type GetType         = ioc!(NS_GET_NSTYPE,     0xb703, NoData);
+    /// Gets the user ID of the namespace owner.
+    ///
+    /// Only user namespaces support this operation.
     pub(crate) type GetOwnerUid     = ioc!(NS_GET_OWNER_UID,  0xb704, OutData<u32>);
 
+    /// Gets the ID of the mount namespace.
     #[expect(unused)]
     pub(crate) type GetMntNsId      = ioc!(NS_GET_MNTNS_ID,        0xb7, 0x5, OutData<u64>);
+    /// Translates a thread ID from the target PID namespace into the caller's PID namespace.
     #[expect(unused)]
     pub(crate) type GetTidFromPidNs = ioc!(NS_GET_PID_FROM_PIDNS,  0xb7, 0x6, InData<i32>);
+    /// Translates a process ID from the target PID namespace into the caller's PID namespace.
     #[expect(unused)]
     pub(crate) type GetPidFromPidNs = ioc!(NS_GET_TGID_FROM_PIDNS, 0xb7, 0x7, InData<i32>);
+    /// Translates a thread ID from the caller's PID namespace into the target PID namespace.
     #[expect(unused)]
     pub(crate) type GetTidInPidNs   = ioc!(NS_GET_PID_IN_PIDNS,    0xb7, 0x8, InData<i32>);
+    /// Translates a process ID from the caller's PID namespace into the target PID namespace.
     #[expect(unused)]
     pub(crate) type GetPidInPidNs   = ioc!(NS_GET_TGID_IN_PIDNS,   0xb7, 0x9, InData<i32>);
 }

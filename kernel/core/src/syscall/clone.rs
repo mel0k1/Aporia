@@ -54,16 +54,27 @@ pub(super) fn sys_clone3(
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 struct Clone3Args {
+    /// Flags bit mask
     flags: u64,
+    /// Where to store PID file descriptor
     pidfd: u64,
+    /// Where to store child TID in child's memory
     child_tid: u64,
+    ///  Where to store child TID in parent's memory
     parent_tid: u64,
+    /// Signal to deliver to parent on child termination
     exit_signal: u64,
+    /// Pointer to lowest byte of stack
     stack: u64,
+    /// Size of stack
     stack_size: u64,
+    /// Location of new TLS
     tls: u64,
+    /// Pointer to a pid_t array
     set_tid: u64,
+    /// Number of elements in set_tid
     set_tid_size: u64,
+    /// File descriptor for target cgroup of child
     cgroup: u64,
 }
 

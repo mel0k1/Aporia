@@ -7,6 +7,9 @@ use ostd::task::{
 
 use super::{CurrentRuntime, SchedAttr, SchedClassRq};
 
+/// The per-cpu run queue for the IDLE scheduling class.
+///
+/// This run queue is used for the per-cpu idle entity, if any.
 pub(super) struct IdleClassRq {
     entity: Option<Arc<Task>>,
 }

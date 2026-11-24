@@ -1,3 +1,5 @@
+//! Interrupts.
+
 mod plic;
 
 use alloc::boxed::Box;
@@ -19,8 +21,17 @@ use crate::{
     sync::{LocalIrqDisabled, SpinLock},
 };
 
+/// The [`IrqChip`] singleton.
 pub static IRQ_CHIP: Once<IrqChip> = Once::new();
 
+/// Initializes the Platform-Level Interrupt Controller (PLIC) on the BSP.
+///
+/// # Safety
+///
+/// This function is safe to call on the following conditions:
+/// 1. It is called once and at most once at a proper timing in the boot context
+///    of the BSP.
+/// 2. It is called before any other public functions of this module is called.
 pub(in crate::arch) unsafe fn init_on_bsp(io_mem_builder: &IoMemAllocatorBuilder) {
     let device_tree = DEVICE_TREE.get().unwrap();
     let mut plics = Plic::from_fdt(device_tree, io_mem_builder);
@@ -28,18 +39,38 @@ pub(in crate::arch) unsafe fn init_on_bsp(io_mem_builder: &IoMemAllocatorBuilder
     IRQ_CHIP.call_once(|| IrqChip {
         plics: SpinLock::new(plics.into_boxed_slice()),
     });
+
     unsafe { riscv::register::sie::set_sext() };
 }
 
+/// Initializes application-processor-specific PLIC state.
+///
+/// # Safety
+///
+/// This function is safe to call on the following conditions:
+/// 1. It is called once and at most once on this AP.
+/// 2. It is called before any other public functions of this module is called
+///    on this AP.
 pub(in crate::arch) unsafe fn init_on_ap() {
     unsafe { riscv::register::sie::set_sext() };
 }
 
+/// An IRQ chip.
+///
+/// This abstracts the hardware IRQ chips (or IRQ controllers), allowing the bus
+/// or device drivers to enable [`IrqLine`]s (via, e.g., [`map_fdt_pin_to`])
+/// regardless of the specifics of the IRQ chip.
+///
+/// In the RISC-V architecture, the underlying hardware is typically Platform-Level
+/// Interrupt Controller (PLIC).
+///
+/// [`map_fdt_pin_to`]: Self::map_fdt_pin_to
 pub struct IrqChip {
     plics: SpinLock<Box<[Plic]>, LocalIrqDisabled>,
 }
 
 impl IrqChip {
+    /// Maps an IRQ pin specified by `interrupt_source_in_fdt` to an IRQ line.
     pub fn map_fdt_pin_to(
         &self,
         interrupt_source_in_fdt: InterruptSourceInFdt,
@@ -67,6 +98,10 @@ impl IrqChip {
         })
     }
 
+    /// Claims an external interrupt that is pending on a specific hart.
+    ///
+    /// It returns the software IRQ number if there's a pending interrupt on the
+    /// hart, otherwise it will return `None`.
     pub(in crate::arch) fn claim_interrupt(&self, hart: u32) -> Option<HwIrqLine> {
         self.plics
             .lock()
@@ -85,6 +120,7 @@ impl IrqChip {
             })
     }
 
+    /// Acknowledges the completion of an interrupt.
     pub(super) fn complete_interrupt(
         &self,
         hart: u32,
@@ -95,6 +131,7 @@ impl IrqChip {
             .complete_interrupt(hart, interrupt_source_on_chip.interrupt);
     }
 
+    /// Unmaps an IRQ line from the IRQ chip.
     fn unmap_irq_line(&self, mapped_irq_line: &MappedIrqLine) {
         let mut plics = self.plics.lock();
 
@@ -108,6 +145,9 @@ impl IrqChip {
     }
 }
 
+/// An [`IrqLine`] mapped to an IRQ pin managed by the [`IRQ_CHIP`].
+///
+/// When the object is dropped, the IRQ line will be unmapped by the IRQ chip.
 pub struct MappedIrqLine {
     irq_line: IrqLine,
     interrupt_source_on_chip: InterruptSourceOnChip,
@@ -142,14 +182,20 @@ impl Drop for MappedIrqLine {
     }
 }
 
+/// Interrupt source identifier in the device tree.
 #[derive(Clone, Copy, Debug)]
 pub struct InterruptSourceInFdt {
+    /// Phandle of the interrupt controller it connects to.
     pub interrupt_parent: u32,
+    /// Arguments (e.g., some index and flags) that describe the interrupt.
     pub arguments: [u32; 1],
 }
 
+/// Interrupt source identifier on the `IRQ_CHIP`.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct InterruptSourceOnChip {
+    /// Index of the interrupt controller it connects to on `IRQ_CHIP`.
     index: usize,
+    /// Interrupt source number on the interrupt controller.
     interrupt: u32,
 }

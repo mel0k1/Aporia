@@ -10,6 +10,7 @@ use crate::{
     vm::vmar::VMAR_LOWEST_ADDR,
 };
 
+/// Represents the inode at `/proc/sys/vm/mmap_min_addr`.
 pub(super) struct MmapMinAddrFileOps;
 
 impl MmapMinAddrFileOps {

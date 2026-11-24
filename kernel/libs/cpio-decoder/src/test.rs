@@ -40,6 +40,7 @@ fn decoder() {
     };
 
     let mut decoder = CpioDecoder::new(buffer.as_slice());
+
     {
         let entry = decoder.next().unwrap().unwrap();
         assert_eq!(entry.name(), manifest_path.as_os_str());

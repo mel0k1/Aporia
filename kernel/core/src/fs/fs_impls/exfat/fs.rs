@@ -49,6 +49,7 @@ pub(crate) struct ExfatFs {
     upcase_table: Arc<SpinLock<ExfatUpcaseTable>>,
 
     mount_option: ExfatMountOptions,
+
     highest_inode_number: AtomicU64,
 
     inodes: RwMutex<HashMap<usize, Arc<ExfatInode>>>,
@@ -223,6 +224,7 @@ impl ExfatFs {
 
     fn read_super_block(block_device: &dyn BlockDevice) -> Result<ExfatSuperBlock> {
         let boot_sector = block_device.read_val::<ExfatBootSector>(0)?;
+
         if boot_sector.signature != BOOT_SIGNATURE {
             return Err(errno!(EINVAL, "invalid boot record signature"));
         }
@@ -427,6 +429,7 @@ impl FileSystem for ExfatFs {
 }
 
 #[derive(Clone, Debug, Default)]
+
 pub(crate) enum ExfatErrorMode {
     #[default]
     Continue,
@@ -435,6 +438,7 @@ pub(crate) enum ExfatErrorMode {
 }
 
 #[derive(Clone, Debug, Default)]
+
 pub(crate) struct ExfatMountOptions {
     pub(super) fs_uid: usize,
     pub(super) fs_gid: usize,

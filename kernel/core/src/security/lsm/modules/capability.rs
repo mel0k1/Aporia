@@ -9,6 +9,7 @@ use crate::{
 
 pub(super) static CAPABILITY_LSM: CapabilityLsm = CapabilityLsm;
 
+/// Capability-based authorization checks for built-in kernel operations.
 pub(super) struct CapabilityLsm;
 
 impl LsmModule for CapabilityLsm {

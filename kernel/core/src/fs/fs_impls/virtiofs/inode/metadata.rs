@@ -1,3 +1,5 @@
+//! Metadata cache and attribute updates for `VirtioFsInode`.
+
 use core::{sync::atomic::Ordering, time::Duration};
 
 use aster_fuse::{Attr, FuseAttrReply, FuseInitFlags, SetattrValid};
@@ -16,6 +18,14 @@ use crate::{
 };
 
 impl VirtioFsInode {
+    /// Commits a FUSE attribute reply into the inode metadata cache.
+    ///
+    /// If `request_attr_version` is still accepted by the inode, the reply is
+    /// installed as a complete metadata snapshot and its TTL becomes the new
+    /// attribute-cache deadline. If the reply is stale, `stale_action` decides
+    /// whether the reply is ignored or whether selected fields may still be
+    /// merged. Page-cache invalidation is derived from the committed metadata
+    /// change and is performed after dropping the metadata lock.
     pub(super) fn commit_attr_reply(
         &self,
         attr_reply: FuseAttrReply,
@@ -68,6 +78,10 @@ impl VirtioFsInode {
         Ok(())
     }
 
+    /// Expires cached attributes without changing cached metadata.
+    ///
+    /// Calls this after operations that make the cached attributes potentially
+    /// incomplete but do not return a full attribute reply for this inode.
     pub(super) fn expire_attr_cache(&self) {
         self.inner.write().attr_valid_until = MonotonicCoarseClock::get().read_time();
     }
@@ -78,6 +92,7 @@ impl VirtioFsInode {
 }
 
 impl InodeInner {
+    /// Commits metadata changes after a local write.
     pub(super) fn commit_local_write(&mut self, committed_size: usize, attr_version: AttrVersion) {
         let now = RealTimeCoarseClock::get().read_time();
         self.metadata.size = committed_size;
@@ -88,6 +103,7 @@ impl InodeInner {
         self.attr_version = attr_version;
     }
 
+    /// Commits a version-accepted attribute reply as complete cached metadata.
     fn commit_attr_snapshot(
         &mut self,
         metadata: Metadata,
@@ -99,6 +115,7 @@ impl InodeInner {
         self.attr_version = attr_version;
     }
 
+    /// Merges fields changed by a stale successful `SETATTR` reply.
     fn merge_stale_setattr(
         &mut self,
         metadata: Metadata,
@@ -111,6 +128,7 @@ impl InodeInner {
         self.attr_version = attr_version;
     }
 
+    /// Merges fields changed by a stale successful `LINK` reply.
     fn merge_stale_link(&mut self, metadata: Metadata, now: Duration, attr_version: AttrVersion) {
         self.metadata.nr_hard_links = metadata.nr_hard_links;
         self.metadata.last_meta_change_at = metadata.last_meta_change_at;
@@ -118,6 +136,7 @@ impl InodeInner {
         self.attr_version = attr_version;
     }
 
+    /// Merges fields selected by a `SETATTR` valid mask.
     fn merge_setattr_fields(&mut self, metadata: Metadata, valid: SetattrValid) {
         if valid.contains(SetattrValid::FATTR_MODE) {
             self.metadata.type_ = metadata.type_;
@@ -155,13 +174,22 @@ impl InodeInner {
     }
 }
 
+/// Describes what remains safe to commit when an attribute reply is stale.
+///
+/// Fresh replies always replace the full cached metadata. This enum is only
+/// consulted after another local metadata commit has already advanced the
+/// inode's `AttrVersion` past the request snapshot.
 #[derive(Clone, Copy)]
 pub(super) enum StaleAttrAction {
+    /// Discards the stale reply without changing cached metadata or TTL.
     Discard,
+    /// Merges fields changed by a successful `SETATTR` request.
     MergeSetattr(SetattrValid),
+    /// Merges fields changed by a successful `LINK` request.
     MergeLink,
 }
 
+/// Converts a FUSE `Attr` into the VFS `Metadata` structure.
 pub(in crate::fs::fs_impls::virtiofs) fn metadata_from_attr(
     attr: Attr,
     container_dev_id: DeviceId,
@@ -189,6 +217,11 @@ pub(in crate::fs::fs_impls::virtiofs) fn metadata_from_attr(
     }
 }
 
+/// Converts a FUSE timestamp to the VFS timestamp representation.
+///
+/// FUSE stores Unix seconds in a `u64` wire field even though the semantic
+/// value is signed. Until the VFS can represent pre-epoch timestamps, values
+/// that do not fit in a non-negative `Duration` are truncated to the epoch.
 fn fuse_timestamp_to_duration(seconds: u64, nanoseconds: u32) -> Duration {
     if seconds > i64::MAX as u64 {
         return Duration::ZERO;

@@ -1,3 +1,5 @@
+//! Server-issued FUSE open handles for `virtiofs`.
+
 use aster_fuse::{FuseFileHandle, FuseNodeId, FuseOpenFlags, ops::release::ReleaseOptions};
 
 use super::fs::VirtioFs;
@@ -7,6 +9,9 @@ use crate::{
     thread::work_queue::{self, WorkPriority},
 };
 
+/// A server-issued FUSE open handle.
+///
+/// This object owns `fh` returned by `FUSE_OPEN` or `FUSE_OPENDIR`.
 pub(super) struct VirtioFsOpenHandle {
     fh: FuseFileHandle,
     nodeid: FuseNodeId,
@@ -38,18 +43,22 @@ impl VirtioFsOpenHandle {
         })
     }
 
+    /// Returns the FUSE file handle (`fh`) issued by the server.
     pub(super) fn fh(&self) -> FuseFileHandle {
         self.fh
     }
 
+    /// Returns the composite file flags (access mode | status flags).
     pub(super) fn file_flags(&self) -> u32 {
         self.access_mode as u32 | self.status_flags.bits()
     }
 
+    /// Returns the access mode.
     pub(super) fn access_mode(&self) -> AccessMode {
         self.access_mode
     }
 
+    /// Returns the `FUSE_OPEN` reply flags.
     pub(super) fn open_flags(&self) -> FuseOpenFlags {
         self.open_flags
     }
@@ -60,6 +69,7 @@ impl Drop for VirtioFsOpenHandle {
         let fs = self.fs.clone();
         let nodeid = self.nodeid;
         let fh = self.fh;
+
         let file_flags = self.file_flags();
         let release_options = self.release_options;
 
@@ -81,6 +91,7 @@ impl Drop for VirtioFsOpenHandle {
     }
 }
 
+/// Open handles that have been opened on a virtio-fs inode.
 pub(super) struct OpenHandles {
     handles: Mutex<Vec<Weak<VirtioFsOpenHandle>>>,
 }
@@ -92,6 +103,7 @@ impl OpenHandles {
         }
     }
 
+    /// Registers a handle, pruning dead weak references first.
     pub(super) fn insert(&self, handle: &Arc<VirtioFsOpenHandle>) {
         let mut handles = self.handles.lock();
 
@@ -99,10 +111,12 @@ impl OpenHandles {
         handles.push(Arc::downgrade(handle));
     }
 
+    /// Finds a readable handle, if any.
     pub(super) fn find_readable_handle(&self) -> Option<Arc<VirtioFsOpenHandle>> {
         self.find_handle(AccessMode::is_readable)
     }
 
+    /// Finds a writable handle, if any.
     pub(super) fn find_writable_handle(&self) -> Option<Arc<VirtioFsOpenHandle>> {
         self.find_handle(AccessMode::is_writable)
     }

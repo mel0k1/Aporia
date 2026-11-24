@@ -16,10 +16,12 @@ pub(crate) fn init() {
     kernel::init();
 }
 
+/// Registers a new kernel `SysNode`.
 pub(crate) fn register_kernel_sysnode(config_obj: Arc<dyn SysNode>) -> Result<()> {
     kernel::register(config_obj)
 }
 
+/// Unregisters a kernel `SysNode`.
 #[expect(dead_code)]
 pub(crate) fn unregister_kernel_sysnode(name: &str) -> Result<()> {
     kernel::unregister(name)

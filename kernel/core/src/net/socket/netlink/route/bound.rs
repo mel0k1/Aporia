@@ -64,13 +64,16 @@ impl datagram_common::Bound for BoundNetlinkRoute {
         loop {
             let mut segment = match RtnlSegment::read_from(reader, strict_check) {
                 Ok(ContinueRead::Parsed(seg)) => seg,
+
                 Ok(ContinueRead::SkippedInvalid(err_segment)) => {
                     rtnl_kernel.report_error(err_segment, local_port);
                     continue;
                 }
+
                 Err(err) if err.error() == Errno::EFAULT => {
                     return Err(err);
                 }
+
                 Err(_) => break,
             };
 

@@ -1,3 +1,5 @@
+//! Defines the main `SysTree` structure and its root node implementation.
+
 use alloc::sync::{Arc, Weak};
 
 use inherit_methods_macro::inherit_methods;
@@ -15,6 +17,7 @@ pub struct SysTree<Root: SysBranchNode> {
 }
 
 impl SysTree<RootNode> {
+    /// Creates a new `SysTree` instance with a default root node.
     pub(crate) fn new() -> Self {
         let attr_set = SysAttrSet::new_empty();
 
@@ -28,6 +31,7 @@ impl SysTree<RootNode> {
 }
 
 impl<Root: SysBranchNode> SysTree<Root> {
+    /// Creates a new `SysTree` instance with the provided root node.
     pub fn new_with_root(root: Arc<Root>) -> Result<Self> {
         if !root.is_root() {
             return Err(crate::Error::InternalError(
@@ -38,11 +42,16 @@ impl<Root: SysBranchNode> SysTree<Root> {
         Ok(Self { root })
     }
 
+    /// Returns a reference to the root node of the tree.
     pub fn root(&self) -> &Arc<Root> {
         &self.root
     }
 }
 
+/// The default root node in the `SysTree`.
+///
+/// A `RootNode` can work like a branching node, allowing to add additional nodes
+/// as its children.
 #[derive(Debug)]
 pub struct RootNode {
     fields: BranchNodeFields<dyn SysObj, Self>,
@@ -50,6 +59,7 @@ pub struct RootNode {
 
 #[inherit_methods(from = "self.fields")]
 impl RootNode {
+    /// Adds a child node to this `RootNode`.
     pub fn add_child(&self, new_child: Arc<dyn SysObj>) -> Result<()>;
 }
 

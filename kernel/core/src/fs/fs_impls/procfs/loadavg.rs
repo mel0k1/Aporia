@@ -1,3 +1,8 @@
+//! This module offers `/proc/loadavg` file support, which tells the user space
+//! about the cpu load average for the last 1, 5, and 15 minutes.
+//!
+//! Reference: <https://www.man7.org/linux/man-pages/man5/proc_loadavg.5.html>
+
 use aster_util::printer::VmPrinter;
 
 use crate::{
@@ -11,6 +16,7 @@ use crate::{
     sched::{self, loadavg::get_loadavg},
 };
 
+/// Represents the inode at `/proc/loadavg`.
 pub(super) struct LoadAvgFileOps;
 
 impl LoadAvgFileOps {

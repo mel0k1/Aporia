@@ -12,6 +12,7 @@ use crate::{
     util::ioctl::RawIoctl,
 };
 
+/// The file for a pseudoterminal slave.
 pub(super) struct PtySlaveFile(Arc<PtySlave>);
 
 impl PtySlaveFile {

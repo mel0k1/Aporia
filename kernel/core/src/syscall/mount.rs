@@ -17,6 +17,7 @@ pub(super) fn sys_mount(
     dst_name_addr: Vaddr,
     fs_type_addr: Vaddr,
     flags: u64,
+
     data_addr: Vaddr,
     ctx: &Context,
 ) -> Result<SyscallReturn> {
@@ -81,12 +82,14 @@ pub(super) fn check_mount_api_capability(ctx: &Context) -> Result<()> {
     ))
 }
 
+/// Remounts the mount with new flags.
 fn do_remount_mnt(path: &Path, flags: MountFlags, ctx: &Context) -> Result<()> {
     let per_mount_flags = PerMountFlags::from(flags);
 
     path.remount(per_mount_flags, None, None, ctx)
 }
 
+/// Remounts the filesystem with new flags and data.
 fn do_remount_mnt_and_fs(
     path: &Path,
     flags: MountFlags,
@@ -105,6 +108,10 @@ fn do_remount_mnt_and_fs(
     path.remount(per_mount_flags, Some(fs_flags), data.as_deref(), ctx)
 }
 
+/// Binds a mount to a dst location.
+///
+/// If recursive is true, then bind the mount recursively.
+/// Such as use user command `mount --rbind src dst`.
 fn do_bind_mount(
     src_name_addr: Vaddr,
     dst_path: Path,
@@ -166,6 +173,7 @@ fn do_change_type(target_path: Path, flags: MountFlags, ctx: &Context) -> Result
     Ok(())
 }
 
+/// Moves a mount from src location to dst location.
 fn do_move_mount_old(src_name_addr: Vaddr, dst_path: Path, ctx: &Context) -> Result<()> {
     let src_path = {
         let src_name = ctx
@@ -185,6 +193,7 @@ fn do_move_mount_old(src_name_addr: Vaddr, dst_path: Path, ctx: &Context) -> Res
     Ok(())
 }
 
+/// Mounts a new filesystem.
 fn do_new_mount(
     src_name_addr: Vaddr,
     flags: MountFlags,
@@ -228,6 +237,7 @@ fn do_new_mount(
     Ok(())
 }
 
+/// Gets the filesystem by fs_type and source.
 fn open_fs(
     source: Option<&str>,
     flags: MountFlags,

@@ -1,3 +1,9 @@
+//! Unified IP routing management.
+//!
+//! This module manages IP route information.
+//! Callers can look up the local interface that owns an address when binding a socket,
+//! or select an output interface when connecting an unbound socket.
+
 use aster_bigtcp::{
     iface::InterfaceType,
     wire::{IpAddress, IpCidr, IpEndpoint, Ipv4Address, Ipv4Cidr, Ipv6Address, Ipv6Cidr},
@@ -18,12 +24,14 @@ use entry::{RouteAddressFamily, RouteEntry, RouteMetric, RouteTableId, RouteType
 static IPV4_ROUTE_MANAGER: Once<RouteManager<Ipv4Address>> = Once::new();
 static IPV6_ROUTE_MANAGER: Once<RouteManager<Ipv6Address>> = Once::new();
 
+/// A route lookup key for one address family.
 #[derive(Clone, Debug)]
 struct RouteLookupKey<A: RouteAddressFamily> {
     dst: A,
 }
 
 impl<A: RouteAddressFamily> RouteLookupKey<A> {
+    /// Creates a new route lookup key.
     const fn new(dst: A) -> Self {
         Self { dst }
     }
@@ -155,6 +163,7 @@ fn iface_ipv6_routes(iface: &Arc<Iface>) -> Vec<RouteEntry<Ipv6Address>> {
     routes
 }
 
+/// Looks up the output interface for an IP destination.
 pub(super) fn lookup_iface(dst: IpAddress) -> Result<Arc<Iface>> {
     let iface = match dst {
         IpAddress::Ipv4(dst) => IPV4_ROUTE_MANAGER
@@ -173,6 +182,7 @@ pub(super) fn lookup_iface(dst: IpAddress) -> Result<Arc<Iface>> {
     Ok(iface)
 }
 
+/// Looks up the interface that owns a local IP address.
 pub(super) fn lookup_local_iface(address: IpAddress) -> Result<Arc<Iface>> {
     let (type_, iface) = match address {
         IpAddress::Ipv4(address) => {
@@ -212,6 +222,10 @@ pub(super) fn lookup_local_iface(address: IpAddress) -> Result<Arc<Iface>> {
     Ok(iface)
 }
 
+/// Returns whether an endpoint is an IPv4 broadcast destination.
+///
+/// IPv6 does not define broadcast addresses,
+/// so IPv6 endpoints always return `false`.
 pub(super) fn is_broadcast_endpoint(endpoint: &IpEndpoint) -> bool {
     let IpAddress::Ipv4(address) = endpoint.addr else {
         return false;

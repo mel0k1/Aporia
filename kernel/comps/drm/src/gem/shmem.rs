@@ -5,6 +5,7 @@ use ostd::mm::{FrameAllocOptions, PAGE_SIZE, UFrame, VmIo};
 
 use crate::gem::object::{DrmGemObject, DrmGemObjectBackend};
 
+/// A VM-facing view into a shmem-backed GEM object.
 #[derive(Debug)]
 struct DrmGemShmemMappedObject {
     backend: DrmGemShmemBackend,
@@ -33,12 +34,19 @@ impl MappedObject for DrmGemShmemMappedObject {
     }
 }
 
+/// A shared, RAM-backed GEM object backend.
+///
+/// Backing frames are currently allocated eagerly when an object is created.
+/// This is intentional for the initial implementation.
+/// Future work should allocate frames lazily on page faults
+/// to avoid large upfront allocations.
 #[derive(Clone, Debug)]
 pub struct DrmGemShmemBackend {
     pages: Arc<[UFrame]>,
 }
 
 impl DrmGemShmemBackend {
+    /// Creates a shmem-backed GEM object with a page-aligned size.
     pub fn new_object(size: usize) -> Result<Arc<DrmGemObject>> {
         let page_count = size / PAGE_SIZE;
         let mut pages = Vec::<UFrame>::with_capacity(page_count);

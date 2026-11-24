@@ -1,3 +1,10 @@
+//! VFS inode trait implementations for the ext2 [`Inode`](super::super::Inode).
+//!
+//! Wires the ext2 `Inode` into the VFS layer by implementing the `InodeIo`
+//! and `Inode` traits. The implementation converts VFS requests into
+//! ext2-internal operations, including symlink results and the inode's VFS
+//! extension slot.
+
 use core::time::Duration;
 
 use aster_block::bio::BioStatus;

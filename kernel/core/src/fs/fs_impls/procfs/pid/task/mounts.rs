@@ -18,12 +18,20 @@ use crate::{
     thread::Thread,
 };
 
+/// A single entry in the mounts file.
 struct MountEntry<'a> {
+    /// Filesystem-specific information or "none".
     source: &'a str,
+    /// Mount point relative to the process's root directory.
     mount_point: &'a str,
+    /// The type of the filesystem in the form "type[.subtype]".
     fs_type: &'a str,
+    /// Per-mount flags.
     mount_flags: PerMountFlags,
+    /// The dump field is used by the dump(8) program to determine which
+    /// filesystems need to be dumped.
     dump: u32,
+    /// The fsck(8) program uses this field.
     pass: u32,
 }
 
@@ -37,6 +45,7 @@ impl core::fmt::Display for MountEntry<'_> {
     }
 }
 
+/// Represents the inode at `/proc/[pid]/task/[tid]/mounts` (and also `/proc/[pid]/mounts`).
 pub(super) struct MountsFileOps(TidDirOps);
 
 impl MountsFileOps {
@@ -44,6 +53,10 @@ impl MountsFileOps {
         ProcFile::new(Self(dir.clone()), parent, mkmod!(a+r))
     }
 
+    /// Reads mount information for `/proc/[pid]/mounts` and `/proc/mounts`.
+    ///
+    /// Provides a simplified view of mounted filesystems in the traditional
+    /// `/etc/fstab` format.
     fn read_mounts(
         &self,
         path_resolver: &PathResolver,

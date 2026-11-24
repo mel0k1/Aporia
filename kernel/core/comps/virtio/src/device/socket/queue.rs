@@ -1,3 +1,5 @@
+//! Queues of a virtio-vsock device.
+
 use alloc::{boxed::Box, collections::vec_deque::VecDeque, vec::Vec};
 
 use aster_util::slot_vec::SlotVec;
@@ -18,6 +20,21 @@ use crate::{
     transport::VirtioTransport,
 };
 
+/// The transmit queue of a virtio-vsock device.
+///
+/// The transmit path has two stages:
+/// - The inflight queue is the hardware virtqueue and contains packets already submitted to the
+///   device.
+/// - The pending queue is a software queue and contains packets still waiting for a free virtqueue
+///   descriptor.
+///
+/// Packets move from the pending queue to the inflight queue after the device finishes
+/// transmitting earlier packets and frees descriptor space.
+///
+/// To bound pending resource usage, a pending packet may carry a [`TxCompletion`]. When the packet
+/// is promoted from the pending queue to the inflight queue, [`TxCompletion::on_pending_submit`]
+/// runs so the upper layer can release the resources reserved for that pending transmission, such
+/// as socket send-queue capacity for newly queued data.
 pub struct TxQueue {
     queue: VirtQueue,
     inflight: Vec<Option<TxPacket>>,
@@ -66,6 +83,8 @@ impl TxQueue {
         self.notify_if_needed();
     }
 
+    /// Tries to submit `packet` to the inflight queue immediately, or returns a guard for
+    /// submitting the packet to the pending queue.
     pub fn try_send(&mut self, packet: TxPacket) -> Result<(), TxPendingGuard<'_>> {
         if !self.pending.is_empty() || self.queue.available_desc() == 0 {
             return Err(TxPendingGuard {
@@ -96,16 +115,24 @@ struct PendingTx {
     completion: Option<Box<dyn TxCompletion>>,
 }
 
+/// A callback invoked when a pending packet is submitted to the inflight queue.
+///
+/// This is primarily used for resource accounting. For details, see the [`TxQueue`] documentation.
 pub trait TxCompletion: Send + Sync {
+    /// Runs when the associated packet moves from the pending queue to the inflight queue.
+    ///
+    /// This method is called while the transmit queue lock is held.
     fn on_pending_submit(self: Box<Self>);
 }
 
+/// A guard holding a packet returned from [`TxQueue::try_send`] for deferred submission.
 pub struct TxPendingGuard<'a> {
     queue: &'a mut TxQueue,
     packet: TxPacket,
 }
 
 impl TxPendingGuard<'_> {
+    /// Enqueues the packet in the pending queue with an optional completion callback.
     pub fn push_pending(self, completion: Option<Box<dyn TxCompletion>>) {
         self.queue.pending.push_back(PendingTx {
             packet: self.packet,
@@ -114,6 +141,7 @@ impl TxPendingGuard<'_> {
     }
 }
 
+/// The receive queue of a virtio-vsock device.
 pub struct RxQueue {
     queue: VirtQueue,
     buffers: SlotVec<RxPacketBuilder>,
@@ -142,12 +170,16 @@ impl RxQueue {
         })
     }
 
+    /// Returns the next received packet, if any.
+    ///
+    /// Packets shorter than the mandatory header are discarded before they reach the caller.
     pub fn recv(&mut self) -> Option<RxPacket> {
         if self.pending.is_none() {
             self.pending = RxPacket::new_builder().ok();
         }
         if self.pending.is_none() {
             ostd::warn!("allocating recv packet fails");
+
             return None;
         }
 
@@ -174,6 +206,7 @@ impl RxQueue {
     }
 }
 
+/// The event queue of a virtio-vsock device.
 pub(super) struct EventQueue {
     queue: VirtQueue,
     buffer: DmaStream<FromDevice>,
@@ -193,6 +226,7 @@ impl EventQueue {
         Ok(Self { queue, buffer })
     }
 
+    /// Returns the next received event, if any.
     pub(super) fn recv(&mut self) -> Option<VirtioVsockEventId> {
         let (token, len) = self
             .queue

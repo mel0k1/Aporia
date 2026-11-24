@@ -33,40 +33,114 @@ use crate::{
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Metadata {
+    /// The inode number, which uniquely identifies the file within the filesystem.
+    ///
+    /// Corresponds to `st_ino`.
     pub ino: u64,
 
+    /// The size of the inode.
+    ///
+    /// The interpretation depends on `inode_type`:
+    /// - **Regular File**: The total length of the file content.
+    /// - **Directory**: The size of the directory's internal table (usually a multiple of block size).
+    /// - **Symbolic Link**: The length of the target pathname.
+    /// - **Device/Socket/FIFO**: Usually zero.
+    ///
+    /// Corresponds to `st_size`.
     pub size: usize,
 
+    /// The optimal block size for filesystem I/O operations.
+    ///
+    /// Corresponds to `st_blksize`.
     pub optimal_block_size: usize,
 
+    /// The number of 512-byte sectors allocated for the inode on disk.
+    ///
+    /// This represents physical usage.
+    /// For sparse files (those having holes), `size` is greater than this field.
+    /// For files with preallocated blocks (`FALLOC_FL_KEEP_SIZE`),
+    /// `size` is smaller than this field.
+    ///
+    /// Corresponds to `st_blocks`.
     pub nr_sectors_allocated: usize,
 
+    /// The timestamp of the last access to the inode's data.
+    ///
+    /// Corresponds to `st_atime`.
     pub last_access_at: Duration,
 
+    /// The timestamp of the last modification to the inode's content.
+    ///
+    /// Corresponds to `st_mtime`.
     pub last_modify_at: Duration,
 
+    /// The timestamp of the last change to the inode's metadata.
+    ///
+    /// This is updated when permissions, ownership, or link count change,
+    /// not just when the inode content is modified.
+    ///
+    /// Corresponds to `st_ctime`.
     pub last_meta_change_at: Duration,
 
+    /// The type of the inode (e.g., regular file, directory, symlink).
+    ///
+    /// Derived from the file type bits of `st_mode` (using the `S_IFMT` mask).
     pub type_: InodeType,
 
+    /// The inode mode, representing access permissions.
+    ///
+    /// Derived from the permission bits of `st_mode`.
     pub mode: InodeMode,
 
+    /// The number of hard links pointing to this inode.
+    ///
+    /// Corresponds to `st_nlink`.
     pub nr_hard_links: usize,
 
+    /// The User ID (UID) of the inode's owner.
+    ///
+    /// Corresponds to `st_uid`.
     pub uid: Uid,
 
+    /// The Group ID (GID) of the inode's owner.
+    ///
+    /// Corresponds to `st_gid`.
     pub gid: Gid,
 
+    /// The ID of the device containing the inode.
+    ///
+    /// For persisted files, this device could be an on-disk partition
+    /// or a logical volume (with RAID).
+    /// For pseudo files (e.g., those on sockfs), this device is also "pseudo".
+    ///
+    /// Corresponds to `st_dev`.
     pub container_dev_id: DeviceId,
 
+    /// The device ID of the inode itself, if this inode represents a
+    /// special device file (character or block).
+    ///
+    /// Corresponds to `st_rdev`.
     pub self_dev_id: Option<DeviceId>,
 
+    /// The timestamp of the file's creation (birth time).
+    ///
+    /// For filesystems that do not record birth time (e.g., ext2), this is
+    /// `None`.
+    ///
+    /// Corresponds to `stx_btime`.
     pub birth_at: Option<Duration>,
 }
 
+/// Describes whether an inode may get new hard links.
+///
+/// This does not control symbolic links. A symbolic link is a separate inode
+/// whose target is a pathname string, so creating one does not link the target
+/// inode directly.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum HardLinkability {
+    /// Allows creating hard links to the inode.
     Linkable,
+    /// Prevents creating hard links to the inode.
     Unlinkable,
 }
 
@@ -194,15 +268,76 @@ impl MknodType {
 }
 
 bitflags! {
+    /// Policy that controls when the VFS revalidates cached inode entries.
+    ///
+    /// # Why revalidation is needed
+    ///
+    /// Normally, inode creation and deletion go through VFS operations such as
+    /// `create`, `unlink`, `mkdir`, and `rmdir`. This lets the VFS keep its
+    /// dentry cache consistent with the underlying filesystem.
+    ///
+    /// However, some filesystems create or delete inodes outside the VFS
+    /// operation that populated a dentry cache. For example, procfs entries
+    /// under `/proc` appear and disappear as processes are forked and reaped,
+    /// and devtmpfs nodes under `/dev` appear and disappear as devices are
+    /// registered and unregistered. Networked filesystems may also be modified
+    /// by remote peers. For such filesystems, the VFS must revalidate cached
+    /// entries by asking the parent directory whether a cached child is still
+    /// valid.
+    ///
+    /// # Revalidation protocol
+    ///
+    /// A directory inode declares its policy through
+    /// [`Inode::revalidation_policy`].
+    ///
+    /// - [`REVALIDATE_EXISTS`](Self::REVALIDATE_EXISTS) makes the VFS call
+    ///   [`Inode::revalidate_exists`] on positive cache hits. If it returns
+    ///   `false`, the cached entry is dropped and the lookup is retried.
+    /// - [`REVALIDATE_ABSENT`](Self::REVALIDATE_ABSENT) makes the VFS call
+    ///   [`Inode::revalidate_absent`] on negative cache hits. If it returns
+    ///   `false`, the cached entry is dropped and the lookup is retried.
+    ///
+    /// If neither flag is set, cached entries are trusted unconditionally. The
+    /// policy must be fixed for each inode. Non-directory inodes should return
+    /// an empty policy.
+    ///
+    /// # Performance
+    ///
+    /// The revalidation callbacks run on every matching cache hit, so
+    /// filesystems should keep them cheap.
     #[derive(Clone, Copy, Debug)]
     pub(crate) struct RevalidationPolicy: u8 {
+        /// Revalidate positive cache entries (cached child inodes).
+        ///
+        /// Set this when the directory may spontaneously
+        /// _lose_ children without going through VFS `unlink`/`rmdir`.
+        /// For example, procfs sets this on `/proc`
+        /// because PID directories disappear when processes exit.
+        ///
+        /// When set, every positive cache hit calls
+        /// [`Inode::revalidate_exists`] on the parent directory.
         const REVALIDATE_EXISTS = 1 << 0;
 
+        /// Revalidate negative cache entries (names known to be absent).
+        ///
+        /// Set this when the directory may spontaneously _gain_ children
+        /// without going through VFS `create`/`mkdir`/`link`.
+        /// For example, procfs sets this on `/proc`
+        /// because PID directories appear when processes are forked.
+        ///
+        /// When set, every negative cache hit calls
+        /// [`Inode::revalidate_absent`] on the parent directory.
         const REVALIDATE_ABSENT = 1 << 1;
     }
 }
 
+/// Basic file operations.
+///
+/// For inode-backed files without per-`open()` state, [`Inode`] implements this
+/// trait directly. For files whose behavior depends on state created by `open`,
+/// the per-`open()` object implements this trait through [`PerOpenFileOps`].
 pub trait FileOps {
+    /// Reads data from the file into the given `VmWriter`.
     fn read_at(
         &self,
         offset: usize,
@@ -210,6 +345,7 @@ pub trait FileOps {
         status_flags: StatusFlags,
     ) -> Result<usize>;
 
+    /// Writes data from the given `VmReader` into the file.
     fn write_at(
         &self,
         offset: usize,
@@ -217,50 +353,94 @@ pub trait FileOps {
         status_flags: StatusFlags,
     ) -> Result<usize>;
 
+    /// Reads directory entries from the given offset.
     fn readdir_at(&self, _offset: usize, _visitor: &mut dyn DirentVisitor) -> Result<usize> {
         Err(errno!(ENOTDIR, "readdir is not supported"))
     }
 }
 
+/// Represents the filesystem metadata and operations associated with an inode.
+///
+/// When a method accepts `self_dentry`, it should be the [`Dentry`] corresponding to this inode;
+/// it provides additional VFS context, such as the parent of the dentry from which the operation
+/// originated, which can be useful to some filesystem implementations such as overlayfs.
 pub(crate) trait Inode: Any + FileOps + Send + Sync {
+    /// Returns the current size of the inode.
     fn size(&self) -> usize;
 
+    /// Changes the size of the inode.
     fn resize(&self, self_dentry: &Dentry, new_size: usize) -> Result<()>;
 
+    /// Returns all inode metadata.
+    ///
+    /// This method returns all metadata fields and is typically used to serve
+    /// syscalls such as `fstat`. Callers must not assume that this operation
+    /// is always cheap. For example, remote filesystems may need to perform
+    /// I/O when getting or updating metadata, and such operations may fail.
+    ///
+    /// If only a specific field is needed, prefer using the dedicated getters
+    /// such as [`size`], [`ino`], [`type_`], [`mode`], [`owner`], and [`group`], which
+    /// are generally cheaper as they return cached data from the inode.
+    ///
+    /// [`size`]: Inode::size
+    /// [`ino`]: Inode::ino
+    /// [`type_`]: Inode::type_
+    /// [`mode`]: Inode::mode
+    /// [`owner`]: Inode::owner
+    /// [`group`]: Inode::group
     fn metadata(&self) -> Result<Metadata>;
 
+    /// Returns the inode number.
     fn ino(&self) -> u64;
 
+    /// Returns the inode type.
     fn type_(&self) -> InodeType;
 
+    /// Returns the inode's permission mode.
     fn mode(&self) -> Result<InodeMode>;
 
+    /// Sets the inode's permission mode.
     fn set_mode(&self, self_dentry: &Dentry, mode: InodeMode) -> Result<()>;
 
+    /// Returns the inode owner's user ID.
     fn owner(&self) -> Result<Uid>;
 
+    /// Sets the inode owner's user ID.
     fn set_owner(&self, self_dentry: &Dentry, uid: Uid) -> Result<()>;
 
+    /// Returns the inode owner's group ID.
     fn group(&self) -> Result<Gid>;
 
+    /// Sets the inode owner's group ID.
     fn set_group(&self, self_dentry: &Dentry, gid: Gid) -> Result<()>;
 
+    /// Returns the inode's access time.
     fn atime(&self) -> Duration;
 
+    /// Sets the inode's access time.
     fn set_atime(&self, self_dentry: &Dentry, time: Duration);
 
+    /// Returns the inode's modification time.
     fn mtime(&self) -> Duration;
 
+    /// Sets the inode's modification time.
     fn set_mtime(&self, self_dentry: &Dentry, time: Duration);
 
+    /// Returns the inode's metadata-change time.
     fn ctime(&self) -> Duration;
 
+    /// Sets the inode's metadata-change time.
     fn set_ctime(&self, self_dentry: &Dentry, time: Duration);
 
+    /// Returns the inode's page cache, if it has one.
     fn page_cache(&self) -> Option<Arc<Vmo>> {
         None
     }
 
+    /// Creates a child inode.
+    ///
+    /// Use [`Inode::create_symlink`] to create symbolic links and
+    /// [`Inode::mknod`] to create device nodes or named pipes.
     fn create(
         &self,
         self_dentry: &Dentry,
@@ -271,6 +451,7 @@ pub(crate) trait Inode: Any + FileOps + Send + Sync {
         Err(errno!(ENOTDIR))
     }
 
+    /// Creates a symbolic-link child inode.
     fn create_symlink(
         &self,
         self_dentry: &Dentry,
@@ -281,6 +462,7 @@ pub(crate) trait Inode: Any + FileOps + Send + Sync {
         Err(errno!(EOPNOTSUPP))
     }
 
+    /// Creates an unnamed temporary inode.
     fn create_tmpfile(
         &self,
         self_dentry: &Dentry,
@@ -290,6 +472,7 @@ pub(crate) trait Inode: Any + FileOps + Send + Sync {
         Err(errno!(EOPNOTSUPP))
     }
 
+    /// Creates a device or named-pipe inode.
     fn mknod(
         &self,
         self_dentry: &Dentry,
@@ -300,6 +483,7 @@ pub(crate) trait Inode: Any + FileOps + Send + Sync {
         Err(errno!(ENOTDIR))
     }
 
+    /// Opens a file for this inode if supported.
     fn open(
         &self,
         self_dentry: &Dentry,
@@ -309,22 +493,27 @@ pub(crate) trait Inode: Any + FileOps + Send + Sync {
         None
     }
 
+    /// Creates a hard link to an existing inode.
     fn link(&self, self_dentry: &Dentry, old_dentry: &Dentry, name: &str) -> Result<()> {
         Err(errno!(ENOTDIR))
     }
 
+    /// Removes the specified child directory entry from this directory.
     fn unlink(&self, child_dentry: &Dentry) -> Result<()> {
         Err(errno!(ENOTDIR))
     }
 
+    /// Removes the specified child directory from this directory.
     fn rmdir(&self, child_dentry: &Dentry) -> Result<()> {
         Err(errno!(ENOTDIR))
     }
 
+    /// Looks up a child inode by name.
     fn lookup(&self, name: &str) -> Result<Arc<dyn Inode>> {
         Err(errno!(ENOTDIR))
     }
 
+    /// Renames or moves a child entry, optionally replacing an existing inode.
     fn rename(
         &self,
         old_child_dentry: &Dentry,
@@ -336,32 +525,72 @@ pub(crate) trait Inode: Any + FileOps + Send + Sync {
         Err(errno!(ENOTDIR))
     }
 
+    /// Reads the target of a symbolic link.
     fn read_link(&self) -> Result<SymbolicLink> {
         Err(errno!(EISDIR))
     }
 
+    /// Flushes inode data and metadata according to the requested synchronization mode.
     fn sync(&self, _mode: SyncMode) -> Result<()> {
         Ok(())
     }
 
+    /// Manipulates a range of space of the file according to the specified allocate mode,
+    /// the manipulated range starts at `offset` and continues for `len` bytes.
     fn fallocate(&self, mode: FallocMode, offset: usize, len: usize) -> Result<()> {
         Err(errno!(EOPNOTSUPP))
     }
 
+    /// Returns the filesystem containing this inode.
     fn fs(&self) -> Arc<dyn FileSystem>;
 
+    /// Returns the revalidation policy for cached children of this directory.
+    ///
+    /// See [`RevalidationPolicy`] for the full protocol description.
+    ///
+    /// Default: empty (no revalidation).
+    /// Correct for filesystems where all mutations go through the VFS.
     fn revalidation_policy(&self) -> RevalidationPolicy {
         RevalidationPolicy::empty()
     }
 
+    /// Checks whether a cached child inode still exists under this directory.
+    ///
+    /// Called on a positive cache hit
+    /// when [`RevalidationPolicy::REVALIDATE_EXISTS`] is set.
+    /// Returns `true` if `child` is still a valid child named `name`;
+    /// `false` if the entry should be dropped and the lookup retried.
+    ///
+    /// See [`RevalidationPolicy`] for the full protocol description.
+    ///
+    /// # Precondition
+    ///
+    /// Only called when `self.revalidation_policy()` includes `REVALIDATE_EXISTS`.
+    /// Otherwise, the return value is considered garbage.
     fn revalidate_exists(&self, _name: &str, _child: &dyn Inode) -> bool {
         true
     }
 
+    /// Checks whether a name is still absent under this directory.
+    ///
+    /// Called on a negative cache hit
+    /// when [`RevalidationPolicy::REVALIDATE_ABSENT`] is set.
+    /// Returns `true` if `name` is still absent;
+    /// `false` if a child may now exist and the lookup should be retried.
+    ///
+    /// See [`RevalidationPolicy`] for the full protocol description.
+    ///
+    /// # Precondition
+    ///
+    /// Only called when `self.revalidation_policy()` includes `REVALIDATE_ABSENT`.
+    /// Otherwise, the return value is considered garbage.
     fn revalidate_absent(&self, _name: &str) -> bool {
         true
     }
 
+    /// Returns the end position for [`SeekFrom::End`].
+    ///
+    /// [`SeekFrom::End`]: crate::fs::file::SeekFrom::End
     fn seek_end(&self) -> Option<usize> {
         if self.type_() == InodeType::File {
             Some(self.size())
@@ -370,8 +599,10 @@ pub(crate) trait Inode: Any + FileOps + Send + Sync {
         }
     }
 
+    /// Gets the extension of this inode.
     fn extension(&self) -> &Extension;
 
+    /// Sets an extended attribute on this inode.
     fn set_xattr(
         &self,
         self_dentry: &Dentry,
@@ -382,18 +613,25 @@ pub(crate) trait Inode: Any + FileOps + Send + Sync {
         Err(errno!(EOPNOTSUPP))
     }
 
+    /// Reads an extended attribute value into the supplied writer.
     fn get_xattr(&self, name: XattrName, value_writer: &mut VmWriter) -> Result<usize> {
         Err(errno!(EOPNOTSUPP))
     }
 
+    /// Lists the extended attributes in the specified namespace.
     fn list_xattr(&self, namespace: XattrNamespace, list_writer: &mut VmWriter) -> Result<usize> {
         Err(errno!(EOPNOTSUPP))
     }
 
+    /// Removes an extended attribute from this inode.
     fn remove_xattr(&self, self_dentry: &Dentry, _name: XattrName) -> Result<()> {
         Err(errno!(EOPNOTSUPP))
     }
 
+    /// Used to check for read/write/execute permissions on a file.
+    ///
+    /// Similar to Linux, using "fsuid" here allows setting filesystem permissions
+    /// without changing the "normal" uids for other tasks.
     fn check_permission(&self, mut perm: Permission) -> Result<()> {
         let Some(task) = Task::current() else {
             return Ok(());
@@ -491,6 +729,11 @@ impl Debug for dyn Inode {
     }
 }
 
+/// An extension is a set of object groups that is attached to an inode.
+///
+/// In this structure, we do not specify the exact type, but instead use [`Any`], which makes the
+/// FS types (e.g., [`Inode`]) independent of the kernel types. This allows the file system
+/// implementation to exist outside the kernel.
 #[derive(Debug)]
 pub(crate) struct Extension {
     group1: Once<ThinBox<dyn Any + Send + Sync>>,
@@ -499,6 +742,7 @@ pub(crate) struct Extension {
 }
 
 impl Extension {
+    /// Creates a new, empty extension.
     pub(crate) fn new() -> Self {
         Self {
             group1: Once::new(),
@@ -507,40 +751,68 @@ impl Extension {
         }
     }
 
+    /// Gets the first extension group.
     pub(crate) fn group1(&self) -> &Once<ThinBox<dyn Any + Send + Sync>> {
         &self.group1
     }
 
+    /// Gets the second extension group.
     pub(crate) fn group2(&self) -> &Once<ThinBox<dyn Any + Send + Sync>> {
         &self.group2
     }
 
+    /// Gets the third extension group.
     pub(crate) fn group3(&self) -> &Once<ThinBox<dyn Any + Send + Sync>> {
         &self.group3
     }
 }
 
+/// A symbolic link.
 #[derive(Clone, Debug)]
 pub(crate) enum SymbolicLink {
+    /// A plain text.
+    ///
+    /// This is the most common type of symbolic link.
+    /// Symbolic links on a normal FS are of this variant.
     Plain(String),
+    /// An file object residing at a FS path.
+    ///
+    /// This variant is intended to support the special ProcFS symbolic links,
+    /// such as `/proc/[pid]/fd/[fd]` and `/proc/[pid]/exe`.
     Path(Path),
 }
 
+/// Represents the various operation modes for fallocate.
+///
+/// Each mode determines whether the target disk space within a file
+/// will be allocated, deallocated, or zeroed, among other operations.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum FallocMode {
+    /// Allocates disk space within the range specified.
     Allocate,
+    /// Like `Allocate`, but does not change the file size.
     AllocateKeepSize,
+    /// Makes shared file data extents private to guarantee subsequent writes.
     AllocateUnshareRange,
+    /// Deallocates space (creates a hole) while keeping the file size unchanged.
     PunchHoleKeepSize,
+    /// Converts a file range to zeros, expanding the file if necessary.
     ZeroRange,
+    /// Like `ZeroRange`, but does not change the file size.
     ZeroRangeKeepSize,
+    /// Removes a range of bytes without leaving a hole.
     CollapseRange,
+    /// Inserts space within a file without overwriting existing data.
     InsertRange,
 }
 
+/// The behavior of rename operation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RenameMode {
+    /// Replaces the destination if it already exists.
     Replace,
+    /// Fails with `EEXIST` if the destination already exists.
     NoReplace,
+    /// Exchanges the source and destination paths.
     Exchange,
 }

@@ -1,23 +1,41 @@
+//! Information of memory regions in the boot phase.
+
 use core::ops::Deref;
 
 use align_ext::AlignExt;
 
 use crate::mm::{PAGE_SIZE, Paddr, Vaddr, kspace::kernel_loaded_offset};
 
+/// The type of initial memory regions that are needed for the kernel.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum MemoryRegionType {
+    /// Maybe points to an unplugged DIMM module. It's bad anyway.
     BadMemory = 0,
+    /// Some holes not specified by the bootloader/firmware. It may be used for
+    /// I/O memory but we don't know for sure.
     Unknown = 1,
+    /// In ACPI spec, this area needs to be preserved when sleeping.
     NonVolatileSleep = 2,
+    /// Reserved by BIOS or bootloader, do not use.
     Reserved = 3,
+    /// The place where kernel sections are loaded.
     Kernel = 4,
+    /// The place where kernel modules (e.g. initrd) are loaded, could be reused.
     Module = 5,
+    /// The memory region provided as the framebuffer.
     Framebuffer = 6,
+    /// Once used in the boot phase. Kernel can reclaim it after initialization.
     Reclaimable = 7,
+    /// Directly usable by the frame allocator.
     Usable = 8,
 }
 
 impl MemoryRegionType {
+    /// Returns whether the memory region corresponds to physical memory.
+    ///
+    /// The linear mapping will cover memory addresses up to the top of the physical memory.
+    /// Therefore, if this method returns `false`, the memory region may not be included in the
+    /// linear mapping.
     pub fn is_physical(self) -> bool {
         !matches!(
             self,
@@ -26,6 +44,9 @@ impl MemoryRegionType {
     }
 }
 
+/// The information of initial memory regions that are needed by the kernel.
+///
+/// The sections are **not** guaranteed to not overlap. The region must be page aligned.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct MemoryRegion {
     base: usize,
@@ -34,10 +55,12 @@ pub struct MemoryRegion {
 }
 
 impl MemoryRegion {
+    /// Constructs a valid memory region.
     pub const fn new(base: Paddr, len: usize, typ: MemoryRegionType) -> Self {
         MemoryRegion { base, len, typ }
     }
 
+    /// Constructs a bad memory region.
     pub const fn bad() -> Self {
         MemoryRegion {
             base: 0,
@@ -46,6 +69,10 @@ impl MemoryRegion {
         }
     }
 
+    /// Constructs a memory region where kernel sections are loaded.
+    ///
+    /// Most boot protocols do not mark the place where the kernel loads as unusable. In this case,
+    /// we need to explicitly construct and append this memory region.
     pub fn kernel() -> Self {
         unsafe extern "C" {
             fn __kernel_start();
@@ -58,6 +85,7 @@ impl MemoryRegion {
         }
     }
 
+    /// Constructs a framebuffer memory region.
     pub fn framebuffer(fb: &crate::boot::BootloaderFramebufferArg) -> Self {
         Self {
             base: fb.address,
@@ -66,6 +94,11 @@ impl MemoryRegion {
         }
     }
 
+    /// Constructs a module memory region from a byte slice that lives in the linear mapping.
+    ///
+    /// # Panics
+    ///
+    /// This method will panic if the byte slice does not live in the linear mapping.
     pub fn module(bytes: &[u8]) -> Self {
         let vaddr = bytes.as_ptr() as Vaddr;
         assert!(crate::mm::kspace::LINEAR_MAPPING_VADDR_RANGE.contains(&vaddr));
@@ -77,22 +110,27 @@ impl MemoryRegion {
         }
     }
 
+    /// Returns the physical address of the base of the region.
     pub fn base(&self) -> Paddr {
         self.base
     }
 
+    /// Returns the length in bytes of the region.
     pub fn len(&self) -> usize {
         self.len
     }
 
+    /// Returns the physical address of the end of the region.
     pub fn end(&self) -> Paddr {
         self.base + self.len
     }
 
+    /// Checks whether the region is empty
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
+    /// Returns the type of the region.
     pub fn typ(&self) -> MemoryRegionType {
         self.typ
     }
@@ -118,8 +156,15 @@ impl MemoryRegion {
     }
 }
 
+/// The maximum number of regions that can be handled.
+///
+/// The choice of 512 is probably fine since old Linux boot protocol only
+/// allows 128 regions.
 const MAX_REGIONS: usize = 512;
 
+/// A heapless set of memory regions.
+///
+/// The set cannot contain more than `LEN` regions.
 pub(crate) struct MemoryRegionArray<const LEN: usize = MAX_REGIONS> {
     regions: [MemoryRegion; LEN],
     count: usize,
@@ -139,10 +184,12 @@ impl<const LEN: usize> Deref for MemoryRegionArray<LEN> {
     }
 }
 
+/// An error returned by [`MemoryRegionArray::push`] when the array is full.
 #[derive(Debug)]
 pub(crate) struct ArrayFullError;
 
 impl<const LEN: usize> MemoryRegionArray<LEN> {
+    /// Constructs an empty set.
     pub(crate) const fn new() -> Self {
         Self {
             regions: [MemoryRegion::bad(); LEN],
@@ -150,6 +197,9 @@ impl<const LEN: usize> MemoryRegionArray<LEN> {
         }
     }
 
+    /// Appends a region to the set.
+    ///
+    /// If the set is full, an error is returned.
     pub(crate) fn push(&mut self, region: MemoryRegion) -> Result<(), ArrayFullError> {
         if self.count >= self.regions.len() {
             return Err(ArrayFullError);
@@ -161,6 +211,21 @@ impl<const LEN: usize> MemoryRegionArray<LEN> {
         Ok(())
     }
 
+    /// Sorts the regions and returns a full set of non-overlapping regions.
+    ///
+    /// If an address is in multiple regions, the region with the lowest
+    /// usability will be its type.
+    ///
+    /// All the addresses between 0 and the end of the last region will be in
+    /// the resulting set. If an address is not in any region, it will be marked
+    /// as [`MemoryRegionType::Unknown`].
+    ///
+    /// If any of the region boundaries are not page-aligned, they will be aligned
+    /// according to the type of the region.
+    ///
+    /// # Panics
+    ///
+    /// This method will panic if the number of output regions is greater than `LEN`.
     pub(crate) fn into_non_overlapping(mut self) -> Self {
         let mut count = 0;
         for i in 0..self.count {
@@ -238,6 +303,7 @@ mod test {
     #[ktest]
     fn sort_full_non_overlapping() {
         let mut regions = MemoryRegionArray::<64>::new();
+
         regions
             .push(MemoryRegion::new(
                 0,
@@ -259,6 +325,7 @@ mod test {
                 MemoryRegionType::Usable,
             ))
             .unwrap();
+
         regions
             .push(MemoryRegion::new(
                 PAGE_SIZE * 3 + 1,
@@ -266,6 +333,7 @@ mod test {
                 MemoryRegionType::BadMemory,
             ))
             .unwrap();
+
         regions
             .push(MemoryRegion::new(
                 PAGE_SIZE * 9,
@@ -310,6 +378,7 @@ mod test {
                     .unwrap();
             }
         }
+
         let regions = regions.into_non_overlapping();
         assert!(regions.is_empty());
     }

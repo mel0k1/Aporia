@@ -11,6 +11,7 @@ use crate::{
     security::lsm::hooks as lsm_hooks,
 };
 
+/// Represents the inode at `/proc/sys/kernel/overflowuid`.
 pub(super) struct OverflowUidFileOps;
 
 impl OverflowUidFileOps {

@@ -1,9 +1,27 @@
+
+
+//! The test suite for OpenJDK on Asterinas NixOS.
+//!
+//! Supplements the `OpenJDK` coverage in `development-tools`.
+//!
+//! See `test/nixos/README.md#documentation-maintenance` for sync requirements
+//! between this test suite and the corresponding "Verified Usage" book section.
+
 use nixos_test_framework::*;
 
 nixos_test_main!();
 
 #[nixos_test]
 fn openjdk_regression(nixos_shell: &mut Session) -> Result<(), Error> {
+
+
+
+
+
+
+
+
+
     let success_regex =
         Regex::new(r"(?m)^Test results: passed: [0-9]+$").map_err(|err| Error::Pty(err.into()))?;
 

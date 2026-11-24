@@ -9,14 +9,18 @@ use crate::{
     prelude::*,
 };
 
+/// An in-memory xattr object of a `RamInode`.
+/// An xattr is used to manage special 'name-value' pairs of an inode.
 pub(crate) struct RamXattr(Once<Box<RwMutex<RamXattrInner>>>);
 
+/// An owned in-memory xattr name that possesses a valid namespace.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct RamXattrName {
     namespace: XattrNamespace,
     full_name: String,
 }
 
+/// The value type of an in-memory xattr.
 type RamXattrValue = Vec<u8>;
 
 #[derive(Clone, Debug)]
@@ -163,6 +167,7 @@ impl RamXattr {
         Ok(())
     }
 
+    /// Checks if the file type is valid for xattr support.
     pub(crate) fn check_file_type_for_xattr(file_type: InodeType) -> Result<()> {
         match file_type {
             InodeType::File | InodeType::Dir => Ok(()),

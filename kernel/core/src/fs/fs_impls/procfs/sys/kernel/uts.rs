@@ -12,6 +12,7 @@ use crate::{
     process::posix_thread::{AsPosixThread, PosixThread},
 };
 
+/// Represents the inode at `/proc/sys/kernel/hostname`.
 pub(super) struct HostnameFileOps;
 
 impl HostnameFileOps {
@@ -35,6 +36,7 @@ impl ProcFileOps for HostnameFileOps {
     }
 }
 
+/// Represents the inode at `/proc/sys/kernel/domainname`.
 pub(super) struct DomainnameFileOps;
 
 impl DomainnameFileOps {
@@ -58,6 +60,7 @@ impl ProcFileOps for DomainnameFileOps {
     }
 }
 
+/// Represents the inode at `/proc/sys/kernel/osrelease`.
 pub(super) struct OsReleaseFileOps;
 
 impl OsReleaseFileOps {
@@ -72,6 +75,7 @@ impl ProcFileOps for OsReleaseFileOps {
     }
 }
 
+/// Represents the inode at `/proc/sys/kernel/version`.
 pub(super) struct VersionFileOps;
 
 impl VersionFileOps {

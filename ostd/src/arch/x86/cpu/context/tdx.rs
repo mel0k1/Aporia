@@ -9,6 +9,17 @@ pub(crate) struct VirtualizationExceptionHandler {
 }
 
 impl VirtualizationExceptionHandler {
+    /// Creates a VE handler.
+    ///
+    /// It is important that such a handler is created immediately after a VE happens,
+    /// before the local IRQs are re-enabled. This is because the handler needs to retrieve more information
+    /// about the last VE from the trusted Intel TDX module. If another VE happens, the information about
+    /// the last one held by Intel TDX module would be overridden and lost!
+    ///
+    /// This constructor method retrieves the VE information from
+    /// Intel TDX module and saved into the newly-created instance.
+    /// So after instantiating a `VirtualizationExceptionHandler`,
+    /// we won't need to worry about triggering a new VE.
     pub(super) fn new() -> Self {
         let ve_info = tdcall::get_veinfo().expect("#VE handler: fail to get VE info\n");
         Self { ve_info }

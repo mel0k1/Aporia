@@ -1,3 +1,10 @@
+//! Regular-file data I/O for ext2 inodes: buffered reads/writes and fallocate.
+//!
+//! This module contains the regular-file behavior exposed through the VFS
+//! layer: page-cache I/O, direct I/O, size changes, and block preallocation.
+//! File size, page-cache state, and ext2 block mappings must stay coherent
+//! across those entry points.
+
 #![short_vis_path::add(ext2)]
 
 use core::mem::DropGuard;
@@ -14,6 +21,7 @@ use crate::{
 };
 
 impl Inode {
+    /// Reads file data at `offset` through the page cache.
     pub(in ext2) fn read_at(&self, offset: usize, writer: &mut VmWriter) -> Result<usize> {
         if self.type_ == InodeType::Dir {
             return Err(errno!(EISDIR));
@@ -30,6 +38,7 @@ impl Inode {
         Ok(read_len)
     }
 
+    /// Writes file data at `offset` through the page cache.
     pub(in ext2) fn write_at(&self, offset: usize, reader: &mut VmReader) -> Result<usize> {
         if self.type_ == InodeType::Dir {
             return Err(errno!(EISDIR));
@@ -45,6 +54,7 @@ impl Inode {
         inner.write_at(&fs, offset, reader)
     }
 
+    /// Direct-I/O read path.
     pub(in ext2) fn read_direct_at(&self, offset: usize, writer: &mut VmWriter) -> Result<usize> {
         if self.type_ == InodeType::Dir {
             return Err(errno!(EISDIR));
@@ -66,6 +76,7 @@ impl Inode {
         Ok(read_len)
     }
 
+    /// Direct-I/O write path with pre-allocation and rollback.
     pub(in ext2) fn write_direct_at(&self, offset: usize, reader: &mut VmReader) -> Result<usize> {
         if self.type_ == InodeType::Dir {
             return Err(errno!(EISDIR));
@@ -84,6 +95,7 @@ impl Inode {
         inner.write_direct_at(&fs, offset, reader)
     }
 
+    /// Truncates or extends the file to `new_size` bytes.
     pub(in ext2) fn resize(&self, new_size: usize) -> Result<()> {
         if self.type_ == InodeType::Dir {
             return Err(errno!(EISDIR));
@@ -119,6 +131,7 @@ impl Inode {
         Ok(())
     }
 
+    /// Implements fallocate operations for ext2.
     pub(in ext2) fn fallocate(&self, mode: FallocMode, offset: usize, len: usize) -> Result<()> {
         if len == 0 {
             return Ok(());
@@ -160,6 +173,17 @@ impl Inode {
 }
 
 impl InodeInner {
+    /// Prepares the inode for a write spanning `[offset, end)`.
+    ///
+    /// Expands the page cache if `end > file_size`, zeroes partial block
+    /// boundaries, and allocates missing data blocks.
+    ///
+    /// # Rollback
+    ///
+    /// On failure the caller **must** invoke `rollback_write` with the
+    /// original file size and `end` to restore page-cache capacity and
+    /// free partially allocated blocks. The caller must hold `InodeInner`
+    /// write lock for the entire prepare-write-commit sequence.
     pub(super) fn prepare_write(&mut self, fs: &Ext2, offset: usize, end: usize) -> Result<()> {
         let old_size = self.file_size();
         if end > old_size {
@@ -171,6 +195,7 @@ impl InodeInner {
         Ok(())
     }
 
+    /// Truncates page cache and blocks after a failed write.
     pub(super) fn rollback_write(&mut self, old_size: usize, end: usize) {
         if end <= old_size {
             return;
@@ -187,12 +212,14 @@ impl InodeInner {
         }
     }
 
+    /// Truncates only block mappings after a failed fallocate.
     fn rollback_fallocate(&mut self, old_size: usize) {
         if let Ok(block_manager) = self.block_manager() {
             block_manager.truncate_to_byte_len(old_size);
         }
     }
 
+    /// Reads file data at `offset` through the inode page cache.
     fn read_at(&self, offset: usize, writer: &mut VmWriter) -> Result<usize> {
         if writer.avail() == 0 {
             return Ok(0);
@@ -208,6 +235,7 @@ impl InodeInner {
         Ok(read_len)
     }
 
+    /// Writes file data at `offset` through the inode page cache.
     fn write_at(&mut self, fs: &Ext2, offset: usize, reader: &mut VmReader) -> Result<usize> {
         let write_len = reader.remain();
         if write_len == 0 {
@@ -232,6 +260,7 @@ impl InodeInner {
         Ok(write_len)
     }
 
+    /// Reads file data directly after flushing overlapping cached pages.
     fn read_direct_at(&self, fs: &Ext2, offset: usize, writer: &mut VmWriter) -> Result<usize> {
         let file_size = self.file_size();
         if offset >= file_size || writer.avail() == 0 {
@@ -249,6 +278,7 @@ impl InodeInner {
         Ok(read_len)
     }
 
+    /// Writes file data directly after invalidating overlapping cached pages.
     fn write_direct_at(
         &mut self,
         fs: &Ext2,
@@ -285,6 +315,7 @@ impl InodeInner {
         Ok(write_len)
     }
 
+    /// Reads file data directly from data blocks into `writer`.
     fn read_direct_blocks(
         &self,
         fs: &Ext2,
@@ -318,6 +349,7 @@ impl InodeInner {
         Ok(())
     }
 
+    /// Writes file data directly to already-allocated data blocks.
     fn write_direct_blocks(
         &mut self,
         fs: &Ext2,
@@ -326,6 +358,7 @@ impl InodeInner {
     ) -> Result<()> {
         let write_len = reader.remain();
         debug_assert_eq!(write_len % BLOCK_SIZE, 0);
+
         let end = offset + write_len;
         let iblock_start = Iblock::try_from(offset / BLOCK_SIZE)
             .map_err(|_| errno!(EINVAL, "logical block number overflow"))?;
@@ -376,6 +409,7 @@ impl InodeInner {
         Ok(())
     }
 
+    /// Allocates any missing data blocks covering the requested file byte range.
     fn allocate_range_blocks(&mut self, offset: usize, end: usize) -> Result<()> {
         let start_block = offset / BLOCK_SIZE;
         let end_block = end.div_ceil(BLOCK_SIZE);
@@ -383,6 +417,7 @@ impl InodeInner {
             .allocate_range_blocks(start_block, end_block)
     }
 
+    /// Rejects growth beyond the ext2-representable size limit before mutating state.
     fn ensure_size_within_limit(&self, fs: &Ext2, new_size: usize) -> Result<()> {
         let max_size = match self.inode_type() {
             InodeType::File => fs.max_file_size(),

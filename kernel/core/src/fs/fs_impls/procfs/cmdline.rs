@@ -1,3 +1,8 @@
+//! This module offers `/proc/cmdline` file support, which provides
+//! information about arguments passed to the kernel at boot time.
+//!
+//! Reference: <https://man7.org/linux/man-pages/man5/proc_cmdline.5.html>
+
 use aster_util::printer::VmPrinter;
 use ostd::boot::boot_info;
 
@@ -10,6 +15,7 @@ use crate::{
     prelude::*,
 };
 
+/// Represents the inode at `/proc/cmdline`.
 pub(super) struct CmdLineFileOps;
 
 impl CmdLineFileOps {

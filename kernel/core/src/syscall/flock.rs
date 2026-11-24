@@ -47,9 +47,13 @@ impl From<FlockOps> for FlockType {
 bitflags! {
     #[derive(Clone, Copy, Debug)]
     struct FlockOps: i32 {
+        /// Shared lock
         const LOCK_SH = 1;
+        /// Exclusive lock
         const LOCK_EX = 2;
+
         const LOCK_NB = 4;
+
         const LOCK_UN = 8;
     }
 }

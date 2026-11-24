@@ -1,3 +1,8 @@
+//! The layer-model types of an overlay mount.
+//!
+//! A layer is built from its resolved root by [`Layer::from_path`]; the assembly and validation
+//! of the whole stack stays in `fs/mount/layer_parts.rs`.
+
 use device_id::DeviceId;
 
 use crate::{
@@ -8,6 +13,7 @@ use crate::{
     prelude::*,
 };
 
+/// One pinned real directory root of the mount: the upper or a read-only lower.
 #[derive(Debug)]
 pub(super) struct Layer {
     root_dentry: Arc<Dentry>,
@@ -16,6 +22,7 @@ pub(super) struct Layer {
 }
 
 impl Layer {
+    /// Builds one layer from a resolved root path.
     pub(super) fn from_path(path: &Path) -> Result<Self> {
         let container_dev_id = path.metadata()?.container_dev_id;
         let root_dentry = path.dentry().clone();
@@ -40,6 +47,7 @@ impl Layer {
     }
 }
 
+/// The ordered, mount-fixed layer collection: upper first, then lowers topmost-first.
 #[derive(Debug)]
 pub(super) struct LayerStack {
     upper: Option<Layer>,
@@ -47,6 +55,7 @@ pub(super) struct LayerStack {
 }
 
 impl LayerStack {
+    /// Collects the mount's validated upper and lowers into the stack the mount presents.
     pub(super) fn new(upper: Option<Layer>, lowers: Vec<Layer>) -> Self {
         Self { upper, lowers }
     }

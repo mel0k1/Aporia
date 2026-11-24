@@ -12,28 +12,34 @@ use crate::{
     },
 };
 
+/// A signal dequeued from either the thread or the process queue,
+/// carrying its origin so it can be correctly re-enqueued later.
 pub(crate) enum DequeuedSignal {
     FromProcess(Box<dyn Signal>),
     FromThread(Box<dyn Signal>),
 }
 
 impl DequeuedSignal {
+    /// Consumes the dequeued signal and returns the inner signal.
     pub(crate) fn unwrap(self) -> Box<dyn Signal> {
         match self {
             Self::FromProcess(signal) | Self::FromThread(signal) => signal,
         }
     }
 
+    /// Returns a reference to the inner signal.
     pub(in crate::process) fn signal(&self) -> &dyn Signal {
         match self {
             Self::FromProcess(signal) | Self::FromThread(signal) => signal.as_ref(),
         }
     }
 
+    /// Returns the signal number of the inner signal.
     pub(in crate::process) fn num(&self) -> SigNum {
         self.signal().num()
     }
 
+    /// Replaces the inner signal with `new_signal`, preserving the origin.
     pub(in crate::process) fn set_signal(&mut self, new_signal: Box<dyn Signal>) {
         match self {
             Self::FromProcess(signal) | Self::FromThread(signal) => *signal = new_signal,
@@ -41,13 +47,24 @@ impl DequeuedSignal {
     }
 }
 
+/// Trait for handling pending signals.
 pub(crate) trait HandlePendingSignal {
+    /// Returns the thread's pending signal set.
+    ///
+    /// This includes signals that are currently blocked or ignored.
     fn pending_signals(&self) -> SigSet;
 
+    /// Returns if there are pending signals that are neither blocked nor ignored.
+    ///
+    /// Note that ignored but not blocked signals may be dequeued silently.
     fn has_pending(&self) -> bool;
 
+    /// Returns if a SIGKILL signal is pending.
     fn has_pending_sigkill(&self) -> bool;
 
+    /// Dequeues the next pending signal that is not masked by `mask`.
+    ///
+    /// Returns `None` if no such signal is available.
     fn dequeue_signal(&self, mask: &SigMask) -> Option<DequeuedSignal>;
 }
 

@@ -28,6 +28,10 @@ use crate::{
     },
 };
 
+/// A handle for a pipe that implements `PerOpenFileOps`.
+///
+/// Once a handle for a `Pipe` exists, the corresponding pipe object will
+/// not be dropped.
 pub(in crate::fs) struct PipeHandle {
     inner: Arc<PipeObj>,
     access_mode: AccessMode,
@@ -153,12 +157,21 @@ impl PerOpenFileOps for PipeHandle {
     }
 }
 
+/// A pipe (FIFO) that provides inter-process communication.
+///
+/// Pipes are special files that appear in the filesystem and provide a
+/// communication channel between processes. It can be opened multiple times
+/// for reading, writing, or both.
+///
+/// A `Pipe` will maintain exactly one **pipe object** that provides actual pipe
+/// functionalities when there is at least one handle opened on it.
 pub(in crate::fs) struct Pipe {
     pipe: Mutex<PipeInner>,
     wait_queue: WaitQueue,
 }
 
 impl Pipe {
+    /// Creates a new pipe.
     pub(crate) fn new() -> Self {
         Self {
             pipe: Mutex::new(PipeInner::default()),
@@ -166,6 +179,17 @@ impl Pipe {
         }
     }
 
+    /// Opens the named pipe with the specified access mode and status flags.
+    ///
+    /// Returns a handle that implements `PerOpenFileOps` for performing I/O operations.
+    ///
+    /// The open behavior follows POSIX semantics:
+    /// - Opening for read-only blocks until a writer opens the pipe.
+    /// - Opening for write-only blocks until a reader opens the pipe.
+    /// - Opening for read-write never blocks.
+    ///
+    /// If no handle of this named pipe has existed, the method will create a new pipe object.
+    /// Otherwise, it will return a handle that works on the existing pipe object.
     pub(crate) fn open_named(
         &self,
         access_mode: AccessMode,
@@ -174,6 +198,7 @@ impl Pipe {
         self.open_handle(access_mode, status_flags, true)
     }
 
+    /// Opens the anonymous pipe with the specified access mode and status flags.
     pub(super) fn open_anon(
         &self,
         access_mode: AccessMode,
@@ -182,6 +207,7 @@ impl Pipe {
         self.open_handle(access_mode, status_flags, false)
     }
 
+    /// Opens the pipe and returns a `PipeHandle`.
     fn open_handle(
         &self,
         access_mode: AccessMode,
@@ -313,6 +339,14 @@ const DEFAULT_PIPE_BUF_SIZE: usize = 65536;
 #[cfg(ktest)]
 const DEFAULT_PIPE_BUF_SIZE: usize = 2;
 
+/// Maximum number of bytes guaranteed to be written to a pipe atomically.
+///
+/// If the number of bytes to be written is less than the threshold, the write must be atomic.
+/// A non-blocking atomic write may fail with `EAGAIN`, even if there is room for a partial write.
+/// In other words, a partial write is not allowed for an atomic write.
+///
+/// For more details, see the description of `PIPE_BUF` in
+/// <https://man7.org/linux/man-pages/man7/pipe.7.html>.
 #[cfg(not(ktest))]
 const PIPE_BUF: usize = 4096;
 #[cfg(ktest)]

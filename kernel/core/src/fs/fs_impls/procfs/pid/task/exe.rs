@@ -9,6 +9,7 @@ use crate::{
     thread::Thread,
 };
 
+/// Represents the inode at `/proc/[pid]/task/[tid]/exe` (and also `/proc/[pid]/exe`).
 pub(super) struct ExeSymOps(TidDirOps);
 
 impl ExeSymOps {

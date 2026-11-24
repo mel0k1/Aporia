@@ -1,17 +1,32 @@
+
+
+//! The test suite for containerization and virtualization applications on Asterinas NixOS.
+//!
+//! See `test/nixos/README.md#documentation-maintenance` for sync requirements
+//! between this test suite and the corresponding "Verified Usage" book section.
+
 use nixos_test_framework::*;
 
 nixos_test_main!();
 
+
+
+
+
 #[nixos_test]
 fn podman_run_alpine_container(nixos_shell: &mut Session) -> Result<(), Error> {
+
     nixos_shell.run_cmd_and_expect(
         "podman run --name=c1 docker.io/library/alpine ls /etc",
         "alpine-release",
     )?;
 
+
     nixos_shell.run_cmd_and_expect("podman image ls", "docker.io/library/alpine")?;
 
+
     nixos_shell.run_cmd_and_expect("podman ps -a", "Exited (0)")?;
+
 
     nixos_shell.run_cmd("podman rm c1")?;
 
@@ -31,6 +46,10 @@ fn podman_open_interactive_session(nixos_shell: &mut Session) -> Result<(), Erro
     Ok(())
 }
 
+
+
+
+
 #[nixos_test]
 fn skopeo_inspect_image(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd_and_expect(
@@ -41,14 +60,24 @@ fn skopeo_inspect_image(nixos_shell: &mut Session) -> Result<(), Error> {
     Ok(())
 }
 
+
+
+
+
 #[nixos_test]
 fn qemu_display_version(nixos_shell: &mut Session) -> Result<(), Error> {
+
     nixos_shell.run_cmd_and_expect("qemu-system-$(uname -m) --version", "QEMU emulator version")?;
     Ok(())
 }
 
 #[nixos_test]
 fn qemu_tcg_run_linux(nixos_shell: &mut Session) -> Result<(), Error> {
+
+
+
+
+
     const CMD: &str = concat!(
         "qemu-system-$(uname -m) ",
         "-accel tcg ",
@@ -64,6 +93,10 @@ fn qemu_tcg_run_linux(nixos_shell: &mut Session) -> Result<(), Error> {
 
 #[nixos_test]
 fn qemu_tcg_run_aster(nixos_shell: &mut Session) -> Result<(), Error> {
+
+
+
+
     const CMD: &str = concat!(
         "qemu-system-$(uname -m) ",
         "-accel tcg ",

@@ -4,17 +4,42 @@ use crate::{arch::cpu::context::GeneralRegs, irq::DisabledLocalIrqGuard, mm::fau
 
 global_asm!(include_str!("trap.S"));
 
+/// Initializes exception and interrupt handling for the current core.
+///
+/// # Safety
+///
+/// On the current CPU, this function must be called
+/// - only once and
+/// - before any trap can occur.
 pub(super) unsafe fn init_on_cpu() {
     loongArch64::register::ecfg::set_vs(0);
+
     loongArch64::register::eentry::set_eentry(trap_entry as *const () as usize);
 }
 
+/// Trap frame of kernel interrupt
+///
+/// # Trap handler
+///
+/// You need to define a handler function like this:
+///
+/// ```no_run
+/// // SAFETY: The name does not collide with other symbols.
+/// #[unsafe(no_mangle)]
+/// pub extern "C" fn trap_handler(tf: &mut TrapFrame) {
+///     println!("TRAP! tf: {:#x?}", tf);
+/// }
+/// ```
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct TrapFrame {
+    /// General registers
     pub general: GeneralRegs,
+    /// Pre-exception Mode Information
     pub prmd: usize,
+    /// Exception Return Address
     pub era: usize,
+    /// Extended Unit Enable
     pub euen: usize,
 }
 
@@ -28,12 +53,17 @@ impl TrapFrameApi for TrapFrame {
     }
 }
 
+/// Saved registers on a trap.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub(in crate::arch) struct RawUserContext {
+    /// General registers
     pub(in crate::arch) general: GeneralRegs,
+    /// Pre-exception Mode Information
     pub(in crate::arch) prmd: usize,
+    /// Exception Return Address
     pub(in crate::arch) era: usize,
+    /// Extended Unit Enable
     pub(in crate::arch) euen: usize,
 }
 
@@ -49,6 +79,18 @@ impl Default for RawUserContext {
 }
 
 impl RawUserContext {
+    /// Goes to user space with the context, and comes back when a trap occurs.
+    ///
+    /// The IRQ guard ensures that local IRQs are disabled on entry.
+    /// They remain disabled throughout the _kernel-side_ execution of this method.
+    /// However, the _user-space_ execution part is still interruptible,
+    /// even while the IRQ guard is alive.
+    /// The underlying mechanism depends on the CPU architecture.
+    /// On LoongArch, `ertn` restores the saved user Interrupt Enable (IE) bit,
+    /// which is always set.
+    ///
+    /// On return, the context will be reset to the status before the trap.
+    /// Trap reason will be placed at `estat`.
     pub(in crate::arch) fn run(&mut self, _guard: &DisabledLocalIrqGuard) {
         unsafe { run_user(self) };
     }

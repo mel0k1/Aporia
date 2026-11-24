@@ -1,3 +1,14 @@
+//! Kernel "oops" handling.
+//!
+//! In Asterinas, a Rust panic leads to a kernel "oops". A kernel oops behaves
+//! as an exceptional control flow event. If kernel oopses happened too many
+//! times, the kernel panics and the system gets halted. Kernel oops are per-
+//! thread, so one thread's oops does not affect other threads.
+//!
+//! Though we can recover from the Rust panics. It is generally not recommended
+//! to make Rust panics as a general exception handling mechanism. Handling
+//! exceptions with [`Result`] is more idiomatic.
+
 use alloc::format;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -8,12 +19,23 @@ use crate::prelude::*;
 
 static PANIC_ON_OOPS: AtomicBool = AtomicBool::new(true);
 
+/// The kernel "oops" information.
 pub(crate) struct OopsInfo {
+    /// The "oops" message.
     pub message: String,
+    /// The thread where the "oops" happened.
     #[expect(unused)]
     pub thread: Arc<Thread>,
 }
 
+/// Executes the given function and catches any panics that occur.
+///
+/// All the panics in the given function will be regarded as oops. If a oops
+/// happens, this function returns `None`. Otherwise, it returns the return
+/// value of the given function.
+///
+/// If the kernel is configured to panic on oops, this function will not return
+/// when a oops happens.
 pub(crate) fn catch_panics_as_oops<F, R>(f: F) -> Result<R, OopsInfo>
 where
     F: FnOnce() -> R,
@@ -38,6 +60,9 @@ where
     }
 }
 
+/// The maximum number of oops allowed before the kernel panics.
+///
+/// It is the same as Linux's default value.
 const MAX_OOPS_COUNT: usize = 10_000;
 
 static OOPS_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -54,6 +79,7 @@ fn panic_handler(info: &core::panic::PanicInfo) -> ! {
             } else {
                 message.to_string()
             };
+
             panic::begin_panic(Box::new(OopsInfo { message, thread }));
         }
     }

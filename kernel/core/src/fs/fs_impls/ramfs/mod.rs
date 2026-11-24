@@ -1,3 +1,5 @@
+//! Ramfs based on PageCache
+
 pub(crate) use fs::RamFs;
 use fs::RamFsType;
 pub(super) use fs::RamInode;

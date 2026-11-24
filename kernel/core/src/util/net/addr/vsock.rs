@@ -1,13 +1,19 @@
 use super::family::CSocketAddrFamily;
 use crate::{net::socket::vsock::VsockSocketAddr, prelude::*};
 
+/// VSOCK socket address.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(super) struct CSocketAddrVm {
+    /// Address family (AF_VSOCK).
     svm_family: u16,
+    /// Reserved (always zero).
     svm_reserved1: u16,
+    /// Port number in host byte order.
     svm_port: u32,
+    /// Address in host byte order.
     svm_cid: u32,
+    /// Pad bytes to 16-byte `struct sockaddr` (always zero).
     svm_zero: [u8; 4],
 }
 

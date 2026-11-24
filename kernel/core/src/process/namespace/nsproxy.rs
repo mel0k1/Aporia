@@ -8,6 +8,13 @@ use crate::{
     process::{CloneFlags, Process, UserNamespace, posix_thread::PosixThread},
 };
 
+/// A struct that acts as a per-thread proxy to give access to most namespaces.
+///
+/// Each `PosixThread` owns an instance of `NsProxy`
+/// and keeps a local copy in `ThreadLocal` for fast access.
+/// `NsProxy` contains all types of namespaces except
+/// 1. The user namespace, which is included in the `Process` struct.
+/// 2. The PID namespace, which is included in the `Process` struct (TODO).
 pub(crate) struct NsProxy {
     cgroup_ns: Arc<CgroupNamespace>,
     ipc_ns: Arc<IpcNamespace>,
@@ -16,6 +23,7 @@ pub(crate) struct NsProxy {
 }
 
 impl NsProxy {
+    /// Returns a reference to the singleton initial `NsProxy`.
     pub(in crate::process) fn get_init_singleton() -> &'static Arc<Self> {
         static INIT: Once<Arc<NsProxy>> = Once::new();
         INIT.call_once(|| {
@@ -28,6 +36,11 @@ impl NsProxy {
         })
     }
 
+    /// Creates a new `NsProxy` by cloning from an existing `NsProxy`.
+    ///
+    /// If no namespaces need to be cloned, this method simply clones `self` and returns.
+    /// Otherwise, a new `NsProxy` will be created
+    /// by selectively cloning fields from the proxy and newly created namespaces.
     pub(in crate::process) fn new_clone(
         self: &Arc<Self>,
         user_ns: &Arc<UserNamespace>,
@@ -70,23 +83,29 @@ impl NsProxy {
         Ok(Arc::new(builder.build()))
     }
 
+    /// Returns the associated cgroup namespace.
     pub(crate) fn cgroup_ns(&self) -> &Arc<CgroupNamespace> {
         &self.cgroup_ns
     }
 
+    /// Returns the associated IPC namespace.
     pub(crate) fn ipc_ns(&self) -> &Arc<IpcNamespace> {
         &self.ipc_ns
     }
 
+    /// Returns the associated mount namespace.
     pub(crate) fn mnt_ns(&self) -> &Arc<MountNamespace> {
         &self.mnt_ns
     }
 
+    /// Returns the associated UTS namespace.
     pub(crate) fn uts_ns(&self) -> &Arc<UtsNamespace> {
         &self.uts_ns
     }
 }
 
+/// A builder for creating a new `NsProxy` by selectively cloning namespaces
+/// from an existing one.
 pub(crate) struct NsProxyBuilder<'a> {
     old_proxy: &'a NsProxy,
 
@@ -97,6 +116,7 @@ pub(crate) struct NsProxyBuilder<'a> {
 }
 
 impl<'a> NsProxyBuilder<'a> {
+    /// Creates a builder based on an existing `NsProxy`.
     pub(crate) fn new(old_proxy: &'a NsProxy) -> Self {
         Self {
             old_proxy,
@@ -107,26 +127,31 @@ impl<'a> NsProxyBuilder<'a> {
         }
     }
 
+    /// Sets the new cgroup namespace for the context being built.
     pub(crate) fn cgroup_ns(&mut self, cgroup_ns: Arc<CgroupNamespace>) -> &mut Self {
         self.cgroup_ns = Some(cgroup_ns);
         self
     }
 
+    /// Sets the new IPC namespace for the context being built.
     pub(crate) fn ipc_ns(&mut self, ipc_ns: Arc<IpcNamespace>) -> &mut Self {
         self.ipc_ns = Some(ipc_ns);
         self
     }
 
+    /// Sets the new mount namespace for the context being built.
     pub(crate) fn mnt_ns(&mut self, mnt_ns: Arc<MountNamespace>) -> &mut Self {
         self.mnt_ns = Some(mnt_ns);
         self
     }
 
+    /// Sets the new UTS namespace for the context being built.
     pub(crate) fn uts_ns(&mut self, uts_ns: Arc<UtsNamespace>) -> &mut Self {
         self.uts_ns = Some(uts_ns);
         self
     }
 
+    /// Builds the new `NsProxy`.
     pub(crate) fn build(self) -> NsProxy {
         let Self {
             old_proxy,
@@ -150,6 +175,9 @@ impl<'a> NsProxyBuilder<'a> {
     }
 }
 
+/// Checks if the given `flags` contain any unsupported namespace-related flags.
+///
+/// This method does _not_ check `CLONE_NEWUSER` since it's handled separately.
 pub(crate) fn check_unsupported_ns_flags(flags: CloneFlags) -> Result<()> {
     const SUPPORTED_FLAGS: CloneFlags = CloneFlags::CLONE_NEWCGROUP
         .union(CloneFlags::CLONE_NEWIPC)
@@ -166,7 +194,9 @@ pub(crate) fn check_unsupported_ns_flags(flags: CloneFlags) -> Result<()> {
     Err(errno!(EINVAL, "unsupported clone namespace flags"))
 }
 
+/// Provides administrative APIs for switching to existing namespaces.
 pub(crate) trait ContextSetNsAdminApi {
+    /// Sets the namespace proxy for this context.
     fn set_ns_proxy(&self, ns_proxy: Arc<NsProxy>);
 }
 

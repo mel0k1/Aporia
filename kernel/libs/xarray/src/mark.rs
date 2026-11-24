@@ -2,6 +2,12 @@ use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::XLockGuard;
 
+/// A mark used to indicate which slots in an [`XNode`] contain items that have been marked.
+///
+/// [`Xnode`]: super::node::XNode
+///
+/// It internally stores an `AtomicU64`, functioning as a bitmap, where each bit that is set to 1
+/// represents a slot at the corresponding offset that has been marked.
 #[derive(Debug)]
 pub(super) struct Mark {
     inner: AtomicU64,
@@ -49,17 +55,32 @@ impl Mark {
     }
 }
 
+/// The mark type used in the [`XArray`].
+///
+/// The `XArray` itself and an item in it can have up to three different marks.
+///
+/// Users can use a self-defined type to distinguish which kind of mark they want to set. Such a
+/// type must implement the `Into<XMark>` trait.
+///
+/// [`XArray`]: crate::XArray
 pub enum XMark {
+    /// The mark kind 0.
     Mark0,
+    /// The mark kind 1.
     Mark1,
+    /// The mark kind 2.
     Mark2,
 }
 
 pub(super) const NUM_MARKS: usize = 4;
 
+/// A mark carried by every [`XArray`] item.
+///
+/// This is is for internal use only. `XArray` users cannot set or unset this mark.
 pub(super) const PRESENT_MARK: usize = 3;
 
 impl XMark {
+    /// Maps the `XMark` to an index in the range 0 to 2.
     pub(super) fn index(&self) -> usize {
         match self {
             XMark::Mark0 => 0,
@@ -69,5 +90,11 @@ impl XMark {
     }
 }
 
+/// A mark type that disables the mark functionality in the [`XArray`].
+///
+/// This indicates that the mark functionality is not needed and is the default generic parameter
+/// for an `XArray`.
+///
+/// [`XArray`]: crate::XArray
 #[derive(Clone, Copy)]
 pub enum NoneMark {}

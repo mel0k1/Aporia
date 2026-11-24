@@ -17,9 +17,14 @@ type FutexBitSet = u32;
 
 const FUTEX_BITSET_MATCH_ANY: FutexBitSet = 0xFFFF_FFFF;
 
+/// Specifies whether a futex is scoped to the current process or shared through
+/// its backing mapping.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum FutexVisibility {
+    /// Uses the calling process's private futex namespace.
     Private,
+    /// Derives the futex identity from the backing mapping when possible, and
+    /// otherwise falls back to a process-local shared identity.
     Shared,
 }
 
@@ -152,8 +157,24 @@ pub(crate) fn futex_wake_bitset(
     Ok(res)
 }
 
+/// This struct encodes the operation and comparison that are to be performed during
+/// the futex operation with `FUTEX_WAKE_OP`.
+///
+/// The encoding is as follows:
+///
+/// +---+---+-----------+-----------+
+/// |op |cmp|   oparg   |  cmparg   |
+/// +---+---+-----------+-----------+
+///   4   4       12          12    <== # of bits
+///
+/// Reference: <https://man7.org/linux/man-pages/man2/futex.2.html>.
 struct FutexWakeOpEncode {
     op: FutexWakeOp,
+    /// A flag indicating that the operation will use `1 << oparg`
+    /// as the operand instead of `oparg` when it is set `true`.
+    ///
+    /// e.g. With this flag, [`FutexWakeOp::FUTEX_OP_ADD`] will be interpreted
+    /// as `res = (1 << oparg) + oldval`.
     is_oparg_shift: bool,
     cmp: FutexWakeCmp,
     oparg: u32,
@@ -164,10 +185,15 @@ struct FutexWakeOpEncode {
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, TryFromInt)]
 enum FutexWakeOp {
+    /// Calculate `res = oparg`.
     FUTEX_OP_SET = 0,
+    /// Calculate `res = oparg + oldval`.
     FUTEX_OP_ADD = 1,
+    /// Calculate `res = oparg | oldval`.
     FUTEX_OP_OR = 2,
+    /// Calculate `res = oparg & !oldval`.
     FUTEX_OP_ANDN = 3,
+    /// Calculate `res = oparg ^ oldval`.
     FUTEX_OP_XOR = 4,
 }
 
@@ -175,11 +201,17 @@ enum FutexWakeOp {
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, TryFromInt)]
 enum FutexWakeCmp {
+    /// If (oldval == cmparg) do wake.
     FUTEX_OP_CMP_EQ = 0,
+    /// If (oldval != cmparg) do wake.
     FUTEX_OP_CMP_NE = 1,
+    /// If (oldval < cmparg) do wake.
     FUTEX_OP_CMP_LT = 2,
+    /// If (oldval <= cmparg) do wake.
     FUTEX_OP_CMP_LE = 3,
+    /// If (oldval > cmparg) do wake.
     FUTEX_OP_CMP_GT = 4,
+    /// If (oldval >= cmparg) do wake.
     FUTEX_OP_CMP_GE = 5,
 }
 
@@ -294,6 +326,10 @@ pub(crate) fn futex_wake_op(
     Ok(res)
 }
 
+/// Wakes up to `max_nwakes` waiters on `futex_addr` and requeues up to
+/// `max_nrequeues` of the remaining waiters to `futex_new_addr`.
+///
+/// Returns the total number of waiters that are woken up or requeued.
 pub(crate) fn futex_requeue(
     futex_addr: Vaddr,
     max_nwakes: usize,
@@ -331,6 +367,10 @@ pub(crate) fn futex_requeue(
 
 static FUTEX_BUCKETS: Once<FutexBucketVec> = Once::new();
 
+/// Gets the futex hash bucket count.
+///
+/// This number is calculated the same way as Linux's:
+/// <https://elixir.bootlin.com/linux/v6.17/source/kernel/futex/core.c#L1981>.
 fn get_bucket_count() -> usize {
     ((1 << 8) * num_cpus()).next_power_of_two()
 }
@@ -339,6 +379,12 @@ fn get_futex_bucket(key: &FutexKey) -> (usize, &'static SpinLock<FutexBucket>) {
     FUTEX_BUCKETS.get().unwrap().get_bucket(key)
 }
 
+/// Locks the futex buckets associated with a given pair of keys in a consistent
+/// order to avoid deadlock.
+///
+/// The order is defined by comparing the respective bucket indices and then locking
+/// the one with the lowest index first. If both keys belong to the same bucket,
+/// lock it and return the second lock guard as `None`.
 fn lock_bucket_pairs(
     futex_key_1: &FutexKey,
     futex_key_2: &FutexKey,
@@ -364,6 +410,7 @@ fn lock_bucket_pairs(
     }
 }
 
+/// Initializes the futex system.
 pub(crate) fn init() {
     FUTEX_BUCKETS.call_once(|| FutexBucketVec::new(get_bucket_count()));
 }
@@ -432,6 +479,8 @@ impl FutexBucket {
         count
     }
 
+    /// Updates matching items' futex identity while preserving each item's bitset;
+    /// the bitset in `new_key` is ignored.
     pub(self) fn update_item_keys(
         &mut self,
         key: &FutexKey,
@@ -456,6 +505,8 @@ impl FutexBucket {
         count
     }
 
+    /// Moves matching items to another bucket while preserving each item's bitset;
+    /// the bitset in `new_key` is ignored.
     pub(self) fn requeue_items_to_another_bucket(
         &mut self,
         key: &FutexKey,
@@ -505,6 +556,7 @@ impl FutexItem {
     }
 }
 
+/// The identity used for futex namespace and backing selection.
 #[derive(Clone, Debug)]
 enum FutexIdentity {
     Private { vmar: VmarSnapshot, addr: Vaddr },
@@ -512,8 +564,10 @@ enum FutexIdentity {
     Shared { vmo: Weak<Vmo>, offset: usize },
 }
 
+/// The lookup key used for futex bucket selection and matching.
 #[derive(Clone, Debug)]
 struct FutexKey {
+    /// A hash value deterministically computed from the futex identity.
     hash: usize,
     identity: FutexIdentity,
     bitset: FutexBitSet,
@@ -648,6 +702,7 @@ pub(crate) enum FutexOp {
 }
 
 bitflags! {
+
     #[derive(Clone, Copy, Debug)]
     pub(crate) struct FutexFlags: u32 {
         const FUTEX_PRIVATE        = 128;

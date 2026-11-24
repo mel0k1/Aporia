@@ -1,3 +1,10 @@
+//! Provides [`Slice`] for quick duplication and slicing over memory
+//! objects, such as [`UFrame`], [`USegment`], [`IoMem`], [`DmaStream`], etc.
+//!
+//! [`UFrame`]: ostd::mm::UFrame
+//! [`USegment`]: ostd::mm::USegment
+//! [`IoMem`]: ostd::io::IoMem
+
 use alloc::sync::Arc;
 use core::{borrow::Borrow, fmt::Debug, ops::Range};
 
@@ -14,6 +21,7 @@ macro_rules! assert_in_range {
     };
 }
 
+/// A slice of a memory object.
 #[derive(Debug)]
 pub struct Slice<MemObj> {
     inner: MemObj,
@@ -39,6 +47,15 @@ impl<MemObj: HasSize + HasDaddr> HasDaddr for Slice<MemObj> {
 }
 
 impl<MemObj: HasSize> Slice<MemObj> {
+    /// Creates a new slice from the given offset range.
+    ///
+    /// The range is relative to the start of the underlying memory object.
+    ///
+    /// # Panics
+    ///
+    /// The function panics if
+    ///  - the range is empty or negative, or
+    ///  - the `range` is not within the range of the underlying memory object.
     pub fn new(mem_obj: MemObj, offset: Range<usize>) -> Self {
         assert_in_range!(offset, mem_obj.size());
         Self {
@@ -47,20 +64,33 @@ impl<MemObj: HasSize> Slice<MemObj> {
         }
     }
 
+    /// Returns the underlying memory object of this slice.
     pub fn mem_obj(&self) -> &MemObj {
         &self.inner
     }
 
+    /// Returns the offset range of this slice within the underlying memory object.
     pub fn offset(&self) -> &Range<usize> {
         &self.offset
     }
 
+    /// Decomposes a slice into its components: the memory object and the offset range.
     pub fn into_parts(self) -> (MemObj, Range<usize>) {
         (self.inner, self.offset)
     }
 }
 
 impl<MemObj: HasSize + Clone> Slice<MemObj> {
+    /// Returns a slice of this memory object slice.
+    ///
+    /// The `range` is relative to the start of the memory object slice, not
+    /// the start of the underlying memory object.
+    ///
+    /// # Panics
+    ///
+    /// The function panics if
+    ///  - the range is empty or negative, or
+    ///  - the `range` is not within the range of this memory object slice.
     pub fn slice(&self, range: Range<usize>) -> Self {
         assert_in_range!(range, self.size());
         let adj_range = (self.offset().start + range.start)..(self.offset().start + range.end);
@@ -87,12 +117,20 @@ impl<MemObj: HasSize + HasVmReaderWriter<Types = VmReaderWriterResult>> HasVmRea
 }
 
 impl<MemObj: HasSize + Borrow<Arc<DmaStream>>> Slice<MemObj> {
+    /// Synchronizes the slice of streaming DMA mapping from the device.
+    ///
+    /// The method will call [`DmaStream::sync_from_device`] with the offset
+    /// range of this slice.
     pub fn sync_from_device(&self) -> ostd::prelude::Result<()> {
         self.mem_obj()
             .borrow()
             .sync_from_device(self.offset().clone())
     }
 
+    /// Synchronizes the slice of streaming DMA mapping to the device.
+    ///
+    /// The method will call [`DmaStream::sync_to_device`] with the offset
+    /// range of this slice.
     pub fn sync_to_device(&self) -> ostd::prelude::Result<()> {
         self.mem_obj()
             .borrow()

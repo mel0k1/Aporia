@@ -58,6 +58,7 @@ impl AnyConsoleDevice for ConsoleDevice {
             if callbacks.compare_exchange(callbacks_cloned).is_ok() {
                 break;
             }
+
             spin_loop();
         }
     }
@@ -77,6 +78,7 @@ impl Debug for ConsoleDevice {
 impl ConsoleDevice {
     pub(crate) fn negotiate_features(features: u64) -> u64 {
         let mut features = ConsoleFeatures::from_bits_truncate(features);
+
         features.remove(ConsoleFeatures::VIRTIO_CONSOLE_F_MULTIPORT);
         features.bits()
     }

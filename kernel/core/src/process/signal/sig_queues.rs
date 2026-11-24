@@ -35,6 +35,7 @@ impl SigQueues {
         let mut queues = self.queues.lock();
         if queues.enqueue(signal) {
             self.count.fetch_add(1, Ordering::Relaxed);
+
             drop(queues);
             self.signalfd_pollee.notify(IoEvents::IN);
         }
@@ -53,11 +54,15 @@ impl SigQueues {
         signal
     }
 
+    /// Returns the pending signals
     pub(crate) fn sig_pending(&self) -> SigSet {
         let queues = self.queues.lock();
         queues.sig_pending()
     }
 
+    /// Returns whether there's some pending signals that are not blocked and not ignored.
+    ///
+    /// Note that ignored but not blocked signals may be dequeued silently.
     pub(in crate::process) fn has_pending(
         &self,
         blocked: SigMask,
@@ -154,6 +159,9 @@ impl Queues {
         None
     }
 
+    /// Returns whether the `SigQueues` has some pending signals which are not blocked.
+    ///
+    /// Note that signals are ignored but not blocked may be dequeued silently.
     fn has_pending(
         &mut self,
         blocked: SigMask,

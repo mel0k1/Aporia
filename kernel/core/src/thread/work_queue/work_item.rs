@@ -7,6 +7,7 @@ use ostd::cpu::{CpuId, CpuSet};
 
 use crate::prelude::*;
 
+/// A task to be executed by a worker thread.
 pub(crate) struct WorkItem {
     work_func: Box<dyn Fn() + Send + Sync>,
     cpu_affinity: CpuSet,

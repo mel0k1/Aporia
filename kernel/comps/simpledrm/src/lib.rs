@@ -1,3 +1,8 @@
+//! A simpledrm driver backed by the bootloader-provided framebuffer.
+//!
+//! It obtains framebuffer information from `aster-framebuffer` and registers
+//! the resulting DRM device with `aster-drm`.
+
 #![no_std]
 #![deny(unsafe_code)]
 
@@ -223,6 +228,7 @@ impl DrmKmsOps for SimpleDrmDevice {
         let resolution = DrmSize::new(width, height);
 
         let display_mode = DrmDisplayMode::from_size(resolution, SIMPLEDRM_VREFRESH_HZ)?;
+
         let display_info =
             DrmDisplayInfo::from_dpi(resolution, SIMPLEDRM_ASSUMED_DPI, SubpixelOrder::Unknown)?;
         Ok(DrmConnectorProbeState::new(

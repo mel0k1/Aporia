@@ -2,12 +2,18 @@ use std::{error::Error, fmt};
 
 use clap::{Arg, ArgAction, Command};
 
+/// Holds parsed command-line parameters for the sctrace tool.
 #[derive(Debug)]
 pub(crate) struct Parameters {
+    /// Path to the SCML pattern files
     scml_paths: Vec<String>,
+    /// Path to the input strace log file (offline mode)
     input_path: String,
+    /// Whether quiet mode is enabled
     quiet: bool,
+    /// Path to the program to trace (online mode)
     program_path: String,
+    /// Arguments to pass to the program (online mode)
     program_args: Vec<String>,
 }
 
@@ -31,6 +37,11 @@ impl From<ParameterError> for String {
 impl Error for ParameterError {}
 
 impl Parameters {
+    /// Creates a new Parameters instance from command line arguments.
+    ///
+    /// ```text
+    /// sctrace <SCML_PATH1> [SCML_PATH2...] [--input FILE] [--quiet] [-- PROGRAM] [PROGRAM_ARGS...]
+    /// ```
     pub(crate) fn new(args: Vec<String>) -> Result<Self, ParameterError> {
         let app = Command::new("sctrace")
             .about("Syscall Compatibility Tracer (sctrace) - trace and validate syscalls against SCML patterns")

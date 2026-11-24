@@ -23,23 +23,40 @@ use crate::{
     util::ioctl::RawIoctl,
 };
 
+/// A file-like object that provides epoll API.
+///
+/// Conceptually, we maintain two lists: one consists of all interesting files,
+/// which can be managed by the epoll ctl commands; the other are for ready files,
+/// which are files that have some events. A epoll wait only needs to iterate the
+/// ready list and poll each file to see if the file is ready for the interesting
+/// I/O.
+///
+/// To maintain the ready list, we need to monitor interesting events that happen
+/// on the files. To do so, the `EpollFile` registers itself as an `Observer` to
+/// the monotored files. Thus, we can add a file to the ready list when an interesting
+/// event happens on the file.
 pub(crate) struct EpollFile {
     interest: Mutex<BTreeSet<EntryHolder>>,
+
     ready: Arc<ReadySet>,
+    /// The common state for this epoll file.
     common: FileCommon,
 }
 
 impl EpollFile {
+    /// Creates a new epoll file.
     pub(crate) fn new() -> Arc<Self> {
         let pseudo_path = AnonInodeFs::new_path(|_| "anon_inode:[eventpoll]".to_string());
 
         Arc::new(Self {
             interest: Mutex::new(BTreeSet::new()),
             ready: Arc::new(ReadySet::new()),
+
             common: FileCommon::new(pseudo_path, AccessMode::O_RDWR, StatusFlags::empty()),
         })
     }
 
+    /// Controls the interest list of the epoll file.
     pub(crate) fn control(&self, thread_local: &ThreadLocal, cmd: &EpollCtl) -> Result<()> {
         let fd = match cmd {
             EpollCtl::Add(fd, ..) => *fd,
@@ -146,6 +163,16 @@ impl EpollFile {
         Ok(())
     }
 
+    /// Waits for interesting events happen on the files in the interest list
+    /// of the epoll file.
+    ///
+    /// This method blocks until either some interesting events happen or
+    /// the timeout expires or a signal arrives. The first case returns
+    /// `Ok(events)`, where `events` is a `Vec` containing at most `max_events`
+    /// number of `EpollEvent`s. The second and third case returns errors.
+    ///
+    /// When `max_events` equals to zero, the method returns when the timeout
+    /// expires or a signal arrives.
     pub(crate) fn wait(
         &self,
         max_events: usize,

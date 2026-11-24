@@ -1,3 +1,15 @@
+//! Virtual Dynamic Shared Object (vDSO).
+//!
+//! vDSO enables user space applications to execute routines that access kernel space data without
+//! the need for user mode and kernel mode switching. This is particularly useful for frequently
+//! invoked, read-only operations such as obtaining the current time, which can be efficiently and
+//! securely handled within the user space.
+//!
+//! This module manages the vDSO mechanism through the [`Vdso`] structure, which contains a
+//! [`VdsoData`] instance with necessary time-related information, and a Virtual Memory Object
+//! ([`Vmo`]) that encapsulates both the data and the vDSO routines. The VMO is intended to be
+//! mapped into the address space of every user space process for efficient access.
+
 use alloc::sync::Arc;
 use core::{mem::ManuallyDrop, time::Duration};
 
@@ -32,10 +44,20 @@ enum VdsoClockMode {
     Tsc = 1,
 }
 
+/// An instant used in [`VdsoData`]
+///
+/// This contains information that describes the current time with respect to a certain clock (see
+/// [`ClockId`]).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
 struct VdsoInstant {
+    /// Seconds.
     secs: u64,
+    /// Nanoseconds (for [`CLOCK_REALTIME_COARSE`] and [`CLOCK_MONOTONIC_COARSE`]) or shifted
+    /// nanoseconds (for other high-resolution clocks).
+    ///
+    /// [`CLOCK_REALTIME_COARSE`]: ClockId::CLOCK_REALTIME_COARSE
+    /// [`CLOCK_MONOTONIC_COARSE`]: ClockId::CLOCK_MONOTONIC_COARSE
     nanos_info: u64,
 }
 
@@ -52,6 +74,12 @@ impl VdsoInstant {
 #[derive(Clone, Copy, Debug, Default, Pod)]
 struct ArchVdsoData {}
 
+/// Plain-old-data vDSO data that will be mapped to userspace.
+///
+/// Since we currently use the vDSO shared library directly from Linux, the layout of this
+/// structure must match what is specified in the Linux library.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.2.10/source/include/vdso/datapage.h#L90>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 struct VdsoData {
@@ -102,6 +130,7 @@ impl VdsoData {
         }
     }
 
+    /// Initializes vDSO data based on the default clock source.
     fn init(&mut self) {
         let clocksource = aster_time::default_clocksource();
         let coeff = clocksource.coeff();
@@ -169,12 +198,26 @@ macro_rules! vdso_data_field_offset {
     };
 }
 
+/// The vDSO singleton.
+///
+/// See [the module-level documentations](self) for more about the vDSO mechanism.
 struct Vdso {
+    /// A `VdsoData` instance.
     data: SpinLock<VdsoData>,
+    /// A VMO that contains the entire vDSO, including the library text and the vDSO data.
     vmo: Arc<Vmo>,
+    /// A frame that contains the vDSO data. This frame is contained in and will not be removed
+    /// from the vDSO VMO.
+    ///
+    /// Note: This frame should only be updated while holding the spin lock on [`Self::data`].
     data_frame: UFrame,
 }
 
+/// The binary of a prebuilt Linux vDSO library.
+///
+/// These binaries can be found in [this repo](https://github.com/asterinas/linux_vdso).
+/// The development environment should download these binaries before compiling the kernel.
+/// and provide the path of the local copy of the repo by setting the `VDSO_LIBRARY_DIR` env var.
 #[cfg(target_arch = "x86_64")]
 const PREBUILT_VDSO_LIB: &[u8] =
     include_bytes!(concat!(env!("VDSO_LIBRARY_DIR"), "/vdso_x86_64.so"));
@@ -185,6 +228,11 @@ const PREBUILT_VDSO_LIB: &[u8] =
 const PREBUILT_VDSO_LIB: &[u8] =
     include_bytes!(concat!(env!("VDSO_LIBRARY_DIR"), "/vdso_aarch64.so"));
 
+/// The offset from the vDSO base to the `__vdso_rt_sigreturn` function.
+///
+/// This constant is specific to the prebuilt vDSO library and can be obtained from
+/// `readelf -s vdso_riscv64.so | grep '__vdso_rt_sigreturn'` for RISC-V and
+/// `readelf -s vdso_aarch64.so | grep '__kernel_rt_sigreturn'` for ARM.
 #[cfg(any(target_arch = "riscv64", target_arch = "aarch64"))]
 pub(crate) const __VDSO_RT_SIGRETURN_OFFSET: usize = cfg_select! {
     target_arch = "riscv64" => 0x5b0,
@@ -192,6 +240,7 @@ pub(crate) const __VDSO_RT_SIGRETURN_OFFSET: usize = cfg_select! {
 };
 
 impl Vdso {
+    /// Constructs a new `Vdso`, including an initialized `VdsoData` and a VMO of the vDSO.
     fn new() -> Self {
         let mut vdso_data = VdsoData::empty();
         vdso_data.init();
@@ -199,6 +248,7 @@ impl Vdso {
         let (vdso_vmo, data_frame) = {
             let vmo_options = VmoOptions::new(VDSO_VMO_LAYOUT.size);
             let vdso_vmo = vmo_options.alloc().unwrap();
+
             let mut reader = VmReader::from(vdso_data.as_bytes()).to_fallible();
             vdso_vmo
                 .write(VDSO_VMO_LAYOUT.data_offset, &mut reader)
@@ -267,6 +317,7 @@ impl Vdso {
             .unwrap();
     }
 
+    /// Updates the requisite fields of the vDSO data in the frame.
     fn update_data_frame_instant(&self, clockid: ClockId, data: &mut VdsoData) {
         let clock_index = clockid as usize;
 
@@ -287,23 +338,27 @@ impl Vdso {
         debug_assert!(!data.seq.is_multiple_of(2));
 
         data.seq = data.seq.wrapping_add(1);
+
         self.data_frame
             .write_once(vdso_data_field_offset!(seq), &data.seq)
             .unwrap();
     }
 }
 
+/// Updates instants with respect to high-resolution clocks in vDSO data.
 fn update_vdso_high_res_instant(instant: Instant, instant_cycles: u64) {
     VDSO.get()
         .unwrap()
         .update_high_res_instant(instant, instant_cycles);
 }
 
+/// Updates instants with respect to coarse-resolution clocks in vDSO data.
 fn update_vdso_coarse_res_instant(_guard: TimerGuard) {
     let instant = Instant::from(read_monotonic_time());
     VDSO.get().unwrap().update_coarse_res_instant(instant);
 }
 
+/// Initializes the vDSO singleton.
 fn init_vdso() {
     let vdso = Vdso::new();
     VDSO.call_once(|| Arc::new(vdso));
@@ -322,6 +377,9 @@ pub(super) fn init_in_first_kthread() {
     timer_guard.set_timeout(Timeout::After(Duration::from_millis(100)));
 }
 
+/// Returns the vDSO VMO.
+///
+/// This function will return `None` if vDSO does not exist (e.g., if it has not been initialized).
 pub(crate) fn vdso_vmo() -> Option<Arc<Vmo>> {
     VDSO.get().map(|vdso| vdso.vmo.clone())
 }
@@ -330,8 +388,10 @@ pub(crate) fn vdso_vmo() -> Option<Arc<Vmo>> {
 pub(crate) const VDSO_VMO_LAYOUT: VdsoVmoLayout = VdsoVmoLayout {
     data_segment_offset: 0,
     data_segment_size: PAGE_SIZE,
+
     text_segment_offset: 4 * PAGE_SIZE,
     text_segment_size: PAGE_SIZE,
+
     data_offset: 0x80,
 
     size: 5 * PAGE_SIZE,
@@ -341,8 +401,10 @@ pub(crate) const VDSO_VMO_LAYOUT: VdsoVmoLayout = VdsoVmoLayout {
 pub(crate) const VDSO_VMO_LAYOUT: VdsoVmoLayout = VdsoVmoLayout {
     data_segment_offset: 0,
     data_segment_size: PAGE_SIZE,
+
     text_segment_offset: 2 * PAGE_SIZE,
     text_segment_size: PAGE_SIZE,
+
     data_offset: 0,
 
     size: 3 * PAGE_SIZE,
@@ -404,6 +466,7 @@ mod test {
         let expected = TEST_START_OFFSET + Duration::new(instant.secs(), instant.nanos());
 
         let coeff = Coeff::new(1_000_000_000, 1, 1_u64 << 20);
+
         assert!(coeff.shift() > 0);
 
         let mut data = VdsoData::empty();

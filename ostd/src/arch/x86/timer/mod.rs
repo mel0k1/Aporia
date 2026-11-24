@@ -1,3 +1,5 @@
+//! The timer support.
+
 macro_rules! __log_prefix {
     () => {
         "timer: "
@@ -15,6 +17,7 @@ use crate::irq::IrqLine;
 
 static TIMER_IRQ: Once<IrqLine> = Once::new();
 
+/// Initializes the timer state and enable timer interrupts on BSP.
 pub(super) fn init_on_bsp() {
     let mut timer_irq = apic::init_on_bsp();
 
@@ -23,6 +26,7 @@ pub(super) fn init_on_bsp() {
     TIMER_IRQ.call_once(|| timer_irq);
 }
 
+/// Enables timer interrupt on this AP.
 pub(super) fn init_on_ap() {
     apic::init_on_ap(TIMER_IRQ.get().unwrap());
 }

@@ -142,9 +142,8 @@ mod gdb {
     }
 
     pub mod tcp_addr_util {
-        use std::process::exit;
-
         use crate::{error::Errno, error_msg};
+        use std::process::exit;
 
         fn strip_tcp_prefix(addr: &str) -> &str {
             addr.strip_prefix("tcp:").unwrap_or(addr)
@@ -170,18 +169,17 @@ mod gdb {
 }
 
 mod vsc {
+    use crate::{
+        commands::util::bin_file_name,
+        util::{get_cargo_metadata, get_kernel_crate},
+    };
+    use serde_json::{Value, from_str};
     use std::{
         fs::{read_to_string, write as write_file},
         path::Path,
     };
 
-    use serde_json::{Value, from_str};
-
     use super::{GdbServerArgs, gdb};
-    use crate::{
-        commands::util::bin_file_name,
-        util::{get_cargo_metadata, get_kernel_crate},
-    };
 
     const VSC_DIR: &str = ".vscode";
 
@@ -246,6 +244,7 @@ mod vsc {
                 .unwrap();
                 return;
             }
+
             if let Some(backup_launch_path) = &self.backup_launch_path {
                 std::fs::copy(
                     backup_launch_path,
@@ -259,10 +258,10 @@ mod vsc {
         }
     }
 
+    /// Exit if the QEMU GDB server configuration is not valid
     pub fn check_gdb_config(args: &GdbServerArgs) {
-        use std::process::exit;
-
         use crate::{error::Errno, error_msg};
+        use std::process::exit;
 
         let gdb_stub_addr = args.host_addr.as_str();
         if gdb_stub_addr.is_empty() {
@@ -313,6 +312,7 @@ mod vsc {
                     .any(|x| x["name"].as_str() == item["name"].as_str())
                 {
                     println!("[{}/launch.json]{} already exists", VSC_DIR, item["name"]);
+
                     continue;
                 }
                 original_items["configurations"]

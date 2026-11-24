@@ -1,3 +1,5 @@
+//! Ptrace implementation for POSIX threads.
+
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use ostd::{arch::cpu::context::UserContext, sync::Waiter};
@@ -26,23 +28,32 @@ use util::StopDeliverySignal;
 pub(crate) use util::{PtraceContRequest, PtraceOptions, PtraceStopResult, PtraceWaitStatus};
 
 impl PosixThread {
+    /// Returns whether this thread is being traced.
     pub(in crate::process) fn is_traced(&self) -> bool {
         self.tracer().is_some()
     }
 
+    /// Returns the tracer of this thread if it is being traced.
     pub(crate) fn tracer(&self) -> Option<Arc<Thread>> {
         self.tracee_status.get().and_then(|status| status.tracer())
     }
 
+    /// Sets the tracer of this thread.
+    ///
+    /// # Errors
+    ///
+    /// Returns `EPERM` if this thread is already being traced.
     fn set_tracer(&self, tracer: Weak<Thread>) -> Result<()> {
         let status = self.tracee_status.call_once(TraceeStatus::new);
         status.set_tracer(tracer)
     }
 
+    /// Detaches the tracer of this thread.
     pub(in crate::process) fn detach_tracer(&self) {
         self.detach_tracer_with(|_| {});
     }
 
+    /// Detaches the tracer of this thread with a callback.
     fn detach_tracer_with<F>(&self, detach_callback: F)
     where
         F: FnOnce(&TraceeState),
@@ -53,6 +64,9 @@ impl PosixThread {
         }
     }
 
+    /// Stops this thread by ptrace with the given signal if it is currently traced.
+    ///
+    /// Returns a [`PtraceStopResult`] indicating why this ptrace-stop ended.
     pub(in crate::process) fn ptrace_stop(
         &self,
         signal: DequeuedSignal,
@@ -66,6 +80,11 @@ impl PosixThread {
         }
     }
 
+    /// Stops this thread by ptrace on the `event` if it is currently traced,
+    /// and the corresponding option is enabled.
+    ///
+    /// May block in the event-stop until the tracer continues the stop,
+    /// or until a `SIGKILL` interrupts it.
     pub(in crate::process) fn ptrace_may_stop_on(
         &self,
         event: PtraceEvent,
@@ -77,6 +96,9 @@ impl PosixThread {
         }
     }
 
+    /// Stops this thread at a syscall-stop if requested by the tracer.
+    ///
+    /// Returns a [`PtraceStopResult`] indicating why this ptrace-stop ended.
     pub(crate) fn ptrace_may_stop_on_syscall(
         &self,
         ctx: &Context,
@@ -89,12 +111,14 @@ impl PosixThread {
         }
     }
 
+    /// Returns whether a clone-family ptrace event would be required for `clone_args`.
     pub(in crate::process) fn needs_ptrace_clone_stop(&self, clone_args: &CloneArgs) -> bool {
         self.tracee_status
             .get()
             .is_some_and(|status| status.needs_clone_stop(clone_args))
     }
 
+    /// Returns the ptrace-stop status changes for the `wait` syscall.
     pub(in crate::process) fn wait_ptrace_stopped(
         &self,
         options: WaitOptions,
@@ -104,6 +128,11 @@ impl PosixThread {
             .and_then(|status| status.wait(options))
     }
 
+    /// Continues this thread from a ptrace-stop.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ESRCH` if this thread is not ptrace-stopped.
     pub(crate) fn ptrace_continue(&self, request: PtraceContRequest, ctx: &Context) -> Result<()> {
         let status = self.get_tracee_status()?;
 
@@ -113,18 +142,33 @@ impl PosixThread {
         Ok(())
     }
 
+    /// Gets the general-purpose registers of this thread for ptrace.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ESRCH` if this thread is not ptrace-stopped.
     #[cfg(target_arch = "x86_64")]
     pub(crate) fn ptrace_get_regs(&self) -> Result<arch_ptrace::CUserRegsStruct> {
         let status = self.get_tracee_status()?;
         status.get_regs()
     }
 
+    /// Sets the general-purpose registers of this thread for ptrace.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ESRCH` if this thread is not ptrace-stopped.
     #[cfg(target_arch = "x86_64")]
     pub(crate) fn ptrace_set_regs(&self, regs: arch_ptrace::CUserRegsStruct) -> Result<()> {
         let status = self.get_tracee_status()?;
         status.set_regs(regs)
     }
 
+    /// Gets a register set prefix of this thread for ptrace.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ESRCH` if this thread is not ptrace-stopped.
     #[cfg(target_arch = "x86_64")]
     pub(crate) fn ptrace_get_regset(
         &self,
@@ -135,6 +179,11 @@ impl PosixThread {
         status.get_regset(regset, writer)
     }
 
+    /// Sets a register set prefix of this thread for ptrace.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ESRCH` if this thread is not ptrace-stopped.
     #[cfg(target_arch = "x86_64")]
     pub(crate) fn ptrace_set_regset(
         &self,
@@ -145,43 +194,84 @@ impl PosixThread {
         status.set_regset(regset, reader)
     }
 
+    /// Reads one word in the tracee's USER area.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ESRCH` if this thread is not ptrace-stopped.
     #[cfg(target_arch = "x86_64")]
     pub(crate) fn ptrace_peek_user(&self, offset: usize) -> Result<usize> {
         let status = self.get_tracee_status()?;
         status.peek_user(offset)
     }
 
+    /// Writes one word in the tracee's USER area.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ESRCH` if this thread is not ptrace-stopped.
     #[cfg(target_arch = "x86_64")]
     pub(crate) fn ptrace_poke_user(&self, offset: usize, value: usize) -> Result<()> {
         let status = self.get_tracee_status()?;
         status.poke_user(offset, value)
     }
 
+    /// Reads one word from the tracee's memory.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ESRCH` if this thread is not ptrace-stopped.
     pub(crate) fn ptrace_peek_data(&self, addr: usize) -> Result<usize> {
         let status = self.get_tracee_status()?;
         status.peek_data(self.weak_process(), addr)
     }
 
+    /// Writes one word to the tracee's memory.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ESRCH` if this thread is not ptrace-stopped.
     pub(crate) fn ptrace_poke_data(&self, addr: usize, value: usize) -> Result<()> {
         let status = self.get_tracee_status()?;
         status.poke_data(self.weak_process(), addr, value)
     }
 
+    /// Sets ptrace options for this thread.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ESRCH` if this thread is not ptrace-stopped.
     pub(crate) fn ptrace_set_options(&self, options: PtraceOptions) -> Result<()> {
         let status = self.get_tracee_status()?;
         status.set_options(options)
     }
 
+    /// Gets the event of the last ptrace-stop,
+    /// if it is a ptrace-event-stop.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ESRCH` if this thread is not ptrace-stopped.
     pub(crate) fn ptrace_get_event(&self) -> Result<Option<PtraceEvent>> {
         let status = self.get_tracee_status()?;
         status.get_event()
     }
 
+    /// Gets the signal info of this thread for ptrace.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ESRCH` if this thread is not ptrace-stopped.
     pub(crate) fn ptrace_get_siginfo(&self) -> Result<siginfo_t> {
         let status = self.get_tracee_status()?;
         status.get_siginfo()
     }
 
+    /// Returns the tracee status of this thread if it has ever been traced.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ESRCH` if this thread has never been traced.
     fn get_tracee_status(&self) -> Result<&TraceeStatus> {
         self.tracee_status
             .get()
@@ -190,6 +280,16 @@ impl PosixThread {
 }
 
 impl PosixThread {
+    /// Attaches this tracer to the given tracee.
+    ///
+    /// # Errors
+    ///
+    /// Returns `EPERM` if the tracee is already being traced.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `tracer_thread` and `self` do not point to the same thread,
+    /// or if `tracee_thread` is not a POSIX thread.
     pub(crate) fn attach_to(
         &self,
         tracer_thread: &Arc<Thread>,
@@ -214,16 +314,23 @@ impl PosixThread {
         Ok(())
     }
 
+    /// Returns the tracee map of this thread if it is a tracer.
     pub(in crate::process) fn tracees(&self) -> Option<&Mutex<BTreeMap<Tid, Arc<Thread>>>> {
         self.tracees.get()
     }
 
+    /// Returns the tracee with the given tid, if it is being traced by this thread.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ESRCH` if there is no tracee with the given tid.
     pub(crate) fn get_tracee(&self, tid: Tid) -> Result<Arc<Thread>> {
         self.tracees()
             .and_then(|tracees| tracees.lock().get(&tid).cloned())
             .ok_or_else(|| errno!(ESRCH, "no such tracee"))
     }
 
+    /// Clears all tracees of this tracer on exit.
     pub(in crate::process) fn clear_tracees(&self) {
         let Some(tracees) = self.tracees() else {
             return;
@@ -628,10 +735,15 @@ impl TraceeStatus {
 
 struct TraceeState {
     tracer: Weak<Thread>,
+    /// The signal associated with the current ptrace-stop and later signal delivery.
     signal: StopDeliverySignal,
+    /// The event associated with the current ptrace-event-stop.
     event: Option<PtraceEvent>,
+    /// The configured ptrace options.
     options: PtraceOptions,
+    /// Whether the tracee should stop at the next syscall enter or exit.
     is_tracing_syscall: bool,
+    /// Architecture-specific register state captured at the current ptrace-stop.
     #[cfg(target_arch = "x86_64")]
     arch_state: Option<arch_ptrace::PtraceState>,
 }

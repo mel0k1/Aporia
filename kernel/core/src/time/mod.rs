@@ -72,6 +72,12 @@ pub(crate) struct timeval_t {
 }
 
 impl timeval_t {
+    /// Normalizes time by adding carries from microseconds to seconds.
+    ///
+    /// Some Linux system calls do this before checking the validity (e.g., the [select]
+    /// implementation).
+    ///
+    /// [select]: https://elixir.bootlin.com/linux/v6.10.5/source/fs/select.c#L716
     pub(crate) fn normalize(&self) -> Self {
         Self {
             sec: self.sec.wrapping_add(self.usec / USEC_PER_SEC),
@@ -109,6 +115,8 @@ impl TryFrom<timeval_t> for Duration {
 
 pub(crate) const TIMER_ABSTIME: i32 = 0x01;
 
+/// Unix time measures time by the number of seconds that have elapsed since
+/// the Unix epoch, without adjustments made due to leap seconds.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
 pub(crate) struct UnixTime {
@@ -129,6 +137,7 @@ impl From<UnixTime> for Duration {
     }
 }
 
+/// This struct is corresponding to the `itimerval` struct in Linux.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
 pub(crate) struct itimerval_t {
@@ -136,6 +145,7 @@ pub(crate) struct itimerval_t {
     pub it_value: timeval_t,
 }
 
+/// This struct is corresponding to the `itimerspec` struct in Linux.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
 pub(crate) struct itimerspec_t {
@@ -143,6 +153,7 @@ pub(crate) struct itimerspec_t {
     pub it_value: timespec_t,
 }
 
+/// This struct is corresponding to the `timezone` struct in Linux.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
 pub(crate) struct timezone_t {

@@ -1,3 +1,15 @@
+//! Data-path delegation for overlay inodes.
+//!
+//! Reads go through the read-only take point ([`OverlayInode::real_object`]) and
+//! the real inode it hands out; a lower-backed read carries `O_NOATIME` so a
+//! read never updates the lower atime. Writes are upper-backed by construction:
+//! the write-capable open path runs the writable take point
+//! ([`OverlayInode::writable_real_object`]) before the handle is used, so the
+//! data path never bypasses it. `resize` runs the writable take point itself,
+//! while `write_at` and `fallocate` take the receiver's own upper, which the
+//! writable open has already promoted. `O_APPEND` is serialized under the
+//! per-inode transaction lock.
+
 use super::OverlayInode;
 use crate::{
     fs::{

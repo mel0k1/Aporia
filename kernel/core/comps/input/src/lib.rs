@@ -1,3 +1,34 @@
+//! The input devices of Asterinas.
+//!
+//! This crate provides a comprehensive input subsystem for handling various input devices,
+//! including keyboards, mice, etc. It implements an event-driven architecture similar to
+//! the Linux input subsystem.
+//!
+//! # Architecture
+//!
+//! ```text
+//! Input Device → Input Core → Input Handler
+//!      ↓             ↓            ↓
+//!   Hardware    Event Router   Event Consumer
+//!                              (e.g., evdev)
+//! ```
+//!
+//! # Example Usage
+//!
+//! ```
+//! // Register an input device
+//! let device = Arc::new(MyInputDevice::new());
+//! let registered_device = input::register_device(device);
+//!
+//! // Register an input handler
+//! let handler = Arc::new(MyInputHandler::new());
+//! input::register_handler(handler);
+//!
+//! // Submit a key event from device
+//! let key_event = InputEvent::from_key_and_status(linux_key, key_status);
+//! registered_device.submit_events(&[key_event]);
+//! ```
+//!
 #![no_std]
 #![deny(unsafe_code)]
 
@@ -28,6 +59,7 @@ use crate::{
     input_handler::{InputHandlerClass, RegisteredInputHandlerClass},
 };
 
+/// Registers a handler class.
 pub fn register_handler_class(
     handler_class: Arc<dyn InputHandlerClass>,
 ) -> RegisteredInputHandlerClass {
@@ -39,6 +71,7 @@ pub fn register_handler_class(
     RegisteredInputHandlerClass(handler_class)
 }
 
+/// Unregisters a handler class.
 pub(crate) fn unregister_handler_class(
     handler_class: &Arc<dyn InputHandlerClass>,
 ) -> Option<Arc<dyn InputHandlerClass>> {
@@ -49,26 +82,31 @@ pub(crate) fn unregister_handler_class(
         .unregister_handler_class(handler_class)
 }
 
+/// Registers an input device.
 pub fn register_device(device: Arc<dyn InputDevice>) -> RegisteredInputDevice {
     let component = COMPONENT.get().unwrap();
     component.input_core.lock().register_device(device)
 }
 
+/// Unregisters an input device.
 pub(crate) fn unregister_device(device: &Arc<dyn InputDevice>) -> Option<Arc<dyn InputDevice>> {
     let component = COMPONENT.get().unwrap();
     component.input_core.lock().unregister_device(device)
 }
 
+/// Counts the number of registered devices.
 pub fn count_devices() -> usize {
     let component = COMPONENT.get().unwrap();
     component.input_core.lock().count_devices()
 }
 
+/// Counts the number of registered handler classes.
 pub fn count_handler_class() -> usize {
     let component = COMPONENT.get().unwrap();
     component.input_core.lock().count_handler_class()
 }
 
+/// Gets all registered devices.
 pub fn all_devices() -> Vec<Arc<dyn InputDevice>> {
     let component = COMPONENT.get().unwrap();
     component.input_core.lock().all_devices()

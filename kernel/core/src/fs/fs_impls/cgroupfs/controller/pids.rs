@@ -8,9 +8,15 @@ use ostd::mm::{VmReader, VmWriter};
 use super::TryChargeError;
 use crate::{process::posix_thread::PID_MAX, util::ReadCString};
 
+/// A sub-controller responsible for PID resource management in the cgroup subsystem.
+///
+/// This controller will only provide interfaces in non-root cgroup nodes.
 pub(crate) struct PidsController {
+    /// The maximum number of processes allowed.
     max_pids: AtomicU32,
+    /// The current number of processes in this cgroup's subtree.
     current_count: AtomicU32,
+    /// The peak number of processes ever observed in this cgroup's subtree.
     peak_count: AtomicU32,
 }
 
@@ -26,16 +32,26 @@ impl PidsController {
         }
     }
 
+    /// Sets the initial process count during sub-controller activation.
+    ///
+    /// When the pids sub-controller is activated on a cgroup that already
+    /// has processes, this method initializes `current_count` and
+    /// `peak_count` to reflect the existing state.
     pub(super) fn init_count(&mut self, count: u32) {
         *self.current_count.get_mut() = count;
         *self.peak_count.get_mut() = count;
     }
 
+    /// Charges one process without limit checking.
     pub(super) fn charge(&self) {
         let new_count = self.current_count.fetch_add(1, Ordering::Relaxed) + 1;
         self.peak_count.fetch_max(new_count, Ordering::Relaxed);
     }
 
+    /// Tries to charge one process, enforcing the `pids.max` limit.
+    ///
+    /// Returns `true` if the charge succeeded (limit not exceeded).
+    /// Returns `false` if the limit would be exceeded; the charge is rolled back.
     pub(super) fn try_charge(&self) -> bool {
         let new_count = self.current_count.fetch_add(1, Ordering::Relaxed) + 1;
         let max = self.max_pids.load(Ordering::Relaxed);
@@ -47,6 +63,7 @@ impl PidsController {
         true
     }
 
+    /// Uncharges one process.
     pub(super) fn uncharge(&self) {
         let old_count = self.current_count.fetch_sub(1, Ordering::Relaxed);
         debug_assert!(old_count > 0, "pids current count underflow");
@@ -127,7 +144,14 @@ impl super::SubControlStatic for PidsController {
     }
 }
 
+/// Hierarchical pids charge/uncharge operations.
 impl super::SubController<PidsController> {
+    /// Charges one process across the hierarchy without limit checking.
+    ///
+    /// This is used for explicit migration (writing to `cgroup.procs`),
+    /// where `pids.max` is not enforced per cgroupv2 semantics.
+    ///
+    /// Reference: <https://docs.kernel.org/admin-guide/cgroup-v2.html#pid>
     pub(super) fn charge_hierarchy(&self) {
         let mut current = Some(self);
         while let Some(node) = current {
@@ -138,6 +162,14 @@ impl super::SubController<PidsController> {
         }
     }
 
+    /// Tries to charge one process across the hierarchy with limit checking.
+    ///
+    /// Walks from this cgroup upward to the root. At each level where the
+    /// pids sub-controller is active, the counter is incremented and checked
+    /// against `pids.max`. If any level exceeds its limit, all previously
+    /// charged levels are rolled back and `Err` is returned.
+    ///
+    /// This is used at fork time where `pids.max` must be enforced.
     pub(super) fn try_charge_hierarchy(&self) -> Result<(), TryChargeError> {
         let mut charged: Vec<&PidsController> = Vec::new();
         let mut current = Some(self);
@@ -158,6 +190,7 @@ impl super::SubController<PidsController> {
         Ok(())
     }
 
+    /// Uncharges one process across the hierarchy.
     pub(super) fn uncharge_hierarchy(&self) {
         let mut current = Some(self);
         while let Some(node) = current {

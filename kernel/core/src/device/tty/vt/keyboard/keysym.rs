@@ -8,43 +8,97 @@ use crate::device::tty::vt::{
     keyboard::{CursorKey, ModifierKey, ModifierKeyFlags, NumpadKey},
 };
 
+/// The symbolic representation of a key under a given modifier state.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.17.4/source/drivers/tty/vt/keyboard.c#L69-L77>
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum KeySym {
+    /// A direct character output (similar to Linux `k_self`).
+    ///
+    /// It is used for characters that do not depend on Caps Lock state
+    /// (digits, punctuation, etc.).
     Char(char),
+    /// An alphabetic character whose case may be affected by Caps Lock
+    /// (similar to Linux `k_lowercase`).
     Letter(char),
+    /// A key with Meta (usually Alt) pressed (similar to Linux `k_meta`).
+    ///
+    /// The handler may emit an ESC-prefixed sequence depending on
+    /// the VT keyboard mode flags.
     Meta(char),
+    /// A pure modifier key (similar to Linux `k_shift`).
     Modifier(ModifierKey),
+    /// A numpad key (similar to Linux `k_pad`).
     Numpad(NumpadKey),
+    /// A function key that may emit an ESC-prefixed function-string
+    /// (similar to Linux `k_fn`).
     Function(FuncId),
+    /// A numpad digit key with Alt pressed, used for ASCII code input
+    /// (similar to Linux `k_ascii`).
+    ///
+    /// The handler is responsible for accumulating digits while Alt
+    /// is held and emitting the final character when the sequence
+    /// is committed (typically on Alt release).
     AltNumpad(u8),
+    /// A cursor key (similar to Linux `k_cur`).
     Cursor(CursorKey),
+    /// A special action (similar to Linux `k_spec`).
     Special(SpecialHandler),
+    /// A virtual terminal switch (similar to Linux `k_cons`).
     SwitchVt(VtIndex),
+    /// No operation.
     NoOp,
 }
 
+/// Special key actions that are handled by the VT keyboard layer.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.17.4/source/drivers/tty/vt/keyboard.c#L84-L89>
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum SpecialHandler {
+    /// Toggle Caps Lock state (similar to Linux `fn_caps_toggle`).
     ToggleCapsLock,
+    /// Toggle Num Lock state, possibly with special handling in
+    /// application-keypad mode (similar to Linux `fn_num`).
     ToggleNumLock,
+    /// Toggle Num Lock state without any application-keypad side
+    /// effects (similar to Linux `fn_bare_num`).
     ToggleBareNumLock,
+    /// Toggle Scroll Lock state (similar to Linux `fn_hold`).
     ToggleScrollLock,
+    /// Print memory usage information to the console
+    /// (similar to Linux `fn_show_mem`).
     ShowMem,
+    /// Print the current process state to the console
+    /// (similar to Linux `fn_show_state`).
     ShowState,
+    /// Start a compose sequence (similar to Linux `fn_compose`).
     Compose,
+    /// Trigger a reboot of the system (similar to Linux `fn_boot_it`).
     Reboot,
+    /// Scroll the console history backward (similar to Linux
+    /// `fn_scroll_back`).
     ScrollBackward,
+    /// Scroll the console history forward (similar to Linux
+    /// `fn_scroll_forward`).
     ScrollForward,
+    /// Switch to the previous VT (similar to Linux `fn_dec_console`).
     DecreaseConsole,
+    /// Switch to the next VT (similar to Linux `fn_inc_console`).
     IncreaseConsole,
+    /// Handle the Enter key (similar to Linux `fn_enter`).
     Enter,
 }
 
+/// The key mapping tables for different modifier key combinations.
 struct KeyMaps {
     maps: Box<[Box<[KeySym]>]>,
 }
 
 impl Default for KeyMaps {
+    /// Creates a default table with standard key mappings.
+    ///
+    /// Reference: <https://elixir.bootlin.com/linux/v6.13/source/drivers/tty/vt/defkeymap.map>
+    /// and <https://elixir.bootlin.com/linux/v6.13/source/drivers/tty/vt/defkeymap.c_shipped>
     fn default() -> Self {
         let mut key_maps = Self::new(Self::MOD_COMBINATIONS, Self::KEY_COUNT);
         key_maps.map_letter();
@@ -67,8 +121,17 @@ impl Default for KeyMaps {
 type KeyBind = (KeyCode, KeySym);
 
 impl KeyMaps {
+    /// Number of keycodes handled by the default VT keymap.
+    ///
+    /// Note:
+    /// - This table indexes by the numeric value of `KeyCode`.
+    /// - Key codes outside this range will map to `KeySym::NoOp`.
     const KEY_COUNT: usize = 128;
 
+    /// Number of modifier combinations supported by the default VT keymap.
+    ///
+    /// We index keymaps by the raw 3-bit modifier mask (SHIFT|ALT|CTRL),
+    /// thus the table has 2^3 = 8 layers.
     const MOD_COMBINATIONS: usize = 8;
 
     fn new(mods_num: usize, keycode_num: usize) -> Self {
@@ -737,6 +800,7 @@ impl KeyMaps {
 
 static KEYMAPS: Once<KeyMaps> = Once::new();
 
+/// Looks up the [`KeySym`] for a given modifier mask and key code.
 pub(super) fn get_keysym(mods: ModifierKeyFlags, key_code: KeyCode) -> KeySym {
     KEYMAPS
         .get()
@@ -744,6 +808,12 @@ pub(super) fn get_keysym(mods: ModifierKeyFlags, key_code: KeyCode) -> KeySym {
         .get_keysym(mods, key_code)
 }
 
+/// Function keys identifiers.
+///
+/// Each function key has a corresponding function-string, which is a byte
+/// sequence used internally to represent the key in the console.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.17.4/source/include/uapi/linux/keyboard.h#L49-L78>
 #[expect(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum FuncId {
@@ -780,11 +850,15 @@ pub(super) enum FuncId {
 }
 
 impl FuncId {
+    /// Returns the function-string for this function key.
     pub(super) fn to_function_string(self) -> Option<&'static [u8]> {
         FUNC_TABLE.get(self as usize).copied().flatten()
     }
 }
 
+/// The default function-string table.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.13/source/drivers/tty/vt/defkeymap.c_shipped#L192-L224>
 static FUNC_TABLE: [Option<&'static [u8]>; 30] = [
     Some(b"\x1b[[A"),
     Some(b"\x1b[[B"),

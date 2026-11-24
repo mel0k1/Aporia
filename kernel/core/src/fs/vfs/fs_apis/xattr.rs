@@ -13,6 +13,7 @@ pub(crate) const XATTR_VALUE_MAX_LEN: usize = 65536;
 pub(crate) const XATTR_LIST_MAX_LEN: usize = 65536;
 pub(crate) const SECURITY_CAPABILITY_XATTR_NAME: &str = "security.capability";
 
+/// Clears file privileges after an operation modifies file contents.
 pub(in crate::fs) fn clear_file_priv(dentry: &Dentry) -> Result<()> {
     let inode = dentry.inode().as_ref();
     if inode.type_() != InodeType::File {
@@ -69,6 +70,8 @@ fn clear_set_id_bits(dentry: &Dentry) -> Result<()> {
     inode.set_mode(dentry, mode)
 }
 
+/// Represents different namespaces with different capabilities
+/// for extended attributes (xattrs).
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, TryFromInt)]
 pub(crate) enum XattrNamespace {
@@ -78,6 +81,11 @@ pub(crate) enum XattrNamespace {
     Security = 4,
 }
 
+/// Represents the name of an xattr. It includes both a valid namespace
+/// and a full name string slice, which contains the namespace prefix.
+///
+/// For example, "user.foo" is a valid xattr name, and its namespace
+/// is `XattrNamespace::User`.
 #[derive(Debug, Clone, Copy, Hash)]
 pub(crate) struct XattrName<'a> {
     namespace: XattrNamespace,
@@ -132,10 +140,14 @@ impl<'a> XattrName<'a> {
 }
 
 bitflags::bitflags! {
+    /// Flags for setting an xattr value.
     #[derive(Clone, Copy, Debug)]
     pub(crate) struct XattrSetFlags: u8 {
+        /// Creates a new xattr if it doesn't exist, or replaces the value if it does.
         const CREATE_OR_REPLACE = 0;
+        /// Creates a new xattr, fails if it already exists.
         const CREATE_ONLY       = 1;
+        /// Replaces the value of an existing xattr, fails if it doesn't exist.
         const REPLACE_ONLY      = 2;
     }
 }

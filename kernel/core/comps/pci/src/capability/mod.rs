@@ -1,3 +1,5 @@
+//! PCI device capabilities.
+
 use alloc::vec::Vec;
 
 use align_ext::AlignExt;
@@ -15,40 +17,64 @@ use crate::{
 pub mod msix;
 pub mod vendor;
 
+/// Raw PCI Capabilities.
 #[derive(Debug, Default)]
 pub(super) struct RawCapabilities {
     msix: Option<RawCapabilityMsix>,
     vndr: Vec<RawCapabilityVndr>,
 }
 
+/// PCI capability types.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, TryFromInt)]
 enum CapabilityType {
+    /// Power Management
     Pm = 0x01,
+    /// Accelerated Graphics Part
     Agp = 0x02,
+    /// Vital Product Data
     Vpd = 0x03,
+    /// Slot Identification
     SlotId = 0x04,
+    /// Message Signalled Interrupts
     Msi = 0x05,
+    /// CompactPCI HotSwap
     Chswp = 0x06,
+    /// PCI-X
     PciX = 0x07,
+    /// HyperTransport
     Hp = 0x08,
+    /// Vendor-Specific
     Vndr = 0x09,
+    /// Debug port
     Dbg = 0x0A,
+    /// CompactPCI Central Resource Control
     Ccrc = 0x0B,
+    /// PCI Standard Hot-Plug Controller
     Shpc = 0x0C,
+    /// Bridge subsystem vendor/device ID
     Ssvid = 0x0D,
+    /// AGP Target PCI-PCI bridge
     Agp3 = 0x0E,
+    /// Secure Device
     Secdev = 0x0F,
+    /// PCI Express
     Exp = 0x10,
+    /// MSI-X
     Msix = 0x11,
+    /// SATA Data/Index Conf
     Sata = 0x12,
+    /// PCI Advanced Features
     Af = 0x13,
+    /// Enhanced Allocation
     Ea = 0x14,
 }
 
 impl RawCapabilities {
+    /// The top of the capability position.
     const CAPABILITY_TOP: u16 = 0xFC;
 
+    /// Parses the capabilities of the PCI device.
     pub(super) fn parse(dev: &PciCommonDevice) -> Self {
         if !dev.read_status().contains(Status::CAPABILITIES_LIST) {
             return Self::default();
@@ -100,10 +126,12 @@ impl RawCapabilities {
         caps
     }
 
+    /// Returns the raw MSI-X capability, if present.
     pub(super) fn msix(&self) -> Option<&RawCapabilityMsix> {
         self.msix.as_ref()
     }
 
+    /// Iterates over [`CapabilityVndrData`] instances.
     pub(super) fn iter_vndr_data<'a>(
         &'a self,
         device: &'a PciCommonDevice,

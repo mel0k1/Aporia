@@ -14,6 +14,8 @@ use crate::{
     task::disable_preempt,
 };
 
+/// Bit 0 is `Present` bit, indicating whether this entry is present.
+/// Bit 63:12 is the context-table pointer pointing to this bus's context-table.
 #[repr(C)]
 #[derive(Clone, Copy, Pod)]
 struct RootEntry(u128);
@@ -29,13 +31,16 @@ impl RootEntry {
 }
 
 pub(in crate::arch::iommu) struct RootTable {
+    /// Total 256 bus, each entry is 128 bits.
     root_frame: Frame<()>,
+
     context_tables: BTreeMap<Paddr, ContextTable>,
 }
 
 #[derive(Debug)]
 pub(super) enum ContextTableError {
     InvalidDeviceId,
+    /// Error when modifying the page table
     ModificationError(PageTableError),
 }
 
@@ -51,6 +56,11 @@ impl RootTable {
         }
     }
 
+    /// Mapping device address to physical address.
+    ///
+    /// # Safety
+    ///
+    /// User must ensure the given paddr is a valid one.
     pub(super) unsafe fn map(
         &mut self,
         device: PciDeviceLocation,
@@ -62,6 +72,7 @@ impl RootTable {
         }
 
         let context_table = self.get_or_create_context_table(device);
+
         unsafe { context_table.map(device, daddr, paddr)? };
 
         Ok(())
@@ -82,6 +93,10 @@ impl RootTable {
         Ok(())
     }
 
+    /// Specifies the device page table instead of creating a page table if not exists.
+    ///
+    /// This will be useful if we want all the devices to use the same page table.
+    /// The original page table will be overwritten.
     pub(super) fn specify_device_page_table(
         &mut self,
         device_id: PciDeviceLocation,
@@ -137,11 +152,29 @@ impl RootTable {
     }
 }
 
+/// Context Entry in the Context Table, used in Intel iommu.
+///
+/// The format of context entry:
+/// ```
+/// 127--88: Reserved.
+/// 87---72: Domain Identifier.
+/// 71---71: Reserved.
+/// 70---67: Ignored.
+/// 66---64: Address Width.
+/// 63---12: Second Stage Page Translation Pointer.
+/// 11----4: Reserved.
+/// 3-----2: Translation Type.
+/// 1-----1: Fault Processing Disable.
+/// 0-----0: Present
+/// ```
+///
 #[repr(C)]
 #[derive(Clone, Copy, Pod)]
 pub(super) struct ContextEntry(u128);
 
 impl ContextEntry {
+    /// Identifier for the domain to which this context-entry maps. Hardware may use the domain
+    /// identifier to tag its internal caches
     pub(super) const fn domain_identifier(&self) -> u64 {
         ((self.0 & 0xFF_FF00_0000_0000_0000_0000) >> 72) as u64
     }
@@ -156,14 +189,20 @@ impl ContextEntry {
         }
     }
 
+    /// Gets the second stage page translation pointer.
+    ///
+    /// This function will not right shift the value after the `and` operation.
     pub(super) const fn second_stage_pointer(&self) -> u64 {
         (self.0 & 0xFFFF_FFFF_FFFF_F000) as u64
     }
 
+    /// This field is applicable only for requests-without-PASID, as hardware blocks all requests-with
+    /// PASID in legacy mode before they can use context table
     pub(super) const fn translation_type(&self) -> u64 {
         ((self.0 & 0b1100) >> 2) as u64
     }
 
+    /// Whether need to record/report qualified non-recoverable faults.
     pub(super) const fn need_fault_process(&self) -> bool {
         (self.0 & 0b10) == 0
     }
@@ -175,13 +214,18 @@ impl ContextEntry {
 
 #[derive(Debug)]
 pub(super) enum AddressWidth {
+    /// 000b, 100b~111b
     Reserved,
+    /// 001b
     Level3PageTable,
+    /// 010b
     Level4PageTable,
+    /// 011b
     Level5PageTable,
 }
 
 pub(super) struct ContextTable {
+    /// Total 32 devices, each device has 8 functions.
     entries_frame: Frame<()>,
     page_tables: BTreeMap<Paddr, PageTable<IommuPtConfig>>,
 }
@@ -229,6 +273,9 @@ impl ContextTable {
         }
     }
 
+    /// # Safety
+    ///
+    /// User must ensure that the given physical address is valid.
     unsafe fn map(
         &mut self,
         device: PciDeviceLocation,

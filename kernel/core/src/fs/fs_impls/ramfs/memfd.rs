@@ -1,3 +1,5 @@
+//! Memfd Implementation.
+
 use alloc::format;
 use core::time::Duration;
 
@@ -27,6 +29,9 @@ pub(super) fn init() {
     let _ = MemfdTmpFs::mount_node();
 }
 
+/// Maximum file name length for `memfd_create`, excluding the final `\0` byte.
+///
+/// See <https://man7.org/linux/man-pages/man2/memfd_create.2.html>
 pub(crate) const MAX_MEMFD_NAME_LEN: usize = 249;
 
 pub(crate) struct MemfdInode {
@@ -66,12 +71,16 @@ impl MemfdInode {
         *self.seals.lock()
     }
 
+    /// Checks whether writing to this memfd inode is allowed.
+    ///
+    /// This method restricts the `may_perms` if needed.
     pub(crate) fn check_writable(&self, perms: VmPerms, may_perms: &mut VmPerms) -> Result<()> {
         let seals = self.seals.lock();
         if seals.intersects(FileSeals::F_SEAL_WRITE | FileSeals::F_SEAL_FUTURE_WRITE) {
             if perms.contains(VmPerms::WRITE) {
                 return Err(errno!(EPERM, "the file is sealed against writing"));
             }
+
             may_perms.remove(VmPerms::MAY_WRITE);
         }
         Ok(())
@@ -308,10 +317,15 @@ impl MemfdTmpFs {
 bitflags! {
     #[derive(Clone, Copy, Debug)]
     pub(crate) struct MemfdFlags: u32 {
+        /// Close on exec.
         const MFD_CLOEXEC       = 1 << 0;
+        /// Allow sealing operations on this file.
         const MFD_ALLOW_SEALING = 1 << 1;
+        /// Create in the hugetlbfs.
         const MFD_HUGETLB       = 1 << 2;
+        /// Not executable and sealed to prevent changing to executable.
         const MFD_NOEXEC_SEAL   = 1 << 3;
+        /// Executable.
         const MFD_EXEC          = 1 << 4;
     }
 }
@@ -319,11 +333,17 @@ bitflags! {
 bitflags! {
     #[derive(Clone, Copy, Debug)]
     pub(crate) struct FileSeals: u32 {
+        /// Prevent further seals from being set.
         const F_SEAL_SEAL         = 0x0001;
+        /// Prevent file from shrinking.
         const F_SEAL_SHRINK       = 0x0002;
+        /// Prevent file from growing.
         const F_SEAL_GROW         = 0x0004;
+        /// Prevent writes.
         const F_SEAL_WRITE        = 0x0008;
+        /// Prevent future writes while mapped.
         const F_SEAL_FUTURE_WRITE = 0x0010;
+        /// Prevent chmod modifying exec bits.
         const F_SEAL_EXEC         = 0x0020;
     }
 }

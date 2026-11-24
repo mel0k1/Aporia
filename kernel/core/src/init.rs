@@ -1,3 +1,5 @@
+//! Kernel initialization.
+
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use aster_cmdline::INIT_PROC_ARGS;

@@ -1,3 +1,5 @@
+//! Software interrupt.
+
 #![no_std]
 #![deny(unsafe_code)]
 
@@ -39,6 +41,33 @@ pub use self::{
     taskless::Taskless,
 };
 
+/// A representation of a software interrupt (softirq) line.
+///
+/// # Overview
+///
+/// Softirq is an interrupt mechanism in the kernel that enables bottom-half processing;
+/// they are cheaper to execute compared to regular interrupts because softirqs are less
+/// time-critical and thus can be processed in a more flexible manner.
+///
+/// The `SoftIrqLine` struct encapsulates the data and functionality associated with each
+/// softirq line, including an identifier and an associated callback that gets triggered
+/// when the softirq is raised.
+///
+/// The `SoftIrqLine` with the smaller ID has the higher execution priority.
+///
+/// # Example
+///
+/// ```
+/// // Define an unused softirq ID.
+/// const MY_SOFTIRQ_ID: u8 = 4;
+/// // Enable the softirq line of this ID.
+/// SoftIrqLine::get(MY_SOFTIRQ_ID).enable(|| {
+///     // Define the action to take when the softirq with `MY_SOFTIRQ_ID` is raised
+///     // ...
+/// });
+/// // Later on:
+/// SoftIrqLine::get(MY_SOFTIRQ_ID).raise(); // This will trigger the registered callback.
+/// ```
 pub struct SoftIrqLine {
     id: u8,
     callback: Once<Box<dyn Fn() + 'static + Sync + Send>>,
@@ -46,8 +75,12 @@ pub struct SoftIrqLine {
 }
 
 impl SoftIrqLine {
+    /// The number of softirq lines.
     const NR_LINES: u8 = 8;
 
+    /// Gets a softirq line.
+    ///
+    /// The value of `id` must be within `0..NR_LINES`.
     pub fn get(id: u8) -> &'static SoftIrqLine {
         &LINES.get().unwrap()[id as usize]
     }
@@ -60,14 +93,23 @@ impl SoftIrqLine {
         }
     }
 
+    /// Gets the ID of this softirq line.
     pub fn id(&self) -> u8 {
         self.id
     }
 
+    /// Raises the softirq, marking it as pending.
+    ///
+    /// If this line is not enabled yet, the method has no effect.
     pub fn raise(&self) {
         PENDING_MASK.bitor_assign(1 << self.id);
     }
 
+    /// Enables a softirq line by registering its callback.
+    ///
+    /// # Panics
+    ///
+    /// Each softirq can only be enabled once. Subsequent calls will panic.
     pub fn enable<F>(&self, callback: F)
     where
         F: Fn() + 'static + Sync + Send,
@@ -79,11 +121,13 @@ impl SoftIrqLine {
         ENABLED_MASK.fetch_or(1 << self.id, Ordering::Release);
     }
 
+    /// Returns whether this softirq line is enabled.
     pub fn is_enabled(&self) -> bool {
         ENABLED_MASK.load(Ordering::Acquire) & (1 << self.id) != 0
     }
 }
 
+/// A slice that stores the [`SoftIrqLine`]s, whose ID is equal to its offset in the slice.
 static LINES: Once<[SoftIrqLine; SoftIrqLine::NR_LINES as usize]> = Once::new();
 
 #[init_component]
@@ -117,6 +161,7 @@ cpu_local! {
     static DAEMON_WAKER: Once<Arc<Waker>> = Once::new();
 }
 
+/// Processes pending softirqs.
 fn process_pending(irq_guard: DisabledLocalIrqGuard, irq_num: u8) -> DisabledLocalIrqGuard {
     process_statistic(irq_num);
 
@@ -126,6 +171,14 @@ fn process_pending(irq_guard: DisabledLocalIrqGuard, irq_num: u8) -> DisabledLoc
     process_all_pending(irq_guard)
 }
 
+/// Processes all pending softirqs regardless of whether softirqs are disabled.
+///
+/// This is called from the context of arbitrary tasks, meaning that we're processing softirqs using
+/// the time budget of another task. If not done carefully, this can cause fairness issues between
+/// the softirq workload and normal tasks.
+///
+/// To address this, we defer the work to a background daemon as soon as the maximum number of
+/// iterations is reached, or when the scheduler wants to preempt us.
 fn process_all_pending(mut irq_guard: DisabledLocalIrqGuard) -> DisabledLocalIrqGuard {
     const SOFTIRQ_RUN_TIMES: u8 = 5;
 
@@ -161,6 +214,14 @@ fn process_all_pending(mut irq_guard: DisabledLocalIrqGuard) -> DisabledLocalIrq
     irq_guard
 }
 
+/// Runs a loop on the current CPU in a daemon kernel thread that processes softirqs.
+///
+/// This must be called on a kernel thread bound to a specific CPU. It should be called once on each
+/// CPU.
+///
+/// Usually, softirqs are processed in the bottom half of an IRQ handler. However, if the bottom
+/// half is overloaded or causing fairness issues, the work is deferred to a background kernel
+/// thread that runs this loop.
 pub fn daemon_loop_on_cpu() {
     let (waiter, waker) = Waiter::new_pair();
 

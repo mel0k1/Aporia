@@ -21,6 +21,7 @@ use crate::{
     vm::vmar::is_userspace_vaddr,
 };
 
+/// create new task with userspace and parent process
 pub(crate) fn create_new_user_task(
     user_ctx: Box<UserContext>,
     thread_ref: Arc<Thread>,

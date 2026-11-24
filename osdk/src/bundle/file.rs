@@ -6,6 +6,7 @@ use std::{
 
 use crate::util::hard_link_or_copy;
 
+/// A trait for files in a bundle. The file in a bundle should have its modified time and be validatable.
 pub trait BundleFile {
     fn path(&self) -> &PathBuf;
 
@@ -61,6 +62,7 @@ impl Initramfs {
         }
     }
 
+    /// Copy the initramfs to the `base` directory and convert the path to a relative path.
     pub fn copy_to(self, base: impl AsRef<Path>) -> Self {
         let name = self.path.file_name().unwrap();
         let dest = base.as_ref().join(name);

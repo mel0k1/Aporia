@@ -1,3 +1,5 @@
+//! Methods and constructors for `VirtioFsInode`.
+
 #![short_vis_path::add(virtiofs)]
 
 use core::time::Duration;
@@ -37,9 +39,11 @@ use crate::{
     util::ReadWithLen,
 };
 
+/// Use one page for each `FUSE_READDIR` request.
 const FUSE_READDIR_BUF_SIZE: u32 = 4096;
 
 impl VirtioFsInode {
+    /// Reads file data through the page cache.
     pub(in virtiofs) fn cached_read_at(
         &self,
         offset: usize,
@@ -65,6 +69,7 @@ impl VirtioFsInode {
         Ok(read_len)
     }
 
+    /// Reads file data directly from the server.
     pub(in virtiofs) fn direct_read_at(
         &self,
         offset: usize,
@@ -97,6 +102,11 @@ impl VirtioFsInode {
         Ok(copied)
     }
 
+    /// Writes file data through the page cache.
+    ///
+    /// Cached writes use write-through semantics: they copy user bytes into the
+    /// page cache, flush the dirtied range to the server, and commit metadata
+    /// only after writeback succeeds.
     pub(in virtiofs) fn cached_write_at(
         &self,
         write_offset: WriteOffset,
@@ -149,6 +159,7 @@ impl VirtioFsInode {
         Ok(write_len)
     }
 
+    /// Writes file data directly to the server.
     pub(in virtiofs) fn direct_write_at(
         &self,
         write_offset: WriteOffset,
@@ -371,6 +382,11 @@ impl VirtioFsInode {
         Ok(Box::new(VirtioFsDir::new(inode, open_handle)))
     }
 
+    /// Commits an `EntryReply` reply for this cached inode.
+    ///
+    /// `EntryReply` replies carry both attributes and one new lookup reference.
+    /// Updating the two together keeps the client-side `nlookup` mirror in sync
+    /// with the server-side count.
     pub(super) fn commit_entry_reply(
         &self,
         entry_reply: &EntryReply,
@@ -387,6 +403,11 @@ impl VirtioFsInode {
         )
     }
 
+    /// Reads directory entries and expires this directory's attribute cache.
+    ///
+    /// `READDIR` does not return a complete attribute reply for the directory,
+    /// but successful directory reads may observe server-side changes. Expiring
+    /// attributes forces later metadata-sensitive operations to revalidate.
     pub(in virtiofs) fn readdir(
         &self,
         fh: FuseFileHandle,
@@ -420,6 +441,7 @@ impl VirtioFsInode {
             let mut iterate_offset = offset;
             match try_readdir_fn(&mut iterate_offset, visitor) {
                 Err(e) if iterate_offset == offset => Err(e),
+
                 _ => Ok(iterate_offset - offset),
             }?
         };
@@ -429,6 +451,11 @@ impl VirtioFsInode {
         Ok(offset_read)
     }
 
+    /// Sets one inode timestamp through `SETATTR`.
+    ///
+    /// Calls this from VFS timestamp setters whose trait signature cannot
+    /// return an error. Failures are logged and the cached metadata is left to be
+    /// repaired by a later revalidation.
     pub(super) fn set_time(&self, field: TimeField, time: Duration) {
         let setattr_req = match field {
             TimeField::Access => SetattrReq::new(SetattrValid::empty())
@@ -447,6 +474,10 @@ impl VirtioFsInode {
         }
     }
 
+    /// Applies a FUSE `SETATTR` request and commits its returned attributes.
+    ///
+    /// If the reply loses the attr-version race, only fields selected by the
+    /// request's `SetattrValid` mask remain safe to merge into cached metadata.
     pub(super) fn setattr(&self, setattr_req: SetattrReq) -> Result<()> {
         let fs = self.fs_ref();
         let request_attr_version = fs.session().snapshot_attr_version();
@@ -484,6 +515,11 @@ impl VirtioFsInode {
         }
     }
 
+    /// Revalidates a cached directory entry with `LOOKUP`.
+    ///
+    /// The entry TTL and attribute TTL are independent caches. A successful
+    /// revalidation refreshes the dentry deadline and commits the returned
+    /// attributes as an observation, so a stale attribute reply is discarded.
     pub(super) fn revalidate_lookup(
         &self,
         parent_nodeid: aster_fuse::FuseNodeId,
@@ -524,6 +560,13 @@ impl VirtioFsInode {
         Ok(())
     }
 
+    /// Refreshes cached attributes when their server TTL has expired.
+    ///
+    /// Calls this before operations that depend on a current size or on
+    /// page-cache coherency, such as reads, `O_APPEND` writes, and `SEEK_END`.
+    /// It is a cheap no-op while the cached attributes are still valid. When a
+    /// refresh is needed, the supplied FUSE file handle is passed to `GETATTR`
+    /// so the server may return handle-specific attributes.
     pub(in virtiofs) fn revalidate_attr(&self, fh: Option<FuseFileHandle>) -> Result<()> {
         let now = MonotonicCoarseClock::get().read_time();
         if self.inner.read().is_attr_valid(now) {

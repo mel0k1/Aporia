@@ -14,6 +14,14 @@ use crate::{
 
 pub(super) struct InitStream {
     bound_port: Option<BoundPort>,
+    /// Indicates if the last `connect()` is considered to be done.
+    ///
+    /// For vsock, a failed `connect()` attempt is never considered completed, so `is_connect_done`
+    /// remains `false` permanently. As a result, the socket becomes unusable and cannot be
+    /// connected again.
+    ///
+    /// This field is still kept for symmetry with IP sockets, where a second `connect()` is
+    /// allowed, and to leave room for future support for it.
     is_connect_done: bool,
     last_connect_error: Option<Error>,
 }

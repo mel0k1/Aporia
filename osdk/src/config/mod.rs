@@ -1,3 +1,8 @@
+//! This module is responsible for parsing configuration files and combining them with command-line parameters
+//! to obtain the final configuration, it will also try searching system to fill valid values for specific
+//! arguments if the arguments is missing, e.g., the path of QEMU. The final configuration is stored in `BuildConfig`,
+//! `RunConfig` and `TestConfig`. These `*Config` are used for `build`, `run` and `test` subcommand.
+
 pub mod manifest;
 pub mod scheme;
 pub mod unix_args;
@@ -26,6 +31,7 @@ use crate::{
     util::new_command_checked_exists,
 };
 
+/// The global configuration for the OSDK actions.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Config {
     pub work_dir: PathBuf,
@@ -172,6 +178,8 @@ fn canonicalize_and_eval(action_scheme: &mut ActionScheme, workdir: &PathBuf) {
     }
 }
 
+/// This function is used to evaluate the string using the host's shell recursively
+/// in order.
 pub fn eval(cwd: impl AsRef<Path>, s: &String) -> io::Result<String> {
     let mut eval = new_command_checked_exists("bash");
     eval.arg("-c");

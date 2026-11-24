@@ -1,3 +1,5 @@
+//! Statically-allocated CPU-local objects.
+
 #![cfg_attr(
     any(
         target_arch = "riscv64",
@@ -12,13 +14,52 @@ use core::marker::PhantomData;
 use super::{__cpu_local_end, __cpu_local_start, AnyStorage, CpuLocal};
 use crate::{arch, cpu::CpuId, irq::DisabledLocalIrqGuard, mm::PAGE_SIZE, util::id_set::Id};
 
+/// Defines a statically-allocated CPU-local variable.
+///
+/// The accessors of the CPU-local variables are defined with [`CpuLocal`].
+///
+/// You can get the reference to the inner object on one CPU by calling
+/// [`CpuLocal::get_on_cpu`]. Also if you intend to access the inner object
+/// on the current CPU, you can use [`CpuLocal::get_with`]. The latter
+/// accessors can be used even if the inner object is not `Sync`.
+///
+/// The alignment of the type of each variable must not exceed
+/// [`PAGE_SIZE`](crate::mm::PAGE_SIZE). Otherwise, the definition does not
+/// compile.
+///
+/// # Example
+///
+/// ```rust
+/// use ostd::{cpu_local, cpu::PinCurrentCpu, task::disable_preempt, trap};
+/// use core::{sync::atomic::{AtomicU32, Ordering}, cell::Cell};
+///
+/// cpu_local! {
+///     static FOO: AtomicU32 = AtomicU32::new(1);
+///     pub static BAR: Cell<usize> = Cell::new(2);
+/// }
+///
+/// fn not_an_atomic_function() {
+///     let preempt_guard = disable_preempt();
+///     let ref_of_foo = FOO.get_on_cpu(preempt_guard.current_cpu());
+///     let val_of_foo = ref_of_foo.load(Ordering::Relaxed);
+///     println!("FOO VAL: {}", val_of_foo);
+///
+///     let irq_guard = irq::disable_local();
+///     let bar_guard = BAR.get_with(&irq_guard);
+///     let val_of_bar = bar_guard.get();
+///     println!("BAR VAL: {}", val_of_bar);
+/// }
+/// ```
 #[macro_export]
 macro_rules! cpu_local {
     ($( $(#[$attr:meta])* $vis:vis static $name:ident: $t:ty = $init:expr; )*) => {
         $(
+
             #[unsafe(link_section = ".cpu_local")]
             $(#[$attr])* $vis static $name: $crate::cpu::local::StaticCpuLocal<$t> = {
                 let val = $init;
+
+
                 unsafe {
                     $crate::cpu::local::CpuLocal::__new_static(val)
                 }
@@ -27,9 +68,16 @@ macro_rules! cpu_local {
     };
 }
 
+/// A static storage for a CPU-local variable of type `T`.
+///
+/// Such a CPU-local storage is not intended to be allocated directly.
+/// Use the `cpu_local` macro instead.
 pub struct StaticStorage<T: 'static>(T);
 
 impl<T: 'static> StaticStorage<T> {
+    /// Gets access to the underlying value through a raw pointer.
+    ///
+    /// This method is safe, but using the returned pointer will be unsafe.
     fn as_ptr(&self) -> *const T {
         super::is_used::debug_set_true();
 
@@ -43,9 +91,11 @@ impl<T: 'static> StaticStorage<T> {
         local_va as *const T
     }
 
+    /// Gets the offset of the CPU-local object in the CPU-local area.
     fn get_offset(&self) -> usize {
         let bsp_va = self as *const _ as usize;
         let bsp_base = __cpu_local_start as *const () as usize;
+
         debug_assert!(bsp_va + size_of::<T>() <= __cpu_local_end as *const () as usize);
 
         bsp_va - bsp_base
@@ -68,6 +118,7 @@ unsafe impl<T: 'static> AnyStorage<T> for StaticStorage<T> {
 
         let base = {
             let storages = unsafe { super::CPU_LOCAL_STORAGES.get_unchecked() };
+
             let storage = unsafe { *storages.get_unchecked(cpu_id - 1) };
             crate::mm::paddr_to_vaddr(storage)
         };
@@ -78,6 +129,16 @@ unsafe impl<T: 'static> AnyStorage<T> for StaticStorage<T> {
 }
 
 impl<T: 'static> CpuLocal<T, StaticStorage<T>> {
+    /// Creates a new statically-allocated CPU-local object.
+    ///
+    /// Please do not call this function directly. Instead, use the
+    /// `cpu_local!` macro.
+    ///
+    /// # Safety
+    ///
+    /// The caller should ensure that the object initialized by this
+    /// function resides in the `.cpu_local` section. Otherwise the
+    /// behavior is undefined.
     #[doc(hidden)]
     pub const unsafe fn __new_static(val: T) -> Self {
         const { assert!(align_of::<T>() <= PAGE_SIZE) };
@@ -87,6 +148,9 @@ impl<T: 'static> CpuLocal<T, StaticStorage<T>> {
         }
     }
 
+    /// Gets access to the underlying value through a raw pointer.
+    ///
+    /// This method is safe, but using the returned pointer will be unsafe.
     pub(crate) fn as_ptr(&self) -> *const T {
         self.storage.as_ptr()
     }

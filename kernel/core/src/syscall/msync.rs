@@ -63,10 +63,19 @@ pub(super) fn sys_msync(
 }
 
 bitflags! {
+    /// Flags for `msync`.
+    ///
+    /// Reference: <https://elixir.bootlin.com/linux/v6.15.1/source/include/uapi/asm-generic/mman-common.h#L42>.
     #[derive(Clone, Copy, Debug)]
     struct MsyncFlags: i32 {
+        /// Performs `msync` asynchronously.
         const MS_ASYNC      = 0x01;
+        /// Invalidates cache so that other processes mapping the same file
+        /// will immediately see the changes after this `msync` call.
+        ///
+        /// Should be a no-op since we use the same page cache for all processes.
         const MS_INVALIDATE = 0x02;
+        /// Performs `msync` synchronously.
         const MS_SYNC       = 0x04;
     }
 }

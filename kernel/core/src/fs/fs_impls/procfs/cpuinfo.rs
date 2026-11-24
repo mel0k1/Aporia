@@ -1,3 +1,8 @@
+//! This module offers `/proc/cpuinfo` file support, which provides
+//! information about the CPU architecture, cores, and other details.
+//!
+//! Reference: <https://man7.org/linux/man-pages/man5/proc_cpuinfo.5.html>
+
 use aster_util::printer::VmPrinter;
 use ostd::{
     cpu::{PinCurrentCpu, all_cpus},
@@ -16,6 +21,7 @@ use crate::{
     prelude::*,
 };
 
+/// Represents the inode at `/proc/cpuinfo`.
 pub(super) struct CpuInfoFileOps;
 
 impl CpuInfoFileOps {

@@ -41,11 +41,19 @@ fn find_rsdp_addr(boot_params: &BootParams) -> Option<u64> {
     }
 }
 
+/// Represents the 64-bit UEFI system table layout carried by Linux boot params.
+///
+/// The legacy i386 setup code may still receive an `EL64` loader signature,
+/// meaning `efi_systab` points to a 64-bit UEFI `SystemTable`. We define this
+/// local type because `uefi_raw::table::system::SystemTable` follows the target
+/// pointer width and therefore models only the 32-bit layout on this build
+/// target.
 #[repr(C)]
 struct EfiSystemTable64 {
     header: Header,
     firmware_vendor: u64,
     firmware_revision: u32,
+
     _padding: u32,
     stdin_handle: u64,
     stdin: u64,
@@ -59,6 +67,7 @@ struct EfiSystemTable64 {
     configuration_table: u64,
 }
 
+/// Represents one entry in a 64-bit UEFI configuration table array.
 #[repr(C)]
 struct EfiConfigurationTable64 {
     vendor_guid: Guid,

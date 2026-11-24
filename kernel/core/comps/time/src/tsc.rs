@@ -1,3 +1,5 @@
+//! This module provide a instance of `ClockSource` based on TSC.
+
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicU64, Ordering};
 
@@ -12,10 +14,12 @@ use crate::{
     clocksource::{ClockSource, Instant},
 };
 
+/// An instance of the TSC clocksource.
 pub(super) static CLOCK: Once<Arc<ClockSource>> = Once::new();
 
 const MAX_DELAY_SECS: u64 = 100;
 
+/// Initializes the TSC clocksource module.
 pub(super) fn init() {
     init_clock();
     calibrate();
@@ -32,6 +36,7 @@ fn init_clock() {
     });
 }
 
+/// Calibrates the TSC and system time based on the RTC time.
 fn calibrate() {
     let clock = CLOCK.get().unwrap();
     let cycles = clock.read_cycles();
@@ -39,6 +44,7 @@ fn calibrate() {
     START_TIME.call_once(|| crate::RTC_DRIVER.get().unwrap().read_rtc());
 }
 
+/// Reads an `Instant` of the TSC clocksource.
 pub(super) fn read_instant() -> Instant {
     let clock = CLOCK.get().unwrap();
     clock.read_instant()

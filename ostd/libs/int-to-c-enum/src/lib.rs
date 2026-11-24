@@ -1,6 +1,7 @@
 #![doc = include_str!("../README.md")]
 #![cfg_attr(not(test), no_std)]
 
+/// An error indicating that an integer does not match any enum discriminant.
 #[derive(Clone, Copy, Debug)]
 pub struct TryFromIntError;
 

@@ -83,6 +83,7 @@ pub(super) fn sys_epoll_ctl(
 
     let mut file_table = ctx.thread_local.borrow_file_table_mut();
     let file = get_file_fast!(&mut file_table, epfd.try_into()?).into_owned();
+
     drop(file_table);
 
     let epoll_file = file

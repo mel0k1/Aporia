@@ -63,6 +63,7 @@ fn set_priority_one(new_nice: Nice, process: &Process, ctx: &Context) -> Result<
     Ok(())
 }
 
+/// Checks whether the caller may change the target process's nice value.
 fn check_setpriority_permission(target: &Process, ctx: &Context) -> Result<()> {
     let caller_uid = ctx.posix_thread.credentials().euid();
     let target_credentials = target
@@ -81,6 +82,7 @@ fn check_setpriority_permission(target: &Process, ctx: &Context) -> Result<()> {
     Ok(())
 }
 
+/// Checks whether the caller has the `SYS_NICE` capability in the initial user namespace.
 fn check_nice_capability(ctx: &Context) -> Result<()> {
     lsm_hooks::on_capable(lsm_hooks::CapableContext::new(
         UserNamespace::get_init_singleton().as_ref(),

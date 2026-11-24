@@ -1,3 +1,4 @@
+//! DMA pools.
 #![no_std]
 #![deny(unsafe_code)]
 
@@ -29,6 +30,17 @@ pub use self::{
     buffer::DmaBuffer,
 };
 
+/// `DmaPool` is responsible for allocating small streaming DMA segments
+/// (equal to or smaller than `PAGE_SIZE`),
+/// referred to as `DmaSegment`.
+///
+/// A `DmaPool` can only allocate `DmaSegment` of a fixed size.
+/// Once a `DmaSegment` is dropped, it will be returned to the pool.
+/// If the `DmaPool` is dropped before the associated `DmaSegment`,
+/// the `drop` method of the `DmaSegment` will panic.
+///
+/// Therefore, as a best practice,
+/// it is recommended for the `DmaPool` to have a static lifetime.
 #[derive(Debug)]
 pub struct DmaPool<D: DmaDirection> {
     segment_size: usize,
@@ -39,6 +51,21 @@ pub struct DmaPool<D: DmaDirection> {
 }
 
 impl<D: DmaDirection> DmaPool<D> {
+    /// Constructs a new `DmaPool` with a specified initial capacity and a high watermark.
+    ///
+    /// The `DmaPool` starts with `init_size` DMAable pages.
+    /// As additional DMA blocks are requested beyond the initial capacity,
+    /// the pool dynamically allocates more DMAable pages.
+    /// To optimize performance, the pool employs a lazy deallocation strategy:
+    /// A DMAable page is freed only if it meets the following conditions:
+    /// 1. The page is currently not in use;
+    /// 2. The total number of available DMAable pages (i.e., allocated pages that have at
+    ///    least one free segment) exceeds the specified `high_watermark`.
+    ///
+    /// The returned pool can be used to allocate small segments for DMA usage.
+    /// All allocated segments will have the same DMA direction
+    /// and will either all be cache coherent or not cache coherent,
+    /// as specified in the parameters.
     pub fn new(
         segment_size: usize,
         init_size: usize,
@@ -72,6 +99,7 @@ impl<D: DmaDirection> DmaPool<D> {
         })
     }
 
+    /// Allocates a segment from the pool.
     pub fn alloc_segment(self: &Arc<Self>) -> Result<DmaSegment<D>, ostd::Error> {
         let mut avail_pages = self.avail_pages.lock();
         if avail_pages.is_empty() {
@@ -96,11 +124,13 @@ impl<D: DmaDirection> DmaPool<D> {
         Ok(free_segment)
     }
 
+    /// Returns the number of pages in the pool.
     #[cfg(ktest)]
     fn num_pages(&self) -> usize {
         self.all_pages.lock().len()
     }
 
+    /// Returns the segment size of the pool.
     pub fn segment_size(&self) -> usize {
         self.segment_size
     }
@@ -109,8 +139,10 @@ impl<D: DmaDirection> DmaPool<D> {
 #[derive(Debug)]
 struct DmaPage<D: DmaDirection> {
     storage: USegment,
+
     dma_stream: DmaStream<D>,
     segment_size: usize,
+
     allocated_segments: SpinLock<BitArray, BottomHalfDisabled>,
     pool: Weak<DmaPool<D>>,
 }
@@ -165,6 +197,11 @@ fn get_next_free_index(segments: &BitArray, nr_blocks_per_page: usize) -> Option
     }
 }
 
+/// A small and fixed-size segment of DMA memory.
+///
+/// The size of a `DmaSegment` ranges from 64 bytes to `PAGE_SIZE`
+/// and is a power of two.
+/// Each `DmaSegment`'s DMA address is guaranteed to be aligned with its size.
 #[derive(Debug)]
 pub struct DmaSegment<D: DmaDirection> {
     page: Arc<DmaPage<D>>,

@@ -1,3 +1,12 @@
+//! MlsDisk as a block device.
+//!
+//! API: submit_bio(), submit_bio_sync(), create(), open(),
+//! read(), readv(), write(), writev(), sync().
+//!
+//! Responsible for managing a `TxLsmTree`, whereas the TX logs (WAL and SSTs)
+//! are stored; an untrusted disk storing user data, a `BlockAlloc` for managing data blocks'
+//! allocation metadata. `TxLsmTree` and `BlockAlloc` are manipulated
+//! based on internal transactions.
 use core::{
     num::NonZeroUsize,
     ops::{Add, Sub},
@@ -27,22 +36,35 @@ use crate::{
     tx::CurrentTx,
 };
 
+/// Logical Block Address.
 pub(super) type Lba = BlockId;
+/// Host Block Address.
 pub(super) type Hba = BlockId;
 
+/// MlsDisk.
 pub struct MlsDisk<D: BlockSet> {
     inner: Arc<DiskInner<D>>,
 }
 
+/// Inner structures of `MlsDisk`.
 struct DiskInner<D: BlockSet> {
+    /// Block I/O request queue.
     bio_req_queue: BioReqQueue,
+    /// A `TxLsmTree` to store metadata of the logical blocks.
     logical_block_table: TxLsmTree<RecordKey, RecordValue, D>,
+    /// The underlying disk where user data is stored.
     user_data_disk: D,
+    /// Manage space of the data disk.
     block_validity_table: Arc<AllocTable>,
+    /// TX log store for managing logs in `TxLsmTree` and block alloc logs.
     tx_log_store: Arc<TxLogStore<D>>,
+    /// A buffer to cache data blocks.
     data_buf: DataBuf,
+    /// Root encryption key.
     root_key: Key,
+    /// Whether `MlsDisk` is dropped.
     is_dropped: AtomicBool,
+    /// Scope lock for control write and sync operation.
     write_sync_region: RwLock<()>,
 }
 
@@ -88,6 +110,7 @@ impl<D: BlockSet + 'static> aster_block::BlockDevice for MlsDisk<D> {
 
         let handle_write_bio = |mut buf: Buf| {
             let mut base = start_offset % BLOCK_SIZE;
+
             if base != 0 {
                 let buf_mut = BufMut::try_from(&mut buf.as_mut_slice()[..BLOCK_SIZE]).unwrap();
                 if self.read(start_lba, buf_mut).is_err() {
@@ -143,40 +166,52 @@ impl<D: BlockSet + 'static> aster_block::BlockDevice for MlsDisk<D> {
 }
 
 impl<D: BlockSet + 'static> MlsDisk<D> {
+    /// Read a specified number of blocks at a logical block address on the device.
+    /// The block contents will be read into a single contiguous buffer.
     pub fn read(&self, lba: Lba, buf: BufMut) -> Result<()> {
         self.check_rw_args(lba, buf.nblocks())?;
         self.inner.read(lba, buf)
     }
 
+    /// Read multiple blocks at a logical block address on the device.
+    /// The block contents will be read into several scattered buffers.
     pub fn readv<'a>(&self, lba: Lba, bufs: &'a mut [BufMut<'a>]) -> Result<()> {
         self.check_rw_args(lba, bufs.iter().fold(0, |acc, buf| acc + buf.nblocks()))?;
         self.inner.readv(lba, bufs)
     }
 
+    /// Write a specified number of blocks at a logical block address on the device.
+    /// The block contents reside in a single contiguous buffer.
     pub fn write(&self, lba: Lba, buf: BufRef) -> Result<()> {
         self.check_rw_args(lba, buf.nblocks())?;
         let _rguard = self.inner.write_sync_region.read();
         self.inner.write(lba, buf)
     }
 
+    /// Write multiple blocks at a logical block address on the device.
+    /// The block contents reside in several scattered buffers.
     pub fn writev(&self, lba: Lba, bufs: &[BufRef]) -> Result<()> {
         self.check_rw_args(lba, bufs.iter().fold(0, |acc, buf| acc + buf.nblocks()))?;
         let _rguard = self.inner.write_sync_region.read();
         self.inner.writev(lba, bufs)
     }
 
+    /// Sync all cached data in the device to the storage medium for durability.
     pub fn sync(&self) -> Result<()> {
         let _wguard = self.inner.write_sync_region.write();
+
         self.inner.sync().unwrap();
 
         debug!("Sync completed. {self:?}");
         Ok(())
     }
 
+    /// Returns the total number of blocks in the device.
     pub fn total_blocks(&self) -> usize {
         self.inner.user_data_disk.nblocks()
     }
 
+    /// Creates a new `MlsDisk` on the given disk, with the root encryption key.
     pub fn create(
         disk: D,
         root_key: Key,
@@ -222,9 +257,11 @@ impl<D: BlockSet + 'static> MlsDisk<D> {
         };
 
         info!("Created successfully! {:?}", &new_self);
+
         Ok(new_self)
     }
 
+    /// Opens the `MlsDisk` on the given disk, with the root encryption key.
     pub fn open(
         disk: D,
         root_key: Key,
@@ -274,11 +311,13 @@ impl<D: BlockSet + 'static> MlsDisk<D> {
         Ok(opened_self)
     }
 
+    /// Submit a new block I/O request and wait its completion (Synchronous).
     pub fn submit_bio_sync(&self, bio_req: BioReq) -> BioResp {
         bio_req.submit();
         self.inner.handle_bio_req(&bio_req)
     }
 
+    /// Check whether the arguments are valid for read/write operations.
     fn check_rw_args(&self, lba: Lba, buf_nblocks: usize) -> Result<()> {
         if lba + buf_nblocks > self.inner.user_data_disk.nblocks() {
             Err(Error::with_msg(
@@ -299,9 +338,12 @@ impl<D: BlockSet + 'static> MlsDisk<D> {
     }
 }
 
+/// Capacity of the user data blocks buffer.
 const DATA_BUF_CAP: usize = 1024;
 
 impl<D: BlockSet + 'static> DiskInner<D> {
+    /// Read a specified number of blocks at a logical block address on the device.
+    /// The block contents will be read into a single contiguous buffer.
     pub(crate) fn read(&self, lba: Lba, buf: BufMut) -> Result<()> {
         let nblocks = buf.nblocks();
 
@@ -320,6 +362,8 @@ impl<D: BlockSet + 'static> DiskInner<D> {
         res
     }
 
+    /// Read multiple blocks at a logical block address on the device.
+    /// The block contents will be read into several scattered buffers.
     pub(crate) fn readv<'a>(&self, lba: Lba, bufs: &'a mut [BufMut<'a>]) -> Result<()> {
         let res = self.read_multi_blocks(lba, bufs);
 
@@ -334,6 +378,7 @@ impl<D: BlockSet + 'static> DiskInner<D> {
 
     fn read_one_block(&self, lba: Lba, mut buf: BufMut) -> Result<()> {
         debug_assert_eq!(buf.nblocks(), 1);
+
         if self.data_buf.get(RecordKey { lba }, &mut buf).is_some() {
             return Ok(());
         }
@@ -375,6 +420,7 @@ impl<D: BlockSet + 'static> DiskInner<D> {
         }
 
         self.logical_block_table.get_range(&mut range_query_ctx)?;
+
         debug_assert!(range_query_ctx.is_completed());
 
         let mut res = range_query_ctx.into_results();
@@ -406,6 +452,8 @@ impl<D: BlockSet + 'static> DiskInner<D> {
         Ok(())
     }
 
+    /// Write a specified number of blocks at a logical block address on the device.
+    /// The block contents reside in a single contiguous buffer.
     pub(crate) fn write(&self, mut lba: Lba, buf: BufRef) -> Result<()> {
         for block_buf in buf.iter() {
             let buf_at_capacity = self.data_buf.put(RecordKey { lba }, block_buf);
@@ -418,6 +466,8 @@ impl<D: BlockSet + 'static> DiskInner<D> {
         Ok(())
     }
 
+    /// Write multiple blocks at a logical block address on the device.
+    /// The block contents reside in several scattered buffers.
     pub(crate) fn writev(&self, mut lba: Lba, bufs: &[BufRef]) -> Result<()> {
         for buf in bufs {
             self.write(lba, *buf)?;
@@ -428,6 +478,7 @@ impl<D: BlockSet + 'static> DiskInner<D> {
 
     fn flush_data_buf(&self) -> Result<()> {
         let records = self.write_blocks_from_data_buf()?;
+
         for (key, value) in records {
             self.logical_block_table.put(key, value)?;
         }
@@ -480,6 +531,7 @@ impl<D: BlockSet + 'static> DiskInner<D> {
         Ok(records)
     }
 
+    /// Sync all cached data in the device to the storage medium for durability.
     pub(crate) fn sync(&self) -> Result<()> {
         self.flush_data_buf()?;
         debug_assert!(self.data_buf.is_empty());
@@ -494,6 +546,8 @@ impl<D: BlockSet + 'static> DiskInner<D> {
         self.user_data_disk.flush()
     }
 
+    /// Handle one block I/O request. Mark the request completed when finished,
+    /// return any error that occurs.
     pub(crate) fn handle_bio_req(&self, req: &BioReq) -> BioResp {
         let res = match req.type_() {
             BioType::Read => self.do_read(req),
@@ -505,6 +559,7 @@ impl<D: BlockSet + 'static> DiskInner<D> {
         res
     }
 
+    /// Handle a read I/O request.
     fn do_read(&self, req: &BioReq) -> BioResp {
         debug_assert_eq!(req.type_(), BioType::Read);
 
@@ -526,6 +581,7 @@ impl<D: BlockSet + 'static> DiskInner<D> {
         self.readv(lba, &mut bufs)
     }
 
+    /// Handle a write I/O request.
     fn do_write(&self, req: &BioReq) -> BioResp {
         debug_assert_eq!(req.type_(), BioType::Write);
 
@@ -542,6 +598,7 @@ impl<D: BlockSet + 'static> DiskInner<D> {
         self.writev(lba, &bufs)
     }
 
+    /// Handle a sync I/O request.
     fn do_sync(&self, req: &BioReq) -> BioResp {
         debug_assert_eq!(req.type_(), BioType::Sync);
         self.sync()
@@ -563,6 +620,7 @@ impl<D: BlockSet + 'static> Debug for MlsDisk<D> {
     }
 }
 
+/// A wrapper for `[BufMut]` used in `readv()`.
 struct BufMutVec<'a> {
     bufs: &'a mut [BufMut<'a>],
     nblocks: usize,
@@ -596,6 +654,7 @@ impl<'a> BufMutVec<'a> {
     }
 }
 
+/// Listener factory for `TxLsmTree`.
 struct TxLsmTreeListenerFactory<D> {
     store: Arc<TxLogStore<D>>,
     alloc_table: Arc<AllocTable>,
@@ -624,6 +683,7 @@ impl<D: BlockSet + 'static> TxEventListenerFactory<RecordKey, RecordValue>
     }
 }
 
+/// Event listener for `TxLsmTree`.
 struct TxLsmTreeListener<D> {
     tx_type: TxType,
     block_alloc: Arc<BlockAlloc<D>>,
@@ -638,12 +698,14 @@ impl<D> TxLsmTreeListener<D> {
     }
 }
 
+/// Register callbacks for different TXs in `TxLsmTree`.
 impl<D: BlockSet + 'static> TxEventListener<RecordKey, RecordValue> for TxLsmTreeListener<D> {
     fn on_add_record(&self, record: &dyn AsKV<RecordKey, RecordValue>) -> Result<()> {
         match self.tx_type {
             TxType::Compaction {
                 to_level: LsmLevel::L0,
             } => self.block_alloc.alloc_block(record.value().hba),
+
             TxType::Compaction { .. } | TxType::Migration => Ok(()),
         }
     }
@@ -686,22 +748,29 @@ impl<D: BlockSet + 'static> TxEventListener<RecordKey, RecordValue> for TxLsmTre
     }
 }
 
+/// Key-Value record for `TxLsmTree`.
 pub(super) struct Record {
     key: RecordKey,
     value: RecordValue,
 }
 
+/// The key of a `Record`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Pod)]
 pub(super) struct RecordKey {
+    /// Logical block address of user data block.
     pub lba: Lba,
 }
 
+/// The value of a `Record`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(super) struct RecordValue {
+    /// Host block address of user data block.
     pub hba: Hba,
+    /// Encryption key of the data block.
     pub key: Key,
+    /// Encrypted MAC of the data block.
     pub mac: Mac,
 }
 
@@ -749,6 +818,7 @@ mod tests {
         let nblocks = 64 * 1024;
         let mem_disk = MemDisk::create(nblocks)?;
         let root_key = Key::random();
+
         let mlsdisk = MlsDisk::create(mem_disk.clone(), root_key, None)?;
         let num_rw = 1024;
 

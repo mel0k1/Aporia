@@ -8,6 +8,7 @@ use aster_systree::{
 use inherit_methods_macro::inherit_methods;
 use spin::Once;
 
+/// The `SysTree` node that represents the root node of the `ConfigFs`.
 #[derive(Debug)]
 pub(crate) struct ConfigRootNode {
     fields: BranchNodeFields<dyn SysObj, Self>,
@@ -15,6 +16,7 @@ pub(crate) struct ConfigRootNode {
 
 #[inherit_methods(from = "self.fields")]
 impl ConfigRootNode {
+    /// Returns the `ConfigRootNode` singleton.
     pub(super) fn singleton() -> &'static Arc<ConfigRootNode> {
         static SINGLETON: Once<Arc<ConfigRootNode>> = Once::new();
 
@@ -31,6 +33,7 @@ impl ConfigRootNode {
         })
     }
 
+    /// Adds a child node.
     pub(crate) fn add_child(&self, new_child: Arc<dyn SysObj>) -> Result<()>;
 }
 

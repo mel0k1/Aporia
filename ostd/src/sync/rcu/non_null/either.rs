@@ -59,6 +59,10 @@ const fn min(a: u32, b: u32) -> u32 {
     if a < b { a } else { b }
 }
 
+/// # Safety
+///
+/// The caller must ensure that removing the bits from the non-null pointer will result in another
+/// non-null pointer.
 unsafe fn remove_bits<T>(ptr: NonNull<T>, bits: usize) -> (usize, NonNull<T>) {
     use core::num::NonZeroUsize;
 

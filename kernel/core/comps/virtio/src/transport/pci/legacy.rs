@@ -32,6 +32,7 @@ const QUEUE_NOTIFY_OFFSET: usize = 0x10;
 const DEVICE_STATUS_OFFSET: usize = 0x12;
 #[expect(dead_code)]
 const ISR_STATUS_OFFSET: usize = 0x13;
+
 const CONFIG_MSIX_VECTOR_OFFSET: usize = 0x14;
 const QUEUE_MSIX_VECTOR_OFFSET: usize = 0x16;
 
@@ -101,6 +102,17 @@ impl VirtioPciLegacyTransport {
         })
     }
 
+    /// Calculate the aligned virtqueue size.
+    ///
+    /// According to the VirtIO spec v0.9.5:
+    ///
+    /// Each virtqueue occupies two or more physically-contiguous pages (defined, for
+    /// the purposes of this specification, as 4096 bytes), and consists of three parts:
+    /// +------------------+------------------------------------------------+-----------+
+    /// | Descriptor Table | Available Ring (padding to next 4096 boundary) | Used Ring |
+    /// +------------------+------------------------------------------------+-----------+
+    ///
+    /// More details can be found at <http://ozlabs.org/~rusty/virtio-spec/virtio-0.9.5.pdf>.
     pub(crate) fn calc_virtqueue_size_aligned(queue_size: usize) -> usize {
         let align_mask = Self::QUEUE_ALIGN_SIZE - 1;
 

@@ -1,3 +1,5 @@
+//! Unaccepted-memory management for Intel TDX guests.
+
 use core::{
     ops::Range,
     sync::atomic::{AtomicUsize, Ordering},
@@ -17,6 +19,7 @@ use crate::{
     },
 };
 
+/// Initializes the unaccepted-memory table from the EFI stub boot parameters.
 pub(crate) fn init(boot_params: &BootParams) {
     let efi_info = boot_params.efi_info;
     assert_eq!(
@@ -37,10 +40,12 @@ pub(crate) fn init(boot_params: &BootParams) {
         crate::mm::kspace::paddr_to_vaddr(table_addr as usize) as *const EfiUnacceptedMemory;
 
     crate::info!("Found unaccepted memory table at {:p}", table_ptr);
+
     let table: &'static EfiUnacceptedMemory = unsafe { &*table_ptr };
     UNACCEPTED_TABLE.call_once(|| table);
 }
 
+/// Returns the physical range occupied by the table storage.
 pub(crate) fn table_memory_range() -> Option<Range<Paddr>> {
     let table = UNACCEPTED_TABLE.get().copied()?;
     let base = core::ptr::from_ref(table).addr() - crate::mm::kspace::LINEAR_MAPPING_BASE_VADDR;
@@ -48,6 +53,12 @@ pub(crate) fn table_memory_range() -> Option<Range<Paddr>> {
     Some(base..base + size)
 }
 
+/// Accepts the BSP's slice of unaccepted memory, waits for all APs to finish,
+/// and publishes the accepted memory to the global frame allocator.
+///
+/// # Safety
+///
+/// This function must be called only once in the boot context of the BSP, after booting APs.
 pub(crate) unsafe fn accept_memory_on_bsp() {
     let Some(table) = UNACCEPTED_TABLE.get().copied() else {
         return;
@@ -66,6 +77,11 @@ pub(crate) unsafe fn accept_memory_on_bsp() {
     publish_accepted_memory(table);
 }
 
+/// Accepts the calling AP's disjoint slice of unaccepted memory and marks completion.
+///
+/// # Safety
+///
+/// This function must be called only once in the boot context of the AP.
 pub(crate) unsafe fn accept_memory_on_ap() {
     let Some(table) = UNACCEPTED_TABLE.get().copied() else {
         return;
@@ -79,6 +95,8 @@ pub(crate) unsafe fn accept_memory_on_ap() {
     FINISHED_CPU_COUNT.fetch_add(1, Ordering::Release);
 }
 
+/// Records early-allocated ranges and returns the unaccepted-memory table's coverage range.
+/// It may include memory that has already been accepted.
 pub(super) fn init_unaccepted_memory_state(
     early_allocated_ranges: &[Range<Paddr>; 2],
 ) -> Range<Paddr> {
@@ -91,6 +109,11 @@ pub(super) fn init_unaccepted_memory_state(
     coverage_range.start as Paddr..coverage_range.end as Paddr
 }
 
+/// Accepts memory that must be accessed before parallel early acceptance starts.
+///
+/// # Safety
+///
+/// This function must not be called concurrently with any other functions that accept pages.
 pub(super) unsafe fn accept_early_allocated_range(start: Paddr, size: usize) {
     let Some(table) = UNACCEPTED_TABLE.get().copied() else {
         return;
@@ -102,6 +125,7 @@ pub(super) unsafe fn accept_early_allocated_range(start: Paddr, size: usize) {
         .expect("failed to accept boot memory");
 }
 
+/// Publishes accepted memory regions to the global frame allocator.
 fn publish_accepted_memory(table: &EfiUnacceptedMemory) {
     let coverage_range = table.coverage_range();
     let coverage_range = coverage_range.start as Paddr..coverage_range.end as Paddr;
@@ -131,6 +155,7 @@ fn publish_accepted_memory(table: &EfiUnacceptedMemory) {
     }
 }
 
+/// Returns the GPA range assigned to one CPU within the table coverage.
 fn range_to_accept_on_cpu(
     table: &EfiUnacceptedMemory,
     index: usize,
@@ -148,6 +173,7 @@ fn range_to_accept_on_cpu(
     start..end
 }
 
+/// Uniformly partitions `total_units` across `num_cpus`, aligned to 8 units (1 bitmap byte).
 fn partition_units(total_units: u64, index: usize, num_cpus: usize) -> (u64, u64) {
     const UNITS_PER_BYTE: u64 = 8;
 

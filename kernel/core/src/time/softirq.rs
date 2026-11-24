@@ -14,6 +14,7 @@ pub(super) fn init() {
     });
 }
 
+/// Registers a function that will be executed during timer softirq.
 pub(super) fn register_callback(func: fn()) {
     loop {
         let callbacks = TIMER_SOFTIRQ_CALLBACKS.read();
@@ -25,6 +26,7 @@ pub(super) fn register_callback(func: fn()) {
                     break;
                 }
             }
+
             None => {
                 if callbacks
                     .compare_exchange(Some(Box::new(vec![func])))
@@ -34,6 +36,7 @@ pub(super) fn register_callback(func: fn()) {
                 }
             }
         }
+
         core::hint::spin_loop();
     }
 }

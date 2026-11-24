@@ -9,6 +9,10 @@ use crate::net::socket::vsock::transport::{conn_id::ConnId, space::vsock_space};
 
 static NEXT_GENERATION: AtomicU64 = AtomicU64::new(0);
 
+/// Returns a unique identifier for a timer event.
+///
+/// This value wraps around on `u64` overflow, so uniqueness is only guaranteed until the counter
+/// overflows. In practice, that should take long enough to be acceptable here.
 pub(super) fn next_timer_generation() -> u64 {
     NEXT_GENERATION.fetch_add(1, Ordering::Relaxed)
 }

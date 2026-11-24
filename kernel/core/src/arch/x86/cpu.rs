@@ -52,6 +52,12 @@ impl LinuxAbi for UserContext {
     }
 }
 
+/// Represents the context of a signal handler.
+///
+/// This contains the context saved before a signal handler is invoked; it will be restored by
+/// `sys_rt_sigreturn`.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.15.7/source/arch/x86/include/uapi/asm/sigcontext.h#L325>
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
 pub(crate) struct SigContext {
@@ -81,6 +87,7 @@ pub(crate) struct SigContext {
     trap_num: usize,
     old_mask: u64,
     page_fault_addr: usize,
+
     fpu_context_addr: Vaddr,
     reserved: [u64; 8],
 }
@@ -192,8 +199,15 @@ enum CpuidLeaf {
     ExtAddrSizes = 0x80000008,
 }
 
+/// A collection of CPU cores.
+///
+/// Note that hyperthreading can result in multiple logical processors within one core.
 static CPU_CORES: SpinLock<BTreeSet<u32>> = SpinLock::new(BTreeSet::new());
 
+/// CPU information to be shown in `/proc/cpuinfo`.
+///
+/// Different CPUs may have different information, such as the core ID. Therefore, [`Self::new`]
+/// should be called on every CPU.
 pub(crate) struct CpuInformation {
     processor: u32,
     vendor_id: String,
@@ -214,6 +228,7 @@ pub(crate) struct CpuInformation {
 }
 
 impl CpuInformation {
+    /// Constructs the information for the current CPU.
     pub(crate) fn new(guard: &DisabledPreemptGuard) -> Self {
         let mut result = Self {
             processor: guard.current_cpu().into(),
@@ -222,6 +237,7 @@ impl CpuInformation {
             model: 0,
             model_name: "unknown".to_owned(),
             stepping: None,
+
             cpu_khz: Some((tsc_freq() / 1000) as u32),
             cache_size: None,
             core_id: 0,
@@ -280,6 +296,7 @@ impl CpuInformation {
 
         let has_ext_model = match vendor {
             CpuVendor::Intel => base_family == 0x6 || base_family == 0xf,
+
             CpuVendor::Amd | CpuVendor::Unknown => base_family == 0xf,
         };
         let model = if has_ext_model {
@@ -294,6 +311,7 @@ impl CpuInformation {
 
         self.clflush_size = ((ebx >> 8) & 0xff) * 8;
         self.cache_alignment = self.clflush_size;
+
         self.apicid = ebx >> 24;
         self.core_id = self.apicid;
     }
@@ -396,6 +414,7 @@ impl CpuInformation {
         let l1_cache_size =
             if let Some(CpuidResult { ecx, edx, .. }) = cpuid(CpuidLeaf::ExtCacheL1 as u32, 0) {
                 let l1d_cache_size = ecx >> 24;
+
                 let l1i_cache_size = edx >> 24;
                 l1d_cache_size + l1i_cache_size
             } else {
@@ -405,7 +424,9 @@ impl CpuInformation {
         let (l2_tlb_size, l2_cache_size) =
             if let Some(CpuidResult { ebx, ecx, .. }) = cpuid(CpuidLeaf::ExtCacheL2L3 as u32, 0) {
                 let l2i_tlb_size = ebx & 0xfff;
+
                 let l2d_tlb_size = (ebx >> 16) & 0xfff;
+
                 let l2_cache_size = ecx >> 16;
                 (l2i_tlb_size + l2d_tlb_size, l2_cache_size)
             } else {
@@ -428,6 +449,7 @@ impl CpuInformation {
         };
 
         self.apicid = edx;
+
         self.core_id = self.apicid >> (eax & 0x1f);
 
         CPU_CORES.lock().insert(self.core_id);
@@ -736,6 +758,7 @@ impl CpuInformation {
         };
 
         self.address_sizes.0 = eax & 0xff;
+
         self.address_sizes.1 = (eax >> 8) & 0xff;
     }
 }

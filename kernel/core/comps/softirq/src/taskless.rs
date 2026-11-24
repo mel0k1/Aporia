@@ -13,10 +13,51 @@ use super::{
     softirq_id::{TASKLESS_SOFTIRQ_ID, TASKLESS_URGENT_SOFTIRQ_ID},
 };
 
+/// `Taskless` represents a _taskless_ job whose execution is deferred to a later time.
+///
+/// # Overview
+///
+/// `Taskless` provides one "bottom half" mechanism for interrupt handling.
+/// With `Taskless`, one can defer the execution of certain logic
+/// that would have been otherwise executed in interrupt handlers.
+/// `Taskless` makes interrupt handlers finish more quickly,
+/// thereby minimizing the periods of time when the interrupts are disabled.
+///
+/// `Taskless` executes the deferred jobs via the softirq mechanism,
+/// rather than doing them with `Task`s.
+/// As such, these deferred, taskless jobs can be executed within only a small delay,
+/// after the execution of an interrupt handler that schedules the taskless jobs.
+/// As the taskless jobs are not executed in the task context,
+/// they are not allowed to sleep.
+///
+/// An `Taskless` instance may be scheduled to run multiple times,
+/// but it is guaranteed that a single taskless job will not be run concurrently.
+/// Also, a taskless job will not be preempted by another.
+/// This makes the programming of a taskless job simpler.
+/// Different taskless jobs are allowed to run concurrently.
+/// Once a taskless has entered the execution state, it can be scheduled again.
+///
+/// # Example
+///
+/// Users can create a `Taskless` and schedule it at any place.
+/// ```rust
+/// #use ostd::softirq::Taskless;
+///
+/// #fn my_func() {}
+///
+/// let taskless = Taskless::new(my_func);
+/// // This taskless job will be executed in softirq context soon.
+/// taskless.schedule();
+///
+/// ```
 pub struct Taskless {
+    /// Whether the taskless job has been scheduled.
     is_scheduled: AtomicBool,
+    /// Whether the taskless job is running.
     is_running: AtomicBool,
+    /// The function that will be called when executing this taskless job.
     callback: Box<dyn Fn() + Send + Sync + 'static>,
+    /// Whether this `Taskless` is disabled.
     is_disabled: AtomicBool,
     link: LinkedListAtomicLink,
 }
@@ -31,6 +72,7 @@ cpu_local! {
 }
 
 impl Taskless {
+    /// Creates a new `Taskless` instance with its callback function.
     pub fn new<F>(callback: F) -> Arc<Self>
     where
         F: Fn() + Send + Sync + 'static,
@@ -44,20 +86,32 @@ impl Taskless {
         })
     }
 
+    /// Schedules this taskless job and it will be executed in later time.
+    ///
+    /// If the taskless job has been scheduled, this function will do nothing.
     pub fn schedule(self: &Arc<Self>) {
         do_schedule(self, &TASKLESS_LIST);
         SoftIrqLine::get(TASKLESS_SOFTIRQ_ID).raise();
     }
 
+    /// Schedules this taskless job and it will be executed urgently
+    /// in softirq context.
+    ///
+    /// If the taskless job has been scheduled, this function will do nothing.
     pub fn schedule_urgent(self: &Arc<Self>) {
         do_schedule(self, &TASKLESS_URGENT_LIST);
         SoftIrqLine::get(TASKLESS_URGENT_SOFTIRQ_ID).raise();
     }
 
+    /// Enables this `Taskless` so that it can be executed once it has been scheduled.
+    ///
+    /// A new `Taskless` is enabled by default.
     pub fn enable(&self) {
         self.is_disabled.store(false, Ordering::Release);
     }
 
+    /// Disables this `Taskless` so that it can not be scheduled. Note that if the `Taskless`
+    /// has been scheduled, it can still continue to complete this job.
     pub fn disable(&self) {
         self.is_disabled.store(true, Ordering::Release);
     }
@@ -91,6 +145,14 @@ pub(super) fn init() {
         .enable(|| taskless_softirq_handler(&TASKLESS_LIST, TASKLESS_SOFTIRQ_ID));
 }
 
+/// Executes the pending taskless jobs in the input `taskless_list`.
+///
+/// This function will retrieve each `Taskless` in the input `taskless_list`
+/// and leave it empty. If a `Taskless` is running then this function will
+/// ignore it and jump to the next `Taskless`, then put it to the input `taskless_list`.
+///
+/// If the `Taskless` is ready to be executed, it will be set to not scheduled
+/// and can be scheduled again.
 fn taskless_softirq_handler(
     taskless_list: &'static StaticCpuLocal<RefCell<LinkedList<TasklessAdapter>>>,
     softirq_id: u8,

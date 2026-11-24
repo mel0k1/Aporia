@@ -13,6 +13,12 @@ use crate::{
     prelude::*,
 };
 
+/// The kernel stack size of a task, specified in pages.
+///
+/// By default, we choose a rather large stack size.
+/// OSTD users can choose a smaller size by specifying
+/// the `OSTD_TASK_STACK_SIZE_IN_PAGES` environment variable
+/// at build time.
 const STACK_SIZE_IN_PAGES: u32 =
     if let Some(size_str) = option_env!("OSTD_TASK_STACK_SIZE_IN_PAGES") {
         match u32::from_str_radix(size_str, 10) {
@@ -26,6 +32,7 @@ const STACK_SIZE_IN_PAGES: u32 =
         DEFAULT_STACK_SIZE_IN_PAGES
     };
 
+/// The default kernel stack size of a task, specified in pages.
 const DEFAULT_STACK_SIZE_IN_PAGES: u32 = 128;
 
 const KERNEL_STACK_SIZE: usize = STACK_SIZE_IN_PAGES as usize * PAGE_SIZE;
@@ -43,6 +50,10 @@ struct KernelStackMeta;
 impl_frame_meta_for!(KernelStackMeta);
 
 impl KernelStack {
+    /// Generates a kernel stack with guard pages.
+    ///
+    /// 4 additional pages are allocated and regarded as guard pages, which
+    /// should not be accessed.
     pub(super) fn new_with_guard_page() -> Result<Self> {
         let pages = FrameAllocOptions::new()
             .zeroed(false)
@@ -67,6 +78,7 @@ impl KernelStack {
         })
     }
 
+    /// Flushes the TLB for the current CPU if necessary.
     pub(super) fn flush_tlb(&self, irq_guard: &DisabledLocalIrqGuard) {
         let cur_cpu = irq_guard.current_cpu();
         if !self.tlb_coherent.contains(cur_cpu, Ordering::Relaxed) {

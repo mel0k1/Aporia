@@ -8,26 +8,34 @@ use ostd::{
 
 use crate::time::Clock;
 
+/// A clock used to record the CPU time for processes and threads.
 pub(crate) struct CpuClock {
     time: SpinLock<Jiffies, LocalIrqDisabled>,
 }
 
+/// A profiling clock that contains a user CPU clock and a kernel CPU clock.
+///
+/// These two clocks record the CPU time in user mode and kernel mode respectively.
+/// Reading this clock directly returns the sum of both times.
 pub(crate) struct ProfClock {
     user_clock: Arc<CpuClock>,
     kernel_clock: Arc<CpuClock>,
 }
 
 impl CpuClock {
+    /// Creates a new `CpuClock`. The recorded time is initialized to 0.
     pub(crate) fn new() -> Arc<Self> {
         Arc::new(Self {
             time: SpinLock::new(Jiffies::new(0)),
         })
     }
 
+    /// Adds `jiffies` to the original recorded time to update the `CpuClock`.
     pub(crate) fn add_jiffies(&self, jiffies: u64) {
         self.time.lock().add(jiffies);
     }
 
+    /// Reads the current time of this clock in [`Jiffies`].
     pub(crate) fn read_jiffies(&self) -> Jiffies {
         *self.time.lock()
     }
@@ -40,6 +48,7 @@ impl Clock for CpuClock {
 }
 
 impl ProfClock {
+    /// Creates a new `ProfClock`. The recorded time is initialized to 0.
     pub(crate) fn new() -> Arc<Self> {
         Arc::new(Self {
             user_clock: CpuClock::new(),
@@ -47,10 +56,12 @@ impl ProfClock {
         })
     }
 
+    /// Returns a reference to the user CPU clock in this profiling clock.
     pub(crate) fn user_clock(&self) -> &Arc<CpuClock> {
         &self.user_clock
     }
 
+    /// Returns a reference to the kernel CPU clock in this profiling clock.
     pub(crate) fn kernel_clock(&self) -> &Arc<CpuClock> {
         &self.kernel_clock
     }

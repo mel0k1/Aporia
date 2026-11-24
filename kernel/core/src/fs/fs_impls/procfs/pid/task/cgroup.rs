@@ -15,6 +15,7 @@ use crate::{
     thread::Thread,
 };
 
+/// Represents the inode at `/proc/[pid]/task/[tid]/cgroup` (and also `/proc/[pid]/cgroup`).
 pub(super) struct CgroupFileOps(TidDirOps);
 
 impl CgroupFileOps {

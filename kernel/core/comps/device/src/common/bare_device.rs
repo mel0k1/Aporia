@@ -1,3 +1,5 @@
+//! Devices with neither bus nor class.
+
 use alloc::{
     sync::{Arc, Weak},
     vec::Vec,
@@ -6,15 +8,28 @@ use alloc::{
 use super::{AnyDevice, DevNode, DeviceBase, DeviceInternals, impl_device_node};
 use crate::common::{Result, Subsystem, SysStr, attr::TyErasedAttr};
 
+/// A device with neither bus nor class, such as a host bridge or a firmware root.
+///
+/// It has no attributes and is listed in no index; it exists to be the parent of other devices.
 pub struct BareDevice {
     base: DeviceBase,
 }
 
 impl BareDevice {
+    /// Creates a bare device at the top of `/sys/devices`.
+    ///
+    /// It is not registered until [`add_device`] is called.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `name` is not a valid `SysTree` node name.
+    ///
+    /// [`add_device`]: crate::add_device
     pub fn new_root(name: impl Into<SysStr>) -> Arc<Self> {
         Self::new(name, None)
     }
 
+    /// Same as [`Self::new_root`], except the device is created under `parent`.
     pub fn with_parent(name: impl Into<SysStr>, parent: Arc<dyn AnyDevice>) -> Arc<Self> {
         Self::new(name, Some(parent))
     }

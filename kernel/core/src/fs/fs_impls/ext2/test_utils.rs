@@ -1,3 +1,5 @@
+//! Test-only fixtures and helpers for ext2 kernel tests.
+
 use core::{
     fmt,
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -426,15 +428,21 @@ pub(super) fn write_simple_root_dir_block(disk: &Ext2MemoryDisk, root_bid: u32) 
 
 #[derive(Clone)]
 pub(super) enum BlockBitmapInit {
+    /// Marks only mandatory per-group metadata blocks.
     MetadataOnly,
+    /// Marks metadata plus explicit extra blocks in group 0.
     MetadataPlus(Vec<u32>),
+    /// Marks all group-0 blocks allocated for ENOSPC testing.
     Full,
 }
 
 #[derive(Clone)]
 pub(super) enum InodeBitmapInit {
+    /// Marks only reserved group-0 inodes `[1, first_ino)`.
     ReservedOnly,
+    /// Marks reserved group-0 inodes plus explicit extra group-0 inodes.
     ReservedPlus(Vec<u32>),
+    /// Marks all group-0 inodes allocated.
     Full,
 }
 
@@ -555,6 +563,8 @@ impl Ext2FixtureBuilder {
         Ok((raw_sb, sb, descs, disk, layout))
     }
 
+    /// Marks the per-group metadata bits that every group must have for
+    /// mount-time bitmap validation to pass.
     fn mark_group_metadata_bits(
         bitmap: &mut [u8],
         sb: &SuperBlock,

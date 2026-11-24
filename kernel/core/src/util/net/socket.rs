@@ -8,6 +8,8 @@ use crate::{
     },
 };
 
+/// Standard well-defined IP protocols.
+/// From <https://elixir.bootlin.com/linux/v6.0.9/source/include/uapi/linux/in.h>.
 #[expect(non_camel_case_types)]
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, TryFromInt)]
@@ -40,16 +42,25 @@ pub(crate) enum Protocol {
     IPPROTO_MPTCP = 262,
 }
 
+/// Socket types.
+/// From <https://elixir.bootlin.com/linux/v6.0.9/source/include/linux/net.h>.
 #[expect(non_camel_case_types)]
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, TryFromInt)]
 pub(crate) enum SockType {
+    /// Stream socket
     SOCK_STREAM = 1,
+    /// Datagram socket
     SOCK_DGRAM = 2,
+    /// Raw socket
     SOCK_RAW = 3,
+    /// Reliably-delivered message
     SOCK_RDM = 4,
+    /// Sequential packet socket
     SOCK_SEQPACKET = 5,
+    /// Datagram Congestion Control Protocol socket
     SOCK_DCCP = 6,
+    /// Linux specific way of getting packets at the dev level
     SOCK_PACKET = 10,
 }
 
@@ -67,12 +78,19 @@ bitflags! {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(crate) struct CUserMsgHdr {
+    /// Pointer to socket address structure
     pub msg_name: Vaddr,
+    /// Size of socket address
     pub msg_namelen: i32,
+    /// Scatter/Gather iov array
     pub msg_iov: Vaddr,
+    /// The # of elements in msg_iov
     pub msg_iovlen: usize,
+    /// Ancillary data
     pub msg_control: Vaddr,
+    /// Ancillary data buffer length
     pub msg_controllen: usize,
+    /// Flags on received message
     pub msg_flags: u32,
 }
 

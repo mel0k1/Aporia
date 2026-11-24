@@ -1,6 +1,9 @@
 use super::{RouteAddressFamily, RouteEntry, RouteLookupKey, RouteMetric};
 use crate::prelude::*;
 
+/// A table manages multiple routes.
+///
+/// Routes should be organized in a prefix tree and selected by longest-prefix match.
 pub(super) struct RouteTable<A: RouteAddressFamily> {
     entries: BTreeMap<(A::Cidr, RouteMetric), RouteEntry<A>>,
 }

@@ -19,14 +19,25 @@ use crate::{
     thread::{AsThread, Tid},
 };
 
+/// Exits the current POSIX thread.
+///
+/// # Panics
+///
+/// If the current thread is not a POSIX thread, this method will panic.
 pub(crate) fn do_exit(term_status: TermStatus, ctx: &Context, user_ctx: &mut UserContext) {
     exit_internal(term_status, false, ctx, user_ctx);
 }
 
+/// Kills all threads and exits the current POSIX process.
+///
+/// # Panics
+///
+/// If the current thread is not a POSIX thread, this method will panic.
 pub(crate) fn do_exit_group(term_status: TermStatus, ctx: &Context, user_ctx: &mut UserContext) {
     exit_internal(term_status, true, ctx, user_ctx);
 }
 
+/// Exits the current POSIX thread or process.
 fn exit_internal(
     term_status: TermStatus,
     is_exiting_group: bool,
@@ -96,6 +107,7 @@ fn exit_internal(
     }
 }
 
+/// Sends `SIGKILL` to all other threads in the current process.
 pub(in crate::process) fn sigkill_other_threads(current_task: &Task, task_set: &TaskSet) {
     debug_assert!(
         task_set
@@ -114,6 +126,7 @@ pub(in crate::process) fn sigkill_other_threads(current_task: &Task, task_set: &
     }
 }
 
+/// Writes zero to `clear_child_tid` and performs a futex wake.
 fn wake_clear_ctid(thread_local: &ThreadLocal) {
     let clear_ctid = thread_local.clear_child_tid().get();
 
@@ -130,6 +143,9 @@ fn wake_clear_ctid(thread_local: &ThreadLocal) {
     thread_local.clear_child_tid().set(0);
 }
 
+/// Walks the robust futex list, marking futex dead and waking waiters.
+///
+/// This corresponds to Linux's `exit_robust_list`. Errors are silently ignored.
 fn wake_robust_list(thread_local: &ThreadLocal, tid: Tid) {
     let list_head = match thread_local.robust_list().borrow_mut().take() {
         Some(robust_list_head) => robust_list_head,

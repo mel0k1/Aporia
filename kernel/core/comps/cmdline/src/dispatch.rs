@@ -1,3 +1,8 @@
+//! Kernel command-line parameter dispatch and init forwarding.
+//!
+//! Dispatches kernel command-line parameters to registered handlers and
+//! forwards unrecognized parameters to the init process.
+
 use alloc::{
     collections::BTreeMap,
     ffi::CString,
@@ -11,6 +16,7 @@ use spin::Once;
 
 use crate::early::is_early_param;
 
+/// The arguments passed to the init process, extracted from the kernel command line.
 #[derive(Debug, PartialEq)]
 pub struct InitprocArgs {
     argv: Vec<CString>,
@@ -18,10 +24,12 @@ pub struct InitprocArgs {
 }
 
 impl InitprocArgs {
+    /// Returns the argument vector (`argv`) of the init process.
     pub fn argv(&self) -> &[CString] {
         &self.argv
     }
 
+    /// Returns the environment vector (`envp`) of the init process.
     pub fn envp(&self) -> &[CString] {
         &self.envp
     }
@@ -121,6 +129,7 @@ fn dispatch_params(cmdline: &str) -> InitprocArgs {
             Some(pos) => (&arg[..pos], Some(&arg[pos + 1..])),
             None => (arg, None),
         };
+
         let normalized = key.replace('-', "_");
 
         if registry.contains_key(normalized.as_str()) {

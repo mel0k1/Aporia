@@ -91,6 +91,7 @@ fn do_sys_mremap(
                 "MREMAP_FIXED specified without also specifying MREMAP_MAYMOVE"
             ));
         }
+
         vmar.resize_mapping(old_addr, old_size, new_size, true)?;
         Ok(old_addr)
     }

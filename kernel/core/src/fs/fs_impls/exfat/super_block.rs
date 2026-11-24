@@ -3,23 +3,39 @@ use crate::prelude::*;
 
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug, Default)]
+
 pub(crate) struct ExfatSuperBlock {
+    /// num of sectors in volume
     pub num_sectors: u64,
+    /// num of clusters in volume
     pub num_clusters: u32,
+    /// sector size in bytes
     pub sector_size: u32,
+    /// cluster size in bytes
     pub cluster_size: u32,
     pub cluster_size_bits: u32,
+    /// cluster size in sectors
     pub sect_per_cluster: u32,
     pub sect_per_cluster_bits: u32,
+    /// FAT1 start sector
     pub fat1_start_sector: u64,
+    /// FAT2 start sector
     pub fat2_start_sector: u64,
+    /// data area start sector
     pub data_start_sector: u64,
+    /// number of FAT sectors
     pub num_fat_sectors: u32,
+    /// root dir cluster
     pub root_dir: u32,
+    /// number of dentries per cluster
     pub dentries_per_clu: u32,
+    /// volume flags
     pub vol_flags: u32,
+    /// volume flags to retain
     pub vol_flags_persistent: u32,
+    /// cluster search pointer
     pub cluster_search_ptr: u32,
+    /// number of used clusters
     pub used_clusters: u32,
 }
 
@@ -72,6 +88,7 @@ impl TryFrom<ExfatBootSector> for ExfatSuperBlock {
 pub(crate) const BOOTSEC_JUMP_BOOT_LEN: usize = 3;
 pub(crate) const BOOTSEC_FS_NAME_LEN: usize = 8;
 pub(crate) const BOOTSEC_OLDBPB_LEN: usize = 53;
+
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(super) struct ExfatBootSector {

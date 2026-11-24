@@ -19,10 +19,13 @@ mod test {
 
     const MAX_NUM_SOFTIRQS: usize = 256;
 
+    /// The number of callbacks that we've processed in the bottom half.
     static COUNTER_BH: AtomicUsize = AtomicUsize::new(0);
 
+    /// The number of callbacks that we've processed in the daemon thread.
     static COUNTER_DAEMON: AtomicUsize = AtomicUsize::new(0);
 
+    /// The number of callbacks that we've processed.
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
     #[ktest]

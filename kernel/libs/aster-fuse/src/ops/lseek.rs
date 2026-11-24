@@ -1,3 +1,8 @@
+//! `FUSE_LSEEK` computes a file offset for an open file handle.
+//!
+//! The request body contains [`LseekReq`] with the handle, base offset, and
+//! seek mode. The reply body contains [`LseekReply`].
+
 use ostd::mm::{Infallible, VmReader, VmWriter};
 
 use super::util::read_payload;
@@ -7,7 +12,9 @@ use crate::{FuseError, FuseFileHandle, FuseOpcode, FuseOperation, FuseResult, Re
 #[derive(Clone, Copy, Debug, Pod)]
 pub struct LseekReq {
     fh: FuseFileHandle,
+    /// Base offset for the seek operation.
     offset: i64,
+    /// Determines how `offset` is interpreted when computing the new file position.
     whence: u32,
     padding: u32,
 }
@@ -30,6 +37,7 @@ pub struct LseekReply {
 }
 
 impl LseekReply {
+    /// Returns the file offset computed by the server.
     pub fn offset(&self) -> i64 {
         self.offset
     }

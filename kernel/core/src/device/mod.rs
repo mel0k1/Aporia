@@ -17,13 +17,19 @@ use crate::{
     prelude::*,
 };
 
+/// The abstraction of a device.
 pub trait Device: Send + Sync + 'static {
+    /// Returns the device type.
     fn type_(&self) -> DeviceType;
 
+    /// Returns the device ID.
     fn id(&self) -> DeviceId;
 
+    /// Returns the metadata that specifies a device inode to be created in devtmpfs, if any.
     fn devtmpfs_meta(&self) -> Option<DevtmpfsNodeMeta>;
 
+    /// Opens the device, returning a file-like object that the userspace can interact with by
+    /// doing I/O.
     fn open(&self) -> Result<Box<dyn PerOpenFileOps>>;
 }
 
@@ -37,6 +43,7 @@ impl Debug for dyn Device {
     }
 }
 
+/// Device type
 #[derive(Debug)]
 pub enum DeviceType {
     Char,
@@ -49,9 +56,11 @@ pub(crate) fn init_in_first_kthread() {
     mem::init_in_first_kthread();
     misc::init_in_first_kthread();
     evdev::init_in_first_kthread();
+
     fb::init_in_first_kthread();
 }
 
+/// Initializes device state after mounting rootfs.
 pub(crate) fn init_in_first_process() -> Result<()> {
     tty::init_in_first_process()?;
     registry::init_in_first_process()?;

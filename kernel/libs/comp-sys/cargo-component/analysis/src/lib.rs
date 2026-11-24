@@ -1,3 +1,6 @@
+
+
+
 #![feature(rustc_private)]
 
 extern crate rustc_driver;
@@ -35,10 +38,15 @@ pub fn enter_analysis<'tcx>(tcx: TyCtxt<'tcx>) {
 }
 
 fn check_body_mir(mir_key: LocalDefId, tcx: TyCtxt<'_>) {
+
+
     let body = tcx.instance_mir(InstanceKind::Item(mir_key.to_def_id()));
 
     let mut checked_def_ids = HashSet::new();
     for basic_block_data in body.basic_blocks.iter() {
+
+
+
         for statement in &basic_block_data.statements {
             check_statement(statement, tcx, &mut checked_def_ids);
         }
@@ -48,12 +56,16 @@ fn check_body_mir(mir_key: LocalDefId, tcx: TyCtxt<'_>) {
         }
     }
 
+
+
+
     for local_decl in body.local_decls.iter() {
         check_local_decl(local_decl, tcx, &checked_def_ids)
     }
 }
 
 fn check_statement(statement: &Statement, tcx: TyCtxt<'_>, checked_def_ids: &mut HashSet<DefId>) {
+
     let mut def_paths = Vec::new();
     if let StatementKind::Assign(assignment) = &statement.kind {
         let rvalue = &assignment.1;
@@ -114,6 +126,7 @@ fn check_terminator(
 fn check_local_decl(local_decl: &LocalDecl<'_>, tcx: TyCtxt<'_>, checked_def_ids: &HashSet<DefId>) {
     let ty = local_decl.ty;
     let def_id = if let TyKind::FnDef(def_id, ..) = ty.kind() {
+
         *def_id
     } else {
         return;
@@ -148,6 +161,13 @@ fn check_inline_asm_operand(
     }
 }
 
+/// check whether visiting the operand in local crate is valid.
+/// if the operand is invalid, add the def_path to def_paths.
+/// The operand is invalid only when following four points are all satisfied.
+/// 1. The operand represents a static variable or a func(the first argument can not be self or its variants).
+/// 2. The operand is not defined in local crate.
+/// 3. The operand is marked with #[component_access_control::controlled]
+/// 4. Local crate is not in the whitelist to visit the operand.
 fn check_invalid_operand(
     operand: &Operand,
     tcx: TyCtxt<'_>,
@@ -167,11 +187,14 @@ fn check_constant(
     def_paths: &mut Vec<String>,
     checked_def_ids: &mut HashSet<DefId>,
 ) {
+
     let def_id = if let Some(def_id) = constant.check_static_ptr(tcx) {
+
         def_id
     } else {
         let ty = constant.const_.ty();
         if let TyKind::FnDef(def_id, ..) = ty.kind() {
+
             *def_id
         } else {
             return;
@@ -194,6 +217,8 @@ fn def_path_if_invalid_access(def_id: DefId, tcx: TyCtxt<'_>) -> Option<String> 
     def_path_if_not_in_whitelist(def_id, tcx)
 }
 
+/// check whether the def_id is in white list.
+/// If the def_id is **NOT** in white list, return the def_path
 fn def_path_if_not_in_whitelist(def_id: DefId, tcx: TyCtxt<'_>) -> Option<String> {
     let crate_symbol = tcx.crate_name(LOCAL_CRATE);
     let crate_name = crate_symbol.as_str();
@@ -209,6 +234,7 @@ fn def_path_if_not_in_whitelist(def_id: DefId, tcx: TyCtxt<'_>) -> Option<String
     }
 }
 
+/// if the def_id has attribute component_access_control::controlled, return true, else return false
 fn contains_controlled_attr(def_id: DefId, tcx: TyCtxt<'_>) -> bool {
     tcx.tool_attrs(
         def_id,
@@ -225,12 +251,15 @@ fn def_path_for_def_id(tcx: TyCtxt<'_>, def_id: DefId) -> String {
     }
 }
 
+/// def path for function, type, static variables and trait methods
 fn common_def_path_str(tcx: TyCtxt<'_>, def_id: DefId) -> String {
+
     let def_path = tcx.def_path(def_id);
     let crate_name = tcx.crate_name(def_path.krate);
     format!("{}{}", crate_name, def_path.to_string_no_crate_verbose())
 }
 
+/// def path for impl, if the impl is not for trait.
 fn def_path_str_for_impl(tcx: TyCtxt<'_>, def_id: DefId, impl_def_id: DefId) -> String {
     let item_name = tcx.item_name(def_id).to_string();
     let impl_ty = tcx.type_of(impl_def_id).skip_binder();

@@ -1,3 +1,5 @@
+//! The architecture support of context switch.
+
 use crate::task::TaskContextApi;
 
 core::arch::global_asm!(include_str!("switch.S"));
@@ -10,6 +12,7 @@ pub(crate) struct TaskContext {
 }
 
 impl TaskContext {
+    /// Creates a new `TaskContext`.
     pub(crate) const fn new() -> Self {
         TaskContext {
             regs: CalleeRegs::new(),
@@ -18,6 +21,7 @@ impl TaskContext {
     }
 }
 
+/// Callee-saved registers.
 #[repr(C)]
 #[derive(Clone, Debug)]
 struct CalleeRegs {
@@ -35,6 +39,7 @@ struct CalleeRegs {
 }
 
 impl CalleeRegs {
+    /// Creates a new `CalleeRegs`.
     pub(self) const fn new() -> Self {
         CalleeRegs {
             sp: 0,

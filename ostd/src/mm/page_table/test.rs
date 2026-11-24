@@ -18,6 +18,7 @@ mod test_utils {
     use super::*;
     use crate::mm::PrivilegedPageFlags;
 
+    /// Creates a new user page table that has mapped a virtual range to a physical frame.
     #[track_caller]
     pub(super) fn create_user_pt_mapped_at(virt_range: Range<Vaddr>) -> PageTable<UserPtConfig> {
         let page_table = PageTable::<UserPtConfig>::empty();
@@ -36,6 +37,7 @@ mod test_utils {
         page_table
     }
 
+    /// Maps a range of virtual addresses to physical addresses with specified properties.
     #[track_caller]
     pub(super) fn map_untracked(
         pt: &PageTable<TestPtConfig>,
@@ -53,6 +55,7 @@ mod test_utils {
         }
     }
 
+    /// Applies a protection operation to a range of virtual addresses within a PageTable.
     pub(super) fn protect_range<C: PageTableConfig>(
         page_table: &PageTable<C>,
         range: &Range<Vaddr>,
@@ -89,6 +92,7 @@ mod test_utils {
         type E = PageTableEntry;
         type C = VeryHugePagingConsts;
 
+        /// All mappings are untracked.
         type Item = TestPtItem;
         type ItemRef<'a> = TestPtItemRef<'a>;
 
@@ -116,6 +120,12 @@ mod test_utils {
     pub(super) type TestPtItem = (Paddr, PagingLevel, PageProperty);
     pub(super) struct TestPtItemRef<'a>(pub TestPtItem, pub PhantomData<&'a ()>);
 
+    /// A subset iterator for bitflags.
+    ///
+    /// A bitflag is a set of boolean options represented as bits in an integer.
+    ///
+    /// When given a bitflag `full`, it iterates over all subsets of `full` in
+    /// descending order of their integer values.
     pub(super) struct SubsetIter {
         full: u8,
         cur: u8,
@@ -123,6 +133,7 @@ mod test_utils {
     }
 
     impl SubsetIter {
+        /// Create a new subset iterator for the given full bitflag.
         pub(super) fn new(full: u8) -> Self {
             SubsetIter {
                 full,
@@ -161,6 +172,7 @@ mod test_utils {
         );
     }
 
+    /// Generates all possible page properties.
     pub(super) fn all_page_properties() -> impl Iterator<Item = PageProperty> {
         let flag_subsets =
             SubsetIter::new(PageFlags::all().bits()).map(|f| PageFlags::from_bits(f).unwrap());
@@ -363,6 +375,7 @@ mod page_properties {
     use super::{test_utils::all_page_properties, *};
     use crate::mm::PrivilegedPageFlags;
 
+    /// Helper function to map a single page with given properties and verify the properties.
     #[track_caller]
     fn check_map_with_property(prop: PageProperty) {
         let page_table = PageTable::<UserPtConfig>::empty();
@@ -471,6 +484,7 @@ mod overlapping_mappings {
                 .unwrap()
                 .map((prange1.start, 1, page_property));
         }
+
         unsafe {
             page_table
                 .cursor_mut(&preempt_guard, &vrange2)
@@ -819,6 +833,7 @@ mod mapping {
         assert_eq!(pt.page_walk(va_low).unwrap().0, expected_pa_before);
 
         let va_high = unmap_va_range.end;
+
         if va_high < virtual_range.end {
             let expected_pa_after = physical_addr + (va_high - virtual_range.start);
             assert_eq!(pt.page_walk(va_high).unwrap().0, expected_pa_after);
@@ -1063,6 +1078,7 @@ mod boot_pt {
         let mut boot_pt = BootPageTable::<PageTableEntry, PagingConsts>::new(root_paddr);
 
         let virt_addr = 0x2000;
+
         unsafe {
             boot_pt.protect_base_page(virt_addr, |prop| prop.flags = PageFlags::R);
         }

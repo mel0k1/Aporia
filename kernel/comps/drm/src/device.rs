@@ -19,6 +19,12 @@ use crate::{
 
 static DRM_DEVICE_INDEX_ALLOCATOR: Mutex<SparseIdAlloc> = Mutex::new(SparseIdAlloc::new(0, 63));
 
+/// Defines the top-level contract of a DRM device instance.
+///
+/// `DrmDevice` is the composition root for device-facing DRM behavior.
+/// It provides stable identity metadata and shared capability discovery,
+/// while higher-level DRM operations are expected to be layered as
+/// dedicated operation traits.
 pub trait DrmDevice: Debug + Send + Sync {
     fn name(&self) -> &str;
     fn desc(&self) -> &str;
@@ -27,26 +33,42 @@ pub trait DrmDevice: Debug + Send + Sync {
         self.features().contains(feature)
     }
 
+    /// Returns the GEM operations implemented by this device, if any.
     fn as_gem_ops(&self) -> Option<&dyn DrmGemOps>;
 
+    /// Returns the KMS operations implemented by this device, if any.
     fn as_kms_ops(&self) -> Option<&dyn DrmKmsOps>;
 }
 
 bitflags::bitflags! {
+    /// Capabilities provided by an Asterinas DRM device implementation.
+    ///
+    /// These flags are internal to the DRM subsystem. Their bit positions
+    /// are not part of the DRM userspace ABI.
     #[derive(Clone, Copy, Debug)]
     pub struct DrmFeatures: u32 {
+        /// Supports creation of a render device node.
         const RENDER           = 1 << 0;
+        /// Supports DRM synchronization objects.
         const SYNCOBJ          = 1 << 1;
+        /// Supports timeline synchronization objects.
         const SYNCOBJ_TIMELINE = 1 << 2;
+        /// Requires userspace-aware cursor hotspot handling.
         const CURSOR_HOTSPOT   = 1 << 3;
     }
 }
 
+/// A registered DRM device together with its DRM-core-managed state.
 #[derive(Debug)]
 pub(super) struct RegisteredDrmDevice {
     index: DrmDeviceIndex,
     device: Arc<dyn DrmDevice>,
+    /// The currently active master context.
+    ///
+    /// Primary files retain their own `Arc<DrmMaster>`, so clearing this
+    /// pointer on `DROP_MASTER` does not destroy the former master's context.
     master: Mutex<Option<Arc<DrmMaster>>>,
+    /// The device-wide fake mmap-offset space for GEM objects, if GEM is supported.
     mmap_offset_space: Option<Mutex<DrmGemMmapOffsetSpace>>,
 }
 
@@ -79,6 +101,11 @@ impl RegisteredDrmDevice {
             .is_some_and(|master| master.owner_client_id == client_id)
     }
 
+    /// Authenticates a magic value on behalf of the current master.
+    ///
+    /// The current-master check and authentication are performed while holding
+    /// the same master lock, so master ownership cannot change between
+    /// authorization and the operation.
     pub(super) fn authenticate_magic(&self, client_id: u64, magic: u32) -> Result<()> {
         let master = self.master.lock();
         let Some(current_master) = master
@@ -91,6 +118,7 @@ impl RegisteredDrmDevice {
         current_master.authenticate_magic(magic)
     }
 
+    /// Associates a newly opened primary file with a master context.
     pub(super) fn open_primary_client(&self, client_id: u64) -> Arc<DrmMaster> {
         let mut master = self.master.lock();
         match master.as_ref() {
@@ -103,6 +131,10 @@ impl RegisteredDrmDevice {
         }
     }
 
+    /// Makes a primary client the device's current DRM master.
+    ///
+    /// A previous master reacquires its retained context. A file becoming master
+    /// for the first time receives a new context.
     pub(super) fn set_master(
         &self,
         client_id: u64,
@@ -137,6 +169,10 @@ impl RegisteredDrmDevice {
         }
     }
 
+    /// Removes the device's current-master reference.
+    ///
+    /// The owning DRM file retains its own `Arc`, allowing it to reacquire the
+    /// same context later.
     pub(super) fn drop_master(&self, client_id: u64) -> Result<()> {
         let mut master = self.master.lock();
         if !master
@@ -179,6 +215,7 @@ impl RegisteredDrmDevice {
     }
 }
 
+/// An index shared by all minor nodes belonging to a DRM device.
 #[derive(Debug)]
 struct DrmDeviceIndex(u32);
 
@@ -202,6 +239,11 @@ impl Drop for DrmDeviceIndex {
     }
 }
 
+/// A master-owned context shared with associated primary files.
+///
+/// Exactly one DRM file owns this context, while other primary files may
+/// retain references to it for legacy magic authentication.
+/// The context may outlive its role as the device's current master.
 #[derive(Debug)]
 pub(super) struct DrmMaster {
     owner_client_id: u64,
@@ -219,6 +261,7 @@ impl DrmMaster {
         }
     }
 
+    /// Returns the client ID of the file that owns this master context.
     pub(super) fn owner_client_id(&self) -> u64 {
         self.owner_client_id
     }
@@ -256,6 +299,11 @@ impl DrmMaster {
     }
 }
 
+/// Magic IDs and their pending authentication targets.
+///
+/// Both fields are protected by the same lock so an ID cannot be reused while
+/// its authentication entry is still pending. Authentication consumes the
+/// table entry, but the ID remains allocated until the DRM file is released.
 #[derive(Debug)]
 struct DrmMagicState {
     allocator: SparseIdAlloc,

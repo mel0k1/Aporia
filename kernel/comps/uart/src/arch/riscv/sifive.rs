@@ -1,3 +1,5 @@
+//! SiFive UART console support.
+
 use alloc::string::ToString;
 
 use aster_util::{field_ptr, safe_ptr::SafePtr};
@@ -14,6 +16,7 @@ use crate::console::{Uart, UartConsole, UartMut};
 
 pub(super) const FDT_COMPATIBLES: [&str; 2] = ["sifive,uart0", "sifive,fu540-c000-uart"];
 
+/// IRQ line for UART serial.
 static IRQ_LINE: Once<MappedIrqLine> = Once::new();
 
 pub(super) fn init(fdt_node: FdtNode) {

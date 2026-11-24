@@ -1,3 +1,8 @@
+//! `FUSE_RMDIR` removes a directory entry from a parent directory node.
+//!
+//! The request body contains only the null-terminated child name. Successful
+//! replies do not carry a payload.
+
 use ostd::mm::{Infallible, VmReader, VmWriter};
 
 use super::util;

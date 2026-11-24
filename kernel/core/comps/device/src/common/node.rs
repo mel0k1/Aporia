@@ -1,3 +1,11 @@
+//! The `SysTree` node types the device model owns besides devices.
+//!
+//! This module contains the following types:
+//!
+//!  - plain directories (roots, index directories, glue directories, driver directories),
+//!  - symbolic links, and
+//!  - the crate-private view through which the registration sequence edits the tree.
+
 use alloc::{
     boxed::Box,
     collections::BTreeMap,
@@ -19,26 +27,51 @@ use spin::Once;
 
 use crate::common::{Error, Result, SysStr, attr::read_text};
 
+/// The crate-private editing view of a container.
+///
+/// Implemented by [`Dir`] and by [`DeviceBase`], never by a device struct itself,
+/// so that a `dyn AnyDevice` or a `dyn SysBranchNode` cannot reach these operations.
+///
+/// [`DeviceBase`]: crate::common::DeviceBase
 pub(crate) trait SysTreeEdit: Send + Sync {
+    /// Adds a child.
+    ///
+    /// Fails with [`Error::NameConflict`] if the name is taken.
     fn attach_child(&self, child: Arc<dyn SysObj>) -> Result<()>;
 
+    /// Removes and returns the child with the given name.
     fn detach_child(&self, name: &str) -> Result<Arc<dyn SysObj>>;
 
+    /// Returns whether the container has any children.
     fn has_children(&self) -> bool;
 
+    /// Returns the container's path in the tree.
     fn tree_path(&self) -> String;
 }
 
+/// Adds to `dir` a symlink named `name` whose target is the node at `target_path`,
+/// expressed relative to `dir`.
+///
+/// # Panics
+///
+/// Panics if `name` is not a valid `SysTree` node name.
 pub(crate) fn add_link(dir: &dyn SysTreeEdit, name: &str, target_path: &str) -> Result<()> {
     let target = aster_systree::relative_path(&dir.tree_path(), target_path);
     let link = SymlinkNode::new(SysStr::from(name.to_string()), target);
     dir.attach_child(link)
 }
 
+/// Removes the symlink named `name` from `dir`, ignoring its absence.
 pub(crate) fn remove_link(dir: &dyn SysTreeEdit, name: &str) {
     let _ = dir.detach_child(name);
 }
 
+/// Glue directories owned by one container, one per class of child.
+///
+/// A glue directory is created when the first device of a class is placed under the container
+/// and dropped when the last one leaves.
+/// Both transitions happen under one lock,
+/// so a device cannot be attached into a glue directory that is being dropped.
 pub(crate) struct GlueDirs {
     dirs: Mutex<BTreeMap<SysStr, Arc<Dir>>>,
 }
@@ -50,6 +83,12 @@ impl GlueDirs {
         }
     }
 
+    /// Attaches `child` into the glue directory `name` under `owner`,
+    /// creating the directory if needed, and returns that directory.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `name` is not a valid `SysTree` node name.
     pub(crate) fn attach_into(
         &self,
         name: &str,
@@ -71,6 +110,7 @@ impl GlueDirs {
         Ok(dir)
     }
 
+    /// Drops the glue directory `name` under `owner` if it is now empty.
     pub(crate) fn drop_if_empty(&self, name: &str, owner: &dyn SysTreeEdit) {
         let mut dirs = self.dirs.lock();
         if let Some(dir) = dirs.get(name)
@@ -82,22 +122,32 @@ impl GlueDirs {
     }
 }
 
+/// Callbacks behind the attributes of a [`Dir`],
+/// for directories that carry control files (a bus directory, a driver directory).
 pub(crate) trait DirAttrOps: Send + Sync + 'static {
+    /// Produces the text of an attribute.
     fn show(&self, _name: &str, _w: &mut dyn Write) -> Result<()> {
         Err(Error::NotFound)
     }
 
+    /// Consumes the text written to an attribute.
     fn store(&self, _name: &str, _value: &str) -> Result<()> {
         Err(Error::NotFound)
     }
 }
 
+/// A plain directory in the sysfs tree.
 pub(crate) struct Dir {
     fields: BranchNodeFields<dyn SysObj, Self>,
     ops: Once<Box<dyn DirAttrOps>>,
 }
 
 impl Dir {
+    /// Creates a directory with no attributes, not yet attached anywhere.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `name` is not a valid `SysTree` node name.
     pub(crate) fn new(name: SysStr) -> Arc<Self> {
         Arc::new_cyclic(|weak_self| Dir {
             fields: BranchNodeFields::new(name, SysAttrSet::new_empty(), weak_self.clone()),
@@ -105,6 +155,22 @@ impl Dir {
         })
     }
 
+    /// Creates a directory carrying control files, not yet attached anywhere.
+    ///
+    /// A directory's attributes are fixed when it is created,
+    /// so that its attribute set, like every other in the tree, never changes after it is built.
+    /// Only a device's attributes come and go,
+    /// and a device keeps them in an [`AttrTable`] rather than here.
+    ///
+    /// The callbacks that serve the files are installed separately, by [`Self::set_ops`],
+    /// because they usually belong to an object that needs this directory to exist first.
+    /// Until they are, reading or writing one of the files fails with `NotFound`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `name` is not a valid `SysTree` node name.
+    ///
+    /// [`AttrTable`]: crate::common::attr::AttrTable
     pub(crate) fn with_attrs(
         name: SysStr,
         attrs: &[(&'static str, SysPerms)],
@@ -120,6 +186,10 @@ impl Dir {
         }))
     }
 
+    /// Installs the callbacks behind this directory's control files.
+    ///
+    /// Has no effect after the first call.
+    /// Must happen before the directory is attached to the tree.
     pub(crate) fn set_ops(&self, ops: Box<dyn DirAttrOps>) {
         self.ops.call_once(|| ops);
     }
@@ -255,12 +325,18 @@ impl core::fmt::Debug for Dir {
     }
 }
 
+/// A symbolic link in the sysfs tree.
 #[derive(Debug)]
 pub(crate) struct SymlinkNode {
     fields: SymlinkNodeFields<Self>,
 }
 
 impl SymlinkNode {
+    /// Creates a symlink with a literal target.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `name` is not a valid `SysTree` node name.
     pub(crate) fn new(name: SysStr, target: String) -> Arc<Self> {
         Arc::new_cyclic(|weak_self| {
             let fields = SymlinkNodeFields::new(name, target, weak_self.clone());

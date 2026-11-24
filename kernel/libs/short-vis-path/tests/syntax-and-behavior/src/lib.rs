@@ -1,3 +1,5 @@
+
+
 #![feature(proc_macro_hygiene)]
 #![feature(custom_inner_attributes)]
 
@@ -24,6 +26,8 @@ pub mod test_override {
 }
 
 pub mod test_mod_rs_flavor {
+    /// The first tow module files are child.rs,
+    /// but this child differs by using `child/mod.rs` file style.
     pub mod child;
     type TestAccessibility = child::RecognizeModRs;
 }
@@ -38,6 +42,7 @@ pub mod test_multiple_arguments {
 }
 
 pub mod test_outer_attribute {
+
     #[short_vis_path::add(parent = crate::test_outer_attribute)]
     pub mod test {
         pub(in parent) type VisibleToParent = ();

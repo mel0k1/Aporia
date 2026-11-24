@@ -6,11 +6,13 @@ use crate::{
     process::Uid,
 };
 
+/// The user namespace.
 pub struct UserNamespace {
     stashed_dentry: StashedDentry,
 }
 
 impl UserNamespace {
+    /// Returns a reference to the singleton initial user namespace.
     pub fn get_init_singleton() -> &'static Arc<UserNamespace> {
         static INIT: Once<Arc<UserNamespace>> = Once::new();
 
@@ -21,10 +23,12 @@ impl UserNamespace {
         })
     }
 
+    /// Returns the owner UID of the user namespace.
     pub(crate) fn owner_uid(&self) -> Result<Uid> {
         Ok(Uid::new_root())
     }
 
+    /// Returns whether this namespace is the same as, or an ancestor of, the other namespace.
     pub(crate) fn is_same_or_ancestor_of(self: &Arc<Self>, other: &Arc<Self>) -> bool {
         Arc::ptr_eq(self, other)
     }

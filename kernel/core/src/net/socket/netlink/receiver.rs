@@ -12,6 +12,7 @@ pub(super) struct MessageQueue<Message> {
 }
 
 impl<Message> MessageQueue<Message> {
+    /// Creates a pair of a [`MessageQueue`] and a [`MessageReceiver`].
     pub(super) fn new_pair(pollee: Pollee) -> (Arc<Mutex<Self>>, MessageReceiver<Message>) {
         let queue = Arc::new(Mutex::new(Self {
             messages: VecDeque::new(),
@@ -25,20 +26,34 @@ impl<Message> MessageQueue<Message> {
         (queue, receiver)
     }
 
+    /// Returns whether the message queue is empty.
     pub(super) fn is_empty(&self) -> bool {
         self.messages.is_empty()
     }
 
+    /// Returns whether the message queue contains errors.
+    ///
+    /// Currently, the message queue contains errors only if the queue is full but the kernel still
+    /// wants to enqueue new messages.
     pub(super) fn has_errors(&self) -> bool {
         self.error.is_some()
     }
 }
 
+/// Messages that fit into the [`MessageQueue`].
 pub(crate) trait QueueableMessage {
+    /// Counts and returns the length of the message.
     fn total_len(&self) -> usize;
 }
 
 impl<Message: QueueableMessage> MessageQueue<Message> {
+    /// Dequeues a message if executing the closure returns `Ok((true, _))`.
+    ///
+    /// The closure will be executed with a reference to the message that is ready to be dequeued
+    /// and the length of the message.
+    ///
+    /// If the queue contains errors (see [`Self::has_errors`]), the error will be cleared and
+    /// returned. In this case, the closure will not be executed.
     pub(super) fn dequeue_if<F, R>(&mut self, f: F) -> Result<R>
     where
         F: FnOnce(&Message, usize) -> Result<(bool, R)>,
@@ -61,6 +76,7 @@ impl<Message: QueueableMessage> MessageQueue<Message> {
         Ok(result)
     }
 
+    /// Tries to enqueue a new message. Returns `false` if the buffer is full.
     #[must_use]
     pub(self) fn enqueue(&mut self, message: Message) -> bool {
         let length = message.total_len();

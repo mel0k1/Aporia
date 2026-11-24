@@ -1,5 +1,6 @@
 pub type Result<T, E = Error> = core::result::Result<T, E>;
 
+/// Errors of CPIO decoder.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Error {
     MagicError,

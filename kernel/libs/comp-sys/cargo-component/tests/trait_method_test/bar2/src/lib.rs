@@ -1,4 +1,4 @@
-use foo2::{Foo, FooTrait, ObjectSafeTrait};
+use foo2::{ObjectSafeTrait, Foo, FooTrait};
 
 pub fn method() {
     let foo_struct = Foo::associate_fn();

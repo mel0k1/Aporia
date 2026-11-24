@@ -16,6 +16,7 @@ pub enum Errno {
     Interrupted = 13,
 }
 
+/// Print error message to console
 #[macro_export]
 macro_rules! error_msg {
     () => {
@@ -28,6 +29,7 @@ macro_rules! error_msg {
     }};
 }
 
+/// Print warning message to console
 #[macro_export]
 macro_rules! warn_msg {
     () => {

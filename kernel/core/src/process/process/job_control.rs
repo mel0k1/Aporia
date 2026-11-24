@@ -3,6 +3,12 @@ use ostd::sync::{LocalIrqDisabled, WaitQueue};
 use super::{ProcessGroup, Session};
 use crate::prelude::*;
 
+/// The job control for terminals like TTY and pty.
+///
+/// This structure is used to support the shell job control, allowing users to
+/// run commands in the foreground or in the background. To achieve this, this
+/// structure internally manages the session and the foreground process group
+/// for a terminal.
 pub(crate) struct JobControl {
     inner: SpinLock<Inner, LocalIrqDisabled>,
     wait_queue: WaitQueue,
@@ -15,6 +21,7 @@ struct Inner {
 }
 
 impl JobControl {
+    /// Creates a new `JobControl`.
     pub(crate) fn new() -> Self {
         Self {
             inner: SpinLock::new(Inner::default()),
@@ -22,10 +29,22 @@ impl JobControl {
         }
     }
 
+    /// Returns the session whose controlling terminal is this terminal.
     pub(super) fn session(&self) -> Option<Arc<Session>> {
         self.inner.lock().session.upgrade()
     }
 
+    /// Sets the session whose controlling terminal is this terminal.
+    ///
+    /// # Errors
+    ///
+    /// This method will fail with `EPERM` if the terminal is already a controlling terminal of
+    /// another session.
+    ///
+    /// # Panics
+    ///
+    /// The caller needs to ensure that the foreground process group actually belongs to the
+    /// session. Otherwise, this method may panic.
     pub(super) fn set_session(
         &self,
         session: &Arc<Session>,
@@ -48,6 +67,14 @@ impl JobControl {
         Ok(())
     }
 
+    /// Unsets the session because its controlling terminal is no longer this terminal.
+    ///
+    /// This method will return the foreground process group before the session is cleared.
+    ///
+    /// # Panics
+    ///
+    /// The caller needs to ensure that the session was previously set. Otherwise this method may
+    /// panic.
     pub(super) fn unset_session(&self) -> Option<Arc<ProcessGroup>> {
         let mut inner = self.inner.lock();
 
@@ -59,10 +86,17 @@ impl JobControl {
         foreground
     }
 
+    /// Returns the foreground process group.
     pub(crate) fn foreground(&self) -> Option<Arc<ProcessGroup>> {
         self.inner.lock().foreground.upgrade()
     }
 
+    /// Sets the foreground process group.
+    ///
+    /// # Panics
+    ///
+    /// The caller needs to ensure that foreground process group actually belongs to the session
+    /// whose controlling terminal is this terminal. Otherwise this method may panic.
     pub(super) fn set_foreground(&self, process_group: &Arc<ProcessGroup>) {
         let mut inner = self.inner.lock();
 
@@ -75,6 +109,16 @@ impl JobControl {
         self.wait_queue.wake_all();
     }
 
+    /// Waits until the current process is in the foreground process group.
+    ///
+    /// Note that we only wait if the terminal is the our controlling terminal. If it isn't, the
+    /// method returns immediately without an error. This should match the Linux behavior where the
+    /// SIGTTIN won't be sent if we're reading the terminal that is the controlling terminal of
+    /// another session.
+    ///
+    /// # Panics
+    ///
+    /// This method will panic if it is not called in the process context.
     pub(crate) fn wait_until_in_foreground(&self) -> Result<()> {
         let current = current!();
 

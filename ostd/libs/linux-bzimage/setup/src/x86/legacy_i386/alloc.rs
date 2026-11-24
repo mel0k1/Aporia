@@ -11,6 +11,10 @@ struct State {
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
 
+/// # Safety
+///
+/// The caller must ensure that the E820 entries in the boot parameters correctly represent the
+/// current memory map.
 pub(super) unsafe fn init(boot_params: &'static linux_boot_params::BootParams) {
     let mut state = STATE.lock();
 
@@ -33,6 +37,7 @@ pub(super) unsafe fn init(boot_params: &'static linux_boot_params::BootParams) {
         core::ptr::from_ref(boot_params).addr(),
         size_of::<linux_boot_params::BootParams>(),
     );
+
     used[2] = range_from_start_and_len(
         boot_params.hdr.cmd_line_ptr as usize,
         boot_params.hdr.cmdline_size as usize,

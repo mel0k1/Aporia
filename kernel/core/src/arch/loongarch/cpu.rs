@@ -37,6 +37,12 @@ impl LinuxAbi for UserContext {
     }
 }
 
+/// Represents the context of a signal handler.
+///
+/// This contains the context saved before a signal handler is invoked; it will be restored by
+/// `sys_rt_sigreturn`.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.15.7/source/arch/loongarch/include/uapi/asm/sigcontext.h#L20>
 #[padding_struct]
 #[repr(C)]
 #[repr(align(16))]
@@ -146,11 +152,16 @@ impl TryFrom<&CpuExceptionInfo> for PageFaultInfo {
     }
 }
 
+/// CPU information to be shown in `/proc/cpuinfo`.
+///
+/// Different CPUs may have different information, such as the core ID. Therefore, [`Self::new`]
+/// should be called on every CPU.
 pub(crate) struct CpuInformation {
     processor: u32,
 }
 
 impl CpuInformation {
+    /// Constructs the information for the current CPU.
     pub(crate) fn new(guard: &DisabledPreemptGuard) -> Self {
         Self {
             processor: guard.current_cpu().into(),

@@ -1,3 +1,10 @@
+//! Transaction management.
+//!
+//! Transaction management APIs serve two sides:
+//!
+//! * The user side of TXs uses `Tx` to use, commit, or abort TXs.
+//! * The implementation side of TXs uses `TxProvider` to get notified
+//!   when TXs are created, committed, or aborted by register callbacks.
 mod current;
 
 use core::{
@@ -11,6 +18,7 @@ use crate::{
     prelude::*,
 };
 
+/// A transaction provider.
 #[expect(clippy::type_complexity)]
 pub(crate) struct TxProvider {
     id: u64,
@@ -23,6 +31,7 @@ pub(crate) struct TxProvider {
 }
 
 impl TxProvider {
+    /// Creates a new TX provider.
     pub(crate) fn new() -> Arc<Self> {
         static NEXT_ID: AtomicU64 = AtomicU64::new(0);
         Arc::new_cyclic(|weak_self| Self {
@@ -36,6 +45,7 @@ impl TxProvider {
         })
     }
 
+    /// Creates a new TX that is attached to this TX provider.
     pub(crate) fn new_tx(&self) -> CurrentTx<'_> {
         let mut tx_table = self.tx_table.lock();
         let tid = CurrentThread::id();
@@ -48,10 +58,20 @@ impl TxProvider {
         self.current()
     }
 
+    /// Get the current TX.
+    ///
+    /// # Panics
+    ///
+    /// The caller of this method must be within the closure passed to
+    /// `Tx::context`. Otherwise, the method would panic.
     pub(crate) fn current(&self) -> CurrentTx<'_> {
         CurrentTx::new(self)
     }
 
+    /// Register a per-TX data initializer.
+    ///
+    /// The registered initializer function will be called upon the creation of
+    /// a TX.
     pub(crate) fn register_data_initializer<T>(&self, f: Box<dyn Fn() -> T + Send + Sync>)
     where
         T: TxData,
@@ -73,6 +93,15 @@ impl TxProvider {
         init_fn()
     }
 
+    /// Register a callback for the pre-commit stage,
+    /// which is before the commit stage.
+    ///
+    /// Committing a TX triggers the pre-commit stage as well as the commit
+    /// stage of the TX.
+    /// On the pre-commit stage, the register callbacks will be called.
+    /// Pre-commit callbacks are allowed to fail (unlike commit callbacks).
+    /// If any pre-commit callbacks failed, the TX would be aborted and
+    /// the commit callbacks would not get called.
     pub(crate) fn register_precommit_handler<F>(&self, f: F)
     where
         F: Fn(CurrentTx<'_>) -> Result<()> + Send + Sync + 'static,
@@ -91,6 +120,12 @@ impl TxProvider {
         Ok(())
     }
 
+    /// Register a callback for the commit stage,
+    /// which is after the pre-commit stage.
+    ///
+    /// Committing a TX triggers first the pre-commit stage of the TX and then
+    /// the commit stage. The callbacks for the commit stage is not allowed
+    /// to fail.
     pub(crate) fn register_commit_handler<F>(&self, f: F)
     where
         F: Fn(CurrentTx<'_>) + Send + Sync + 'static,
@@ -108,6 +143,10 @@ impl TxProvider {
         }
     }
 
+    /// Register a callback for the abort stage.
+    ///
+    /// A TX enters the abort stage when the TX is aborted by the user
+    /// (via `Tx::abort`) or by a callback in the pre-commit stage.
     pub(crate) fn register_abort_handler<F>(&self, f: F)
     where
         F: Fn(CurrentTx<'_>) + Send + Sync + 'static,
@@ -126,6 +165,7 @@ impl TxProvider {
     }
 }
 
+/// A transaction.
 struct Tx {
     id: TxId,
     provider: Weak<TxProvider>,
@@ -147,14 +187,17 @@ impl Tx {
         }
     }
 
+    /// Returns the TX ID.
     fn id(&self) -> TxId {
         self.id
     }
 
+    /// Returns the status of the TX.
     fn status(&self) -> TxStatus {
         self.status
     }
 
+    /// Sets the status of the Tx.
     fn set_status(&mut self, status: TxStatus) {
         self.status = status;
     }
@@ -198,6 +241,7 @@ impl Drop for Tx {
     }
 }
 
+/// The status of a transaction.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TxStatus {
     Ongoing,
@@ -205,8 +249,14 @@ enum TxStatus {
     Aborted,
 }
 
+/// The ID of a transaction.
 pub(crate) type TxId = u64;
 
+/// Per-transaction data.
+///
+/// Using `TxProvider::register_data_initiailzer` to inject per-transaction data
+/// and using `CurrentTx::data_with` or `CurrentTx::data_mut_with` to access
+/// per-transaction data.
 pub(crate) trait TxData: Any + Send + Sync {}
 
 #[cfg(test)]
@@ -215,6 +265,19 @@ mod tests {
 
     use super::*;
 
+    /// `Db<T>` is a toy implementation of in-memory database for
+    /// a set of items of type `T`.
+    ///
+    /// The most interesting feature of `Db<T>` is the support
+    /// of transactions. All queries and insertions to the database must
+    /// be performed within transactions. These transactions ensure
+    /// the atomicity of insertions even in the presence of concurrent execution.
+    /// If transactions are aborted, their changes won't take effect.
+    ///
+    /// The main limitation of `Db<T>` is that it only supports
+    /// querying and inserting items, but not deleting.
+    /// The lack of support of deletions rules out the possibilities
+    /// of concurrent transactions conflicting with each other.
     pub struct Db<T> {
         all_items: Arc<Mutex<BTreeSet<T>>>,
         tx_provider: Arc<TxProvider>,
@@ -230,6 +293,7 @@ mod tests {
     where
         T: Ord + 'static,
     {
+        /// Creates an empty database.
         pub fn new() -> Self {
             let new_self = Self {
                 all_items: Arc::new(Mutex::new(BTreeSet::new())),
@@ -254,10 +318,16 @@ mod tests {
             new_self
         }
 
+        /// Creates a new DB transaction.
         pub fn new_tx(&self) -> CurrentTx<'_> {
             self.tx_provider.new_tx()
         }
 
+        /// Returns whether an item is contained.
+        ///
+        /// # Transaction
+        ///
+        /// This method must be called within the context of a transaction.
         pub fn contains(&self, item: &T) -> bool {
             let is_new_item = {
                 let current_tx = self.tx_provider.current();
@@ -271,6 +341,11 @@ mod tests {
             all_items.contains(item)
         }
 
+        /// Inserts a new item into the DB.
+        ///
+        /// # Transaction
+        ///
+        /// This method must be called within the context of a transaction.
         pub fn insert(&self, item: T) {
             let all_items = self.all_items.lock();
             if all_items.contains(&item) {
@@ -283,6 +358,11 @@ mod tests {
             });
         }
 
+        /// Collects all items of the DB.
+        ///
+        /// # Transaction
+        ///
+        /// This method must be called within the context of a transaction.
         pub fn collect(&self) -> Vec<T>
         where
             T: Copy,
@@ -294,6 +374,11 @@ mod tests {
             })
         }
 
+        /// Returns the number of items in the DB.
+        ///
+        /// # Transaction
+        ///
+        /// This method must be called within the context of a transaction.
         pub fn len(&self) -> usize {
             let all_items = self.all_items.lock();
             let current_tx = self.tx_provider.current();

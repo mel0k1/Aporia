@@ -1,3 +1,5 @@
+//! The i8042 mouse driver.
+
 use alloc::{
     string::{String, ToString},
     sync::Arc,
@@ -23,12 +25,16 @@ use crate::{
     ps2::{Command, CommandCtx},
 };
 
+/// IRQ line for i8042 mouse.
 static IRQ_LINE: Once<MappedIrqLine> = Once::new();
 
+/// Registered device instance for event submission.
 static REGISTERED_DEVICE: Once<RegisteredInputDevice> = Once::new();
 
+/// ISA interrupt number for i8042 mouse.
 const ISA_INTR_NUM: u8 = 12;
 
+/// Mouse packet state machine.
 static PACKET_STATE: SpinLock<PacketState, LocalIrqDisabled> = SpinLock::new(PacketState::new());
 
 pub(super) fn init(controller: &mut I8042Controller) -> Result<(), I8042ControllerError> {
@@ -235,6 +241,7 @@ impl MouseType {
     }
 }
 
+/// Mouse packet state machine for handling 3-byte or 4-byte PS/2 mouse packets.
 struct PacketState {
     packet: [u8; MouseType::PACKET_LEN_MAX],
     byte_index: usize,
@@ -261,6 +268,7 @@ impl PacketState {
         self.reset();
     }
 
+    /// Processes a mouse data byte and returns input events if a complete packet is ready.
     fn process_byte(&mut self, data: u8) -> Option<Vec<InputEvent>> {
         const PACKET_SYNC_MASK: u8 = 0x08;
 
@@ -279,6 +287,9 @@ impl PacketState {
         Some(events)
     }
 
+    /// Parses a complete PS/2 mouse packet and returns input events.
+    ///
+    /// Reference: <https://wiki.osdev.org/Mouse_Input#Format_of_First_3_Packet_Bytes>.
     fn parse_packet(&mut self) -> Vec<InputEvent> {
         const BUTTON_LEFT_MASK: u8 = 0x01;
         const BUTTON_RIGHT_MASK: u8 = 0x02;
@@ -371,11 +382,13 @@ impl PacketState {
         events
     }
 
+    /// Resets the packet state machine to wait for the next packet.
     fn reset(&mut self) {
         self.byte_index = 0;
     }
 }
 
+/// Extends a byte to a signed 32-bit integer using the sign bit from the status byte.
 fn add_sign_bit(byte: u8, sign_bit: bool) -> i32 {
     let mut byte = byte as u32;
     if sign_bit {

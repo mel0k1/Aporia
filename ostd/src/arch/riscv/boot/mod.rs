@@ -1,3 +1,5 @@
+//! The RISC-V boot module defines the entrypoints of Asterinas.
+
 pub(crate) mod smp;
 
 use core::arch::global_asm;
@@ -16,6 +18,7 @@ use crate::{
 
 global_asm!(include_str!("bsp_boot.S"));
 
+/// The Flattened Device Tree of the platform.
 pub static DEVICE_TREE: Once<Fdt> = Once::new();
 
 fn parse_bootloader_name() -> &'static str {
@@ -31,6 +34,7 @@ fn parse_initramfs() -> Option<&'static [u8]> {
 
     let base_va = paddr_to_vaddr(start);
     let length = end - start;
+
     Some(unsafe { core::slice::from_raw_parts(base_va as *const u8, length) })
 }
 
@@ -120,6 +124,14 @@ fn parse_initramfs_range() -> Option<(usize, usize)> {
 
 static mut BOOTSTRAP_HART_ID: u32 = u32::MAX;
 
+/// The entry point of the Rust code portion of Asterinas.
+///
+/// `BOOTSTRAP_HART_ID` is initialized to be `hart_id` and accessible after calling this.
+///
+/// # Safety
+///
+/// - This function must be called only once at a proper timing in the BSP's boot assembly code.
+/// - The caller must follow C calling conventions and put the right arguments in registers.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn riscv_boot(hart_id: usize, device_tree_paddr: usize) -> ! {
     early_println!("Enter riscv_boot");
@@ -127,6 +139,7 @@ unsafe extern "C" fn riscv_boot(hart_id: usize, device_tree_paddr: usize) -> ! {
     unsafe { BOOTSTRAP_HART_ID = hart_id as u32 };
 
     let device_tree_ptr = paddr_to_vaddr(device_tree_paddr) as *const u8;
+
     let fdt = unsafe { Fdt::from_ptr(device_tree_ptr).unwrap() };
     DEVICE_TREE.call_once(|| fdt);
 

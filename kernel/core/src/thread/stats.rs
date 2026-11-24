@@ -3,6 +3,7 @@ use spin::Once;
 
 pub(super) static CONTEXT_SWITCH_COUNTER: Once<PerCpuCounter> = Once::new();
 
+/// Counts the number of context switches ever happened across all CPUs.
 pub(crate) fn collect_context_switch_count() -> usize {
     CONTEXT_SWITCH_COUNTER.get().unwrap().sum_all_cpus()
 }

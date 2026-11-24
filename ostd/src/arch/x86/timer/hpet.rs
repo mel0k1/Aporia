@@ -46,6 +46,9 @@ struct Hpet {
 }
 
 impl Hpet {
+    /// # Safety
+    ///
+    /// The caller must ensure that the address is valid and points to the HPET MMIO region.
     unsafe fn new(base_address: NonNull<u8>) -> Hpet {
         let (
             information_register,
@@ -84,6 +87,7 @@ impl Hpet {
         }
 
         let irq = IrqLine::alloc().unwrap();
+
         let irq = IRQ_CHIP.get().unwrap().map_isa_pin_to(irq, 0).unwrap();
 
         Hpet {
@@ -121,6 +125,7 @@ impl Hpet {
     }
 }
 
+/// HPET init, need to init IOAPIC before init this function
 #[expect(dead_code)]
 pub(super) fn init() -> Result<(), AcpiError> {
     let tables = get_acpi_tables().unwrap();
@@ -129,6 +134,7 @@ pub(super) fn init() -> Result<(), AcpiError> {
     assert_ne!(hpet_info.base_address, 0, "HPET address should not be zero");
 
     let base = NonNull::new(paddr_to_vaddr(hpet_info.base_address) as *mut u8).unwrap();
+
     let hpet = unsafe { Hpet::new(base) };
     HPET_INSTANCE.call_once(|| hpet);
 

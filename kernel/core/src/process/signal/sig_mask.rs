@@ -1,3 +1,9 @@
+//! Signal sets and atomic masks.
+//!
+//! A signal set is a bit-set of signals. A signal mask is a set of signals
+//! that are blocked from delivery to a thread. An atomic signal mask
+//! implementation is provided for shared access to signal masks.
+
 use core::{
     fmt::LowerHex,
     ops,
@@ -9,8 +15,16 @@ use atomic_integer_wrapper::define_atomic_version_of_integer_like_type;
 use super::{constants::MIN_STD_SIG_NUM, sig_num::SigNum};
 use crate::prelude::*;
 
+/// A signal mask.
+///
+/// This is an alias to the [`SigSet`]. All the signal in the set are blocked
+/// from the delivery to a thread.
 pub(crate) type SigMask = SigSet;
 
+/// A bit-set of signals.
+///
+/// Because that all the signal numbers are in the range of 1 to 64, casting
+/// a signal set from `u64` to `SigSet` will always succeed.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct SigSet {
@@ -151,6 +165,12 @@ impl SigSet {
     }
 }
 
+/// An atomic signal mask.
+///
+/// This is an alias to the [`AtomicSigSet`]. All the signal in the set are
+/// blocked from the delivery to a thread.
+///
+/// [`Relaxed`]: core::sync::atomic::Ordering::Relaxed
 pub(crate) type AtomicSigMask = AtomicSigSet;
 
 define_atomic_version_of_integer_like_type!(SigSet, {

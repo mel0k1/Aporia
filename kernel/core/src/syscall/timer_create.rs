@@ -48,6 +48,7 @@ pub(super) fn sys_timer_create(
         let signo = sig_event.sigev_signo;
         match sigev_notify {
             SigNotify::SIGEV_NONE => None,
+
             SigNotify::SIGEV_SIGNAL | SigNotify::SIGEV_THREAD => {
                 let signum = u8::try_from(signo)
                     .ok()
@@ -59,6 +60,7 @@ pub(super) fn sys_timer_create(
                     ptr: Some(sig_event.sigev_value.read_ptr()),
                 })
             }
+
             SigNotify::SIGEV_THREAD_ID => {
                 let tid = sig_event.sigev_un.read_tid() as u32;
                 let thread = pid_table::pid_table_mut()
@@ -114,6 +116,9 @@ pub(super) fn sys_timer_delete(timer_id: timer_t, ctx: &Context) -> Result<Sysca
     Ok(SyscallReturn::Return(0))
 }
 
+/// Creates a timer associated with the specified fixed or dynamic clock ID.
+///
+/// This timer will invoke the given callback function (`func`) when it expires.
 fn create_timer<F: TimerFn>(clockid: clockid_t, func: F, ctx: &Context) -> Result<Arc<Timer<F>>> {
     if clockid >= 0 {
         return create_timer_for_clock(ClockId::try_from(clockid)?, func, ctx);
@@ -145,6 +150,9 @@ fn create_timer<F: TimerFn>(clockid: clockid_t, func: F, ctx: &Context) -> Resul
     Ok(timer)
 }
 
+/// Creates a timer associated with the specified clock ID.
+///
+/// This timer will invoke the given callback function (`func`) when it expires.
 pub(crate) fn create_timer_for_clock<F: TimerFn>(
     clock_id: ClockId,
     func: F,
@@ -162,6 +170,7 @@ pub(crate) fn create_timer_for_clock<F: TimerFn>(
     Ok(timer)
 }
 
+/// A function that delivers a signal via a [`WorkItem`].
 struct SignalFn {
     work_item: Once<Arc<WorkItem>>,
 }
@@ -177,6 +186,7 @@ impl TimerFn for SignalFn {
     }
 }
 
+/// Metadata to construct a [`TimerSignal`] and a [`WorkItem`] to deliver it.
 struct SignalMeta {
     target: SignalTarget,
     num: SigNum,

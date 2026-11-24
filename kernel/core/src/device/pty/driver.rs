@@ -17,6 +17,11 @@ use crate::{
 
 const BUFFER_CAPACITY: usize = 8192;
 
+/// A pseudoterminal driver.
+///
+/// This is contained in the pty slave, but it maintains the output buffer and the pollee of the
+/// master. The pollee of the slave is part of the [`Tty`] structure (see the definition of
+/// [`PtySlave`]).
 pub(crate) struct PtyDriver {
     output: SpinLock<RingBuffer<u8>>,
     pollee: Pollee,
@@ -25,6 +30,7 @@ pub(crate) struct PtyDriver {
     packet_ctrl: PacketCtrl,
 }
 
+/// A pseudoterminal slave.
 pub(crate) type PtySlave = Tty<PtyDriver>;
 
 impl PtyDriver {

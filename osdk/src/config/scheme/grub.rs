@@ -1,11 +1,14 @@
-use std::path::PathBuf;
-
 use clap::ValueEnum;
+
+use std::path::PathBuf;
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct GrubScheme {
+    /// The path of `grub_mkrecue`. Only needed if `boot.method` is `grub`
     pub grub_mkrescue: Option<PathBuf>,
+    /// The boot protocol specified in the GRUB configuration
     pub boot_protocol: Option<BootProtocol>,
+    /// Whether to display the GRUB menu, defaults to `false`
     #[serde(default)]
     pub display_grub_menu: bool,
 }

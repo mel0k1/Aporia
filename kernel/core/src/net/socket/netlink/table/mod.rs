@@ -19,6 +19,7 @@ mod multicast;
 
 static NETLINK_SOCKET_TABLE: Once<NetlinkSocketTable> = Once::new();
 
+/// All bound netlink sockets.
 struct NetlinkSocketTable {
     route: RwMutex<ProtocolSocketTable<RtnlMessage>>,
     uevent: RwMutex<ProtocolSocketTable<UeventMessage>>,
@@ -83,12 +84,17 @@ impl SupportedNetlinkProtocol for NetlinkUeventProtocol {
     }
 }
 
+/// Bound socket table of a single netlink protocol.
+///
+/// Each table can have bound sockets for unicast
+/// and at most 32 groups for multicast.
 pub(crate) struct ProtocolSocketTable<Message> {
     unicast_sockets: BTreeMap<PortNum, MessageReceiver<Message>>,
     multicast_groups: Box<[MulticastGroup]>,
 }
 
 impl<Message: 'static> ProtocolSocketTable<Message> {
+    /// Creates a new table.
     fn new() -> Self {
         let multicast_groups = (0u32..MAX_GROUPS).map(|_| MulticastGroup::new()).collect();
         Self {
@@ -97,6 +103,17 @@ impl<Message: 'static> ProtocolSocketTable<Message> {
         }
     }
 
+    /// Binds a socket to the table.
+    /// Returns the bound handle.
+    ///
+    /// The socket will be bound to a port specified by `addr.port()`.
+    /// If `addr.port()` is zero, the kernel will assign a port,
+    /// typically corresponding to the process ID of the current process.
+    /// If the assigned port is already in use,
+    /// this function will try to allocate a random unused port.
+    ///
+    /// Additionally, this socket can join one or more multicast groups,
+    /// as specified in `addr.groups()`.
     fn bind(
         &mut self,
         socket_table: &'static RwMutex<ProtocolSocketTable<Message>>,
@@ -161,6 +178,10 @@ impl<Message: 'static> ProtocolSocketTable<Message> {
     }
 }
 
+/// A bound netlink socket address.
+///
+/// When dropping a `BoundHandle`,
+/// the port will be automatically released.
 pub(crate) struct BoundHandle<Message: 'static> {
     socket_table: &'static RwMutex<ProtocolSocketTable<Message>>,
     port: PortNum,
@@ -246,36 +267,57 @@ pub(super) fn init() {
     NETLINK_SOCKET_TABLE.call_once(NetlinkSocketTable::new);
 }
 
+/// Returns whether the `protocol` is valid.
 pub(crate) fn is_valid_protocol(protocol: NetlinkProtocolId) -> bool {
     protocol < MAX_ALLOWED_PROTOCOL_ID
 }
 
+/// Netlink protocols that are assigned for specific usage.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.0.9/source/include/uapi/linux/netlink.h#L9>.
 #[expect(non_camel_case_types)]
 #[expect(clippy::upper_case_acronyms)]
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, TryFromInt)]
 pub(crate) enum StandardNetlinkProtocol {
+    /// Routing/device hook
     ROUTE = 0,
+    /// Unused number
     UNUSED = 1,
+    /// Reserved for user mode socket protocols
     USERSOCK = 2,
+    /// Unused number, formerly ip_queue
     FIREWALL = 3,
+    /// Socket monitoring
     SOCK_DIAG = 4,
+    /// Netfilter/iptables ULOG
     NFLOG = 5,
+    /// IPsec
     XFRM = 6,
+    /// SELinux event notifications
     SELINUX = 7,
+    /// Open-iSCSI
     ISCSI = 8,
+    /// Auditing
     AUDIT = 9,
     FIB_LOOKUP = 10,
     CONNECTOR = 11,
+    /// Netfilter subsystem
     NETFILTER = 12,
     IP6_FW = 13,
+    /// DECnet routing messages
     DNRTMSG = 14,
+    /// Kernel messages to userspace
     KOBJECT_UEVENT = 15,
     GENERIC = 16,
+    /// Leave room for NETLINK_DM (DM Events)
+    /// SCSI Transports
     SCSITRANSPORT = 18,
     ECRYPTFS = 19,
     RDMA = 20,
+    /// Crypto layer
     CRYPTO = 21,
+    /// SMC monitoring
     SMC = 22,
 }
 

@@ -6,22 +6,39 @@ use ostd::sync::LocalIrqDisabled;
 use super::{Events, EventsFilter, Observer};
 use crate::prelude::*;
 
+/// A subject that notifies interesting events to registered observers.
+///
+/// This type does not have any inner locks. Therefore, users need to maintain an outer lock to
+/// obtain a mutable reference. Consequently, observers can break the atomic mode as long as the
+/// outer lock also permits it.
 pub(crate) struct Subject<E: Events>(BTreeSet<KeyableWeak<dyn Observer<E>>>);
 
 #[expect(dead_code)]
 impl<E: Events> Subject<E> {
+    /// Creates an empty subject.
     pub(crate) const fn new() -> Self {
         Self(BTreeSet::new())
     }
 
+    /// Registers an observer.
+    ///
+    /// A registered observer will get notified through its `on_events` method.
     pub(crate) fn register_observer(&mut self, observer: Weak<dyn Observer<E>>) {
         self.0.insert(KeyableWeak::from(observer));
     }
 
+    /// Unregisters an observer.
+    ///
+    /// If such an observer is found, then the registered observer will be
+    /// removed from the set and this method will return `true`. Otherwise,
+    /// a `false` will be returned.
     pub(crate) fn unregister_observer(&mut self, observer: &Weak<dyn Observer<E>>) -> bool {
         self.0.remove(&KeyableWeak::from(observer.clone()))
     }
 
+    /// Notifies events to all registered observers.
+    ///
+    /// It will remove the observers which have been freed.
     pub(crate) fn notify_observers(&mut self, events: &E) {
         self.0.retain(|observer| {
             if let Some(observer) = observer.upgrade() {
@@ -40,12 +57,20 @@ impl<E: Events> Default for Subject<E> {
     }
 }
 
+/// A synchronized subject that notifies interesting events to registered observers.
+///
+/// This type can be used via an immutable reference across threads. To enable this, the type
+/// maintains registered observers in a spin lock. As a result, when called on events, all
+/// registered observers should not break atomic mode. See also [`Subject`] if the condition may be
+/// violated.
 pub(crate) struct SyncSubject<E: Events, F: EventsFilter<E> = ()> {
     observers: SpinLock<BTreeMap<KeyableWeak<dyn Observer<E>>, F>, LocalIrqDisabled>,
+
     num_observers: AtomicUsize,
 }
 
 impl<E: Events, F: EventsFilter<E>> SyncSubject<E, F> {
+    /// Creates an empty subject.
     pub(crate) const fn new() -> Self {
         Self {
             observers: SpinLock::new(BTreeMap::new()),
@@ -53,6 +78,13 @@ impl<E: Events, F: EventsFilter<E>> SyncSubject<E, F> {
         }
     }
 
+    /// Registers an observer.
+    ///
+    /// A registered observer will get notified through its `on_events` method.
+    /// If events `filter` is provided, only filtered events will notify the observer.
+    ///
+    /// If the given observer has already been registered, then its registered events
+    /// filter will be updated.
     pub(crate) fn register_observer(&self, observer: Weak<dyn Observer<E>>, filter: F) {
         let mut observers = self.observers.lock();
         let is_new = {
@@ -64,6 +96,11 @@ impl<E: Events, F: EventsFilter<E>> SyncSubject<E, F> {
         }
     }
 
+    /// Unregisters an observer.
+    ///
+    /// If such an observer is found, then the registered observer will be
+    /// removed from the subject and returned as the return value. Otherwise,
+    /// a `None` will be returned.
     pub(crate) fn unregister_observer(
         &self,
         observer: &Weak<dyn Observer<E>>,
@@ -79,6 +116,9 @@ impl<E: Events, F: EventsFilter<E>> SyncSubject<E, F> {
         observer
     }
 
+    /// Notifies events to all registered observers.
+    ///
+    /// It will remove the observers which have been freed.
     pub(crate) fn notify_observers(&self, events: &E) {
         if self.num_observers.fetch_add(0, Ordering::Release) == 0 {
             return;

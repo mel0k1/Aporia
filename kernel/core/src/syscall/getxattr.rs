@@ -118,6 +118,13 @@ fn getxattr(
     path.get_xattr(xattr_name, &mut value_writer)
 }
 
+/// Converts a file-capability xattr under the currently supported identity
+/// user-namespace mapping.
+///
+/// FIXME: Apply filesystem-user-namespace and ID-mapped-mount UID mappings when
+/// those features are supported.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v7.1/source/security/commoncap.c#L420>.
 fn convert_file_cap(raw_value: &mut [u8]) -> Result<usize> {
     let (revision, flags) = FileCapabilities::parse_header(raw_value)?;
 

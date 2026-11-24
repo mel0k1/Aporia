@@ -26,6 +26,12 @@ use crate::{
 
 type Ino = u64;
 
+/// A trait that abstracts an inode type backed by a `SysTree` node,
+/// e.g., a `SysFs` inode and a `CgroupFs` inode.
+///
+/// The struct implementing this trait will have a default implementation for
+/// the [`Inode`] trait. Users only need to additionally implement the
+/// [`Inode::fs`] method.
 #[expect(dead_code)]
 pub(in crate::fs) trait SysTreeInodeTy: Send + Sync + 'static {
     fn new_arc(
@@ -74,6 +80,7 @@ pub(in crate::fs) trait SysTreeInodeTy: Send + Sync + 'static {
             last_modify_at: now,
             last_meta_change_at: now,
             type_,
+
             mode: mkmod!(a=),
             nr_hard_links: 1,
             uid,
@@ -195,6 +202,7 @@ pub(in crate::fs) trait SysTreeInodeTy: Send + Sync + 'static {
 
             let parent_node_arc: Arc<dyn SysNode> = match &self.node_kind() {
                 SysTreeNodeKind::Branch(branch_arc) => branch_arc.clone(),
+
                 _ => {
                     return Err(errno!(
                         EIO,
@@ -221,6 +229,7 @@ pub(in crate::fs) trait SysTreeInodeTy: Send + Sync + 'static {
 
         let leaf_node_arc: Arc<dyn SysNode> = match &self.node_kind() {
             SysTreeNodeKind::Leaf(leaf_arc) => leaf_arc.clone(),
+
             _ => {
                 return Err(errno!(EIO, "lookup_attr called on non-leaf inode"));
             }
@@ -273,6 +282,7 @@ pub(in crate::fs) trait SysTreeInodeTy: Send + Sync + 'static {
     }
 }
 
+/// An enum that represent one of the variants of `SysTree` nodes.
 #[derive(Debug)]
 pub(in crate::fs) enum SysTreeNodeKind {
     Branch(Arc<dyn SysBranchNode>),
@@ -510,6 +520,7 @@ impl<KInode: SysTreeInodeTy + Send + Sync + 'static> Inode for KInode {
                 self.lookup_node_or_attr(name, branch_node.as_ref())
             }
             SysTreeNodeKind::Leaf(leaf_node) => self.lookup_attr(name, leaf_node.as_ref()),
+
             SysTreeNodeKind::Attr(_, _) | SysTreeNodeKind::Symlink(_) => Err(errno!(ENOTDIR)),
         }
     }
@@ -624,6 +635,7 @@ impl Iterator for NodeDentryIter {
             if obj_ino >= self.min_ino {
                 let type_ = match obj.type_() {
                     SysNodeType::Branch => InodeType::Dir,
+
                     SysNodeType::Leaf => InodeType::Dir,
                     SysNodeType::Symlink => InodeType::SymLink,
                 };
@@ -693,6 +705,7 @@ impl<KInode: SysTreeInodeTy> Iterator for ThisAndParentDentryIter<'_, KInode> {
     }
 }
 
+/// A directory entry of sysfs.
 pub(in crate::fs) struct Dentry {
     pub ino: Ino,
     pub name: SysStr,

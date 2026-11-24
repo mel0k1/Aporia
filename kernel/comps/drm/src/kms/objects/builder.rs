@@ -18,6 +18,52 @@ use crate::kms::{
     pixel_format::DrmPixelFormat,
 };
 
+/// A builder for KMS object topology during driver initialization.
+///
+/// The builder is an init-only helper.
+/// Drivers first declare planes, CRTCs, encoders, and connectors,
+/// then attach their static topology,
+/// and finally call `build()` to validate the topology
+/// and materialize a [`DrmKmsObjectStore`].
+///
+/// Typical usage:
+///
+/// ```rust,no_run
+/// let mut builder = DrmKmsObjectStoreBuilder::default();
+///
+/// let primary = builder
+///     .add_plane(DrmPlaneType::Primary, vec![DrmPixelFormat::XRGB8888])
+///     .unwrap();
+/// let crtc = builder.add_crtc(0, primary, None).unwrap();
+/// let encoder = builder.add_encoder(DrmEncoderType::Virtual).unwrap();
+/// let connector = builder.add_connector(DrmConnectorType::Virtual).unwrap();
+///
+/// builder.attach_plane_to_crtc(primary, crtc).unwrap();
+/// builder.attach_encoder_to_crtc(encoder, crtc).unwrap();
+/// builder
+///     .attach_connector_to_encoder(connector, encoder)
+///     .unwrap();
+///
+/// let object_store = builder.build().unwrap();
+/// ```
+///
+/// The builder only records static topology.
+/// Dynamic runtime state remains inside each final KMS object state.
+/// Construction indices are confined to the builder and must come from the same builder instance.
+///
+/// Static `possible_*` topology is represented by masks whose bit positions are per-type object indices.
+///
+/// Dynamic runtime state refers to other objects through typed weak references.
+///
+/// Current topology constraints:
+///
+/// - Each CRTC must reference its own primary plane.
+/// - The primary plane of a CRTC must have type `Primary`.
+/// - If a CRTC has a cursor plane, it must have type `Cursor`.
+/// - A primary or cursor plane must also be attached to that CRTC
+///   through `attach_plane_to_crtc()`.
+/// - Encoders may attach to one or more CRTCs.
+/// - Connectors may attach to one or more encoders.
 #[derive(Debug, Default)]
 pub struct DrmKmsObjectStoreBuilder {
     planes: Vec<DrmPlaneConfig>,
@@ -61,6 +107,7 @@ impl DrmKmsObjectStoreBuilder {
         let config = DrmEncoderConfig {
             type_,
             possible_crtcs: KmsObjectMask::ZERO,
+
             possible_clones: KmsObjectMask::ZERO,
         };
         self.encoders.push(config);
@@ -69,6 +116,7 @@ impl DrmKmsObjectStoreBuilder {
 
     pub fn add_connector(&mut self, type_: DrmConnectorType) -> Result<KmsObjectIndex> {
         let index = next_object_index(self.connectors.len())?;
+
         let type_index = self
             .connectors
             .iter()

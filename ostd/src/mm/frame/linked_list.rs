@@ -1,3 +1,8 @@
+//! Enabling linked lists of frames without heap allocation.
+//!
+//! This module leverages the customizability of the metadata system (see
+//! [super::meta]) to allow any type of frame to be used in a linked list.
+
 use core::{
     ops::{Deref, DerefMut},
     ptr::NonNull,
@@ -15,13 +20,62 @@ use crate::{
     panic::abort,
 };
 
+/// A linked list of frames.
+///
+/// Two key features that [`LinkedList`] is different from
+/// [`alloc::collections::LinkedList`] is that:
+///  1. It is intrusive, meaning that the links are part of the frame metadata.
+///     This allows the linked list to be used without heap allocation. But it
+///     disallows a frame to be in multiple linked lists at the same time.
+///  2. The linked list exclusively own the frames, meaning that it takes
+///     unique pointers [`UniqueFrame`]. And other bodies cannot
+///     [`from_in_use`] a frame that is inside a linked list.
+///  3. We also allow creating cursors at a specific frame, allowing $O(1)$
+///     removal without iterating through the list at a cost of some checks.
+///
+/// # Example
+///
+/// To create metadata types that allows linked list links, wrap the metadata
+/// type in [`Link`]:
+///
+/// ```rust
+/// use ostd::{
+///     mm::{frame::{linked_list::{Link, LinkedList}, Frame}, FrameAllocOptions},
+///     impl_untyped_frame_meta_for,
+/// };
+///
+/// #[derive(Debug)]
+/// struct MyMeta { mark: usize }
+///
+/// type MyFrame = Frame<Link<MyMeta>>;
+///
+/// impl_untyped_frame_meta_for!(MyMeta);
+///
+/// let alloc_options = FrameAllocOptions::new();
+/// let frame1 = alloc_options.alloc_frame_with(Link::new(MyMeta { mark: 1 })).unwrap();
+/// let frame2 = alloc_options.alloc_frame_with(Link::new(MyMeta { mark: 2 })).unwrap();
+///
+/// let mut list = LinkedList::new();
+/// list.push_front(frame1.try_into().unwrap());
+/// list.push_front(frame2.try_into().unwrap());
+///
+/// let mut cursor = list.cursor_front_mut();
+/// assert_eq!(cursor.current_meta().unwrap().mark, 2);
+/// cursor.move_next();
+/// assert_eq!(cursor.current_meta().unwrap().mark, 1);
+/// ```
+///
+/// [`from_in_use`]: super::Frame::from_in_use
 pub struct LinkedList<M>
 where
     Link<M>: AnyFrameMeta,
 {
     front: Option<NonNull<Link<M>>>,
     back: Option<NonNull<Link<M>>>,
+    /// The number of frames in the list.
     size: usize,
+    /// A lazily initialized ID, used to check whether a frame is in the list.
+    /// 0 means uninitialized.
     list_id: u64,
 }
 
@@ -41,6 +95,7 @@ impl<M> LinkedList<M>
 where
     Link<M>: AnyFrameMeta,
 {
+    /// Creates a new linked list.
     pub const fn new() -> Self {
         Self {
             front: None,
@@ -50,10 +105,12 @@ where
         }
     }
 
+    /// Gets the number of frames in the linked list.
     pub fn size(&self) -> usize {
         self.size
     }
 
+    /// Tells if the linked list is empty.
     pub fn is_empty(&self) -> bool {
         let is_empty = self.size == 0;
         debug_assert_eq!(is_empty, self.front.is_none());
@@ -61,22 +118,27 @@ where
         is_empty
     }
 
+    /// Pushes a frame to the front of the linked list.
     pub fn push_front(&mut self, frame: UniqueFrame<Link<M>>) {
         self.cursor_front_mut().insert_before(frame);
     }
 
+    /// Pops a frame from the front of the linked list.
     pub fn pop_front(&mut self) -> Option<UniqueFrame<Link<M>>> {
         self.cursor_front_mut().take_current()
     }
 
+    /// Pushes a frame to the back of the linked list.
     pub fn push_back(&mut self, frame: UniqueFrame<Link<M>>) {
         self.cursor_at_ghost_mut().insert_before(frame);
     }
 
+    /// Pops a frame from the back of the linked list.
     pub fn pop_back(&mut self) -> Option<UniqueFrame<Link<M>>> {
         self.cursor_back_mut().take_current()
     }
 
+    /// Tells if a frame is in the list.
     pub fn contains(&mut self, frame: Paddr) -> bool {
         let Ok(slot) = get_slot(frame) else {
             return false;
@@ -84,6 +146,9 @@ where
         slot.in_list.load(Ordering::Relaxed) == self.lazy_get_id()
     }
 
+    /// Gets a cursor at the specified frame if the frame is in the list.
+    ///
+    /// This method fail if [`Self::contains`] returns `false`.
     pub fn cursor_mut_at(&mut self, frame: Paddr) -> Option<CursorMut<'_, M>> {
         let Ok(slot) = get_slot(frame) else {
             return None;
@@ -99,6 +164,9 @@ where
         }
     }
 
+    /// Gets a cursor at the front that can mutate the linked list links.
+    ///
+    /// If the list is empty, the cursor points to the "ghost" non-element.
     pub fn cursor_front_mut(&mut self) -> CursorMut<'_, M> {
         let current = self.front;
         CursorMut {
@@ -107,6 +175,9 @@ where
         }
     }
 
+    /// Gets a cursor at the back that can mutate the linked list links.
+    ///
+    /// If the list is empty, the cursor points to the "ghost" non-element.
     pub fn cursor_back_mut(&mut self) -> CursorMut<'_, M> {
         let current = self.back;
         CursorMut {
@@ -115,6 +186,7 @@ where
         }
     }
 
+    /// Gets a cursor at the "ghost" non-element that can mutate the linked list links.
     fn cursor_at_ghost_mut(&mut self) -> CursorMut<'_, M> {
         CursorMut {
             list: self,
@@ -140,6 +212,10 @@ where
     }
 }
 
+/// A cursor that can mutate the linked list links.
+///
+/// The cursor points to either a frame or the "ghost" non-element. It points
+/// to the "ghost" non-element when the cursor surpasses the back of the list.
 pub struct CursorMut<'a, M>
 where
     Link<M>: AnyFrameMeta,
@@ -152,6 +228,12 @@ impl<M> CursorMut<'_, M>
 where
     Link<M>: AnyFrameMeta,
 {
+    /// Moves the cursor to the next frame towards the back.
+    ///
+    /// If the cursor is pointing to the "ghost" non-element then this will
+    /// move it to the first element of the [`LinkedList`]. If it is pointing
+    /// to the last element of the LinkedList then this will move it to the
+    /// "ghost" non-element.
     pub fn move_next(&mut self) {
         self.current = match self.current {
             Some(current) => unsafe { current.as_ref().next },
@@ -159,6 +241,12 @@ where
         };
     }
 
+    /// Moves the cursor to the previous frame towards the front.
+    ///
+    /// If the cursor is pointing to the "ghost" non-element then this will
+    /// move it to the last element of the [`LinkedList`]. If it is pointing
+    /// to the first element of the LinkedList then this will move it to the
+    /// "ghost" non-element.
     pub fn move_prev(&mut self) {
         self.current = match self.current {
             Some(current) => unsafe { current.as_ref().prev },
@@ -166,19 +254,27 @@ where
         };
     }
 
+    /// Gets the mutable reference to the current frame's metadata.
     pub fn current_meta(&mut self) -> Option<&mut M> {
         self.current.map(|current| {
             let link_mut = unsafe { &mut *current.as_ptr() };
+
             &mut link_mut.meta
         })
     }
 
+    /// Takes the current pointing frame out of the linked list.
+    ///
+    /// If successful, the frame is returned and the cursor is moved to the
+    /// next frame. If the cursor is pointing to the back of the list then it
+    /// is moved to the "ghost" non-element.
     pub fn take_current(&mut self) -> Option<UniqueFrame<Link<M>>> {
         let current = self.current?;
 
         let mut frame = {
             let meta_ptr = current.as_ptr() as *mut MetaSlot;
             let paddr = mapping::meta_to_frame::<PagingConsts>(meta_ptr as Vaddr);
+
             unsafe { UniqueFrame::<Link<M>>::from_raw(paddr) }
         };
 
@@ -213,6 +309,10 @@ where
         Some(frame)
     }
 
+    /// Inserts a frame before the current frame.
+    ///
+    /// If the cursor is pointing at the "ghost" non-element then the new
+    /// element is inserted at the back of the [`LinkedList`].
     pub fn insert_before(&mut self, mut frame: UniqueFrame<Link<M>>) {
         debug_assert!(frame.meta_mut().next.is_none());
         debug_assert!(frame.meta_mut().prev.is_none());
@@ -263,6 +363,7 @@ where
         self.list.size += 1;
     }
 
+    /// Provides a reference to the linked list.
     pub fn as_list(&self) -> &LinkedList<M> {
         &*self.list
     }
@@ -278,6 +379,12 @@ where
     }
 }
 
+/// The metadata of linked list frames.
+///
+/// To allow other metadata to be customized, this type is a wrapper around the
+/// actual metadata type `M`.
+///
+/// Linked list frames can be contained in a [`LinkedList`].
 #[derive(Debug)]
 pub struct Link<M> {
     next: Option<NonNull<Link<M>>>,
@@ -303,6 +410,7 @@ impl<M> DerefMut for Link<M> {
 }
 
 impl<M> Link<M> {
+    /// Creates a new linked list metadata.
     pub const fn new(meta: M) -> Self {
         Self {
             next: None,

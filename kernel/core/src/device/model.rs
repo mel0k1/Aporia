@@ -1,3 +1,6 @@
+//! The kernel side of the device model: the hooks that give the
+//! `aster-device` component access to devtmpfs.
+
 use aster_device::{
     common::{DEFAULT_DEVNODE_MODE, DevKind},
     hooks::{self, DevNodeRequest, HookError, KernelHooks},
@@ -12,6 +15,7 @@ use crate::{
     prelude::*,
 };
 
+/// Installs the kernel hooks. Must run once `devtmpfsd` is running.
 pub(super) fn init_in_first_kthread() {
     hooks::install_hooks(&Hooks);
 }

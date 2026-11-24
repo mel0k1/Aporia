@@ -67,6 +67,9 @@ impl DrmFile {
     }
 }
 
+/// `struct drm_gem_close` in Linux.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm.h#L600-L605>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(super) struct DrmGemClose {
@@ -74,6 +77,9 @@ pub(super) struct DrmGemClose {
     pad: u32,
 }
 
+/// `struct drm_mode_create_dumb` in Linux.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm_mode.h#L1057-L1079>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(super) struct DrmModeCreateDumb {
@@ -86,6 +92,9 @@ pub(super) struct DrmModeCreateDumb {
     size: u64,
 }
 
+/// `struct drm_mode_map_dumb` in Linux.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm_mode.h#L1081-L1092>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(super) struct DrmModeMapDumb {
@@ -94,6 +103,9 @@ pub(super) struct DrmModeMapDumb {
     offset: u64,
 }
 
+/// `struct drm_mode_destroy_dumb` in Linux.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm_mode.h#L1094-L1096>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(super) struct DrmModeDestroyDumb {

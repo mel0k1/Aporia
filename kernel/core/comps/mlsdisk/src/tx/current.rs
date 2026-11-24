@@ -1,8 +1,10 @@
+//! Get and set the current transaction of the current thread.
 use core::sync::atomic::Ordering::{Acquire, Release};
 
 use super::{Tx, TxData, TxId, TxProvider, TxStatus};
 use crate::{os::CurrentThread, prelude::*};
 
+/// The current transaction on a thread.
 #[derive(Clone)]
 pub(crate) struct CurrentTx<'a> {
     provider: &'a TxProvider,
@@ -16,6 +18,10 @@ impl<'a> CurrentTx<'a> {
         Self { provider }
     }
 
+    /// Enter the context of the current TX.
+    ///
+    /// While within the context of a TX, the implementation side of a TX
+    /// can get the current TX via `TxProvider::current`.
     pub(crate) fn context<F, R>(&self, f: F) -> R
     where
         F: FnOnce() -> R,
@@ -32,6 +38,10 @@ impl<'a> CurrentTx<'a> {
         f()
     }
 
+    /// Commits the current TX.
+    ///
+    /// If the returned value is `Ok`, then the TX is committed successfully.
+    /// Otherwise, the TX is aborted.
     pub(crate) fn commit(&self) -> Result<()> {
         let mut tx_status = self
             .provider
@@ -61,6 +71,7 @@ impl<'a> CurrentTx<'a> {
         res
     }
 
+    /// Aborts the current TX.
     pub(crate) fn abort(&self) {
         let tx_status = self
             .provider
@@ -81,10 +92,16 @@ impl<'a> CurrentTx<'a> {
         tx.set_status(TxStatus::Aborted);
     }
 
+    /// The ID of the transaction.
     pub(crate) fn id(&self) -> TxId {
         self.get_current_mut_with(|tx| tx.id())
     }
 
+    /// Get immutable access to some type of the per-transaction data within a closure.
+    ///
+    /// # Panics
+    ///
+    /// The `data_with` method must _not_ be called recursively.
     pub(crate) fn data_with<T: TxData, F, R>(&self, f: F) -> R
     where
         F: FnOnce(&T) -> R,
@@ -95,6 +112,7 @@ impl<'a> CurrentTx<'a> {
         })
     }
 
+    /// Get mutable access to some type of the per-transaction data within a closure.
     pub(crate) fn data_mut_with<T: TxData, F, R>(&mut self, f: F) -> R
     where
         F: FnOnce(&mut T) -> R,
@@ -105,6 +123,16 @@ impl<'a> CurrentTx<'a> {
         })
     }
 
+    /// Get a _mutable_ reference to the current transaction of the current thread,
+    /// passing it to a given closure.
+    ///
+    /// # Panics
+    ///
+    /// The `get_current_mut_with` method must be called within the closure
+    /// of `set_and_exec_with`.
+    ///
+    /// In addition, the `get_current_mut_with` method must _not_ be called
+    /// recursively.
     fn get_current_mut_with<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&mut Tx) -> R,

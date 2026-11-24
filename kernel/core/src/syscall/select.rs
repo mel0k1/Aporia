@@ -168,6 +168,8 @@ fn do_select(
     Ok(total_revents)
 }
 
+/// Converts `select` RWE input to `poll` I/O event input
+/// according to Linux's behavior.
 fn convert_rwe_to_events(readable: bool, writable: bool, except: bool) -> IoEvents {
     let mut events = IoEvents::empty();
     if readable {
@@ -182,6 +184,8 @@ fn convert_rwe_to_events(readable: bool, writable: bool, except: bool) -> IoEven
     events
 }
 
+/// Converts `poll` I/O event results to `select` RWE results
+/// according to Linux's behavior.
 fn convert_events_to_rwe(events: IoEvents) -> Result<(bool, bool, bool)> {
     if events.contains(IoEvents::NVAL) {
         return Err(errno!(EBADF, "the file descriptor is invalid"));
@@ -203,6 +207,7 @@ struct FdSet {
 }
 
 impl FdSet {
+    /// Equivalent to FD_SET.
     pub(crate) fn set(&mut self, fd: RawFileDesc) -> Result<()> {
         let fd = fd as usize;
         if fd >= FD_SETSIZE {
@@ -212,6 +217,7 @@ impl FdSet {
         Ok(())
     }
 
+    /// Equivalent to FD_CLR.
     #[expect(unused)]
     pub(crate) fn unset(&mut self, fd: RawFileDesc) -> Result<()> {
         let fd = fd as usize;
@@ -222,6 +228,7 @@ impl FdSet {
         Ok(())
     }
 
+    /// Equivalent to FD_ISSET.
     pub(crate) fn is_set(&self, fd: RawFileDesc) -> bool {
         let fd = fd as usize;
         if fd >= FD_SETSIZE {
@@ -230,6 +237,7 @@ impl FdSet {
         (self.fds_bits[fd / USIZE_BITS] & (1 << (fd % USIZE_BITS))) != 0
     }
 
+    /// Equivalent to FD_ZERO.
     pub(crate) fn clear(&mut self) {
         for slot in self.fds_bits.iter_mut() {
             *slot = 0;

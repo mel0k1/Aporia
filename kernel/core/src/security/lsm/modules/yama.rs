@@ -18,6 +18,7 @@ use crate::{
 
 pub(crate) static YAMA_LSM: YamaLsm = YamaLsm;
 
+/// The Yama minor LSM.
 pub(crate) struct YamaLsm;
 
 impl LsmAlienAccessHook for YamaLsm {
@@ -69,10 +70,12 @@ impl LsmModule for YamaLsm {
 
 impl LsmCapabilityHook for YamaLsm {}
 
+/// Returns the current Yama scope for alien access.
 pub(crate) fn get_scope() -> YamaScope {
     YAMA_SCOPE.load(Ordering::Relaxed)
 }
 
+/// Sets the Yama scope for alien access.
 pub(crate) fn set_scope(new_scope: YamaScope) -> Result<()> {
     lsm_hooks::on_capable(lsm_hooks::CapableContext::new(
         UserNamespace::get_init_singleton().as_ref(),
@@ -91,12 +94,17 @@ pub(crate) fn set_scope(new_scope: YamaScope) -> Result<()> {
     Ok(())
 }
 
+/// The Yama scope levels.
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, TryFromInt)]
 pub(crate) enum YamaScope {
+    /// No additional restrictions on alien attach.
     Disabled = 0,
+    /// Only allow alien attach by ancestor processes, or processes with `CapSet::SYS_PTRACE`.
     Relational = 1,
+    /// Only allow alien attach by processes with `CapSet::SYS_PTRACE`.
     Capability = 2,
+    /// Disallow any alien attach.
     NoAttach = 3,
 }
 

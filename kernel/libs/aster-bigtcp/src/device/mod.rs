@@ -1,3 +1,5 @@
+//! Network device abstractions.
+
 use core::{any::Any, fmt::Debug};
 
 use smoltcp::{
@@ -31,19 +33,37 @@ pub trait AnyNetworkDevice: Send + Sync + Any + Debug {
     fn can_receive(&self) -> bool;
     fn can_send(&self) -> bool;
 
+    /// Receives a link-layer packet from the network.
+    ///
+    /// If no packet is ready, this method returns [`NetError::NotReady`].
     fn receive(&mut self) -> Result<RxPacket<LinkLayer>, NetError>;
 
+    /// Sends a link-layer packet to the network.
+    ///
+    /// It is recommended that the packet is allocated using [`Self::alloc_tx_buffer`] to improve
+    /// performance (e.g., by reducing DMA overhead via a pool). However, this is not a strict
+    /// requirement, and the method must work regardless of how the packet is allocated.
     fn send(&mut self, packet: TxPacket<LinkLayer>) -> Result<(), NetError>;
 
+    /// Allocates a packet buffer for transmission through this device.
     fn alloc_tx_buffer(payload_len: usize) -> Result<FreshTxPacket, ostd::Error>
     where
         Self: Sized;
 
+    /// Frees processed transmit buffers.
     fn free_processed_tx_buffers(&mut self);
 
+    /// Notifies the device driver that a polling operation has ended.
+    ///
+    /// The driver can assume that the device remains protected by a poll lock for the entire
+    /// duration of polling, so two polling operations cannot happen simultaneously.
     fn notify_poll_end(&mut self);
 }
 
+/// A trait that allows obtaining a mutable reference to an [`AnyNetworkDevice`].
+///
+/// A device is usually protected by a lock and may be stored behind a shared pointer. This trait
+/// hides those storage details from the network interface.
 pub trait WithDevice: Send + Sync {
     type Device: AnyNetworkDevice;
 
@@ -52,6 +72,7 @@ pub trait WithDevice: Send + Sync {
         F: FnOnce(&mut dyn AnyNetworkDevice) -> R;
 }
 
+/// Creates a smoltcp [`Interface`] with the specified capabilities.
 pub(crate) fn new_interface(
     config: Config,
     capabilities: DeviceCapabilities,

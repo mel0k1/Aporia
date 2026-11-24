@@ -1,5 +1,8 @@
+//! Architecture dependent CPU-local information utilities.
+
 use x86_64::registers::segmentation::{GS, Segment64};
 
+/// Gets the base address for the CPU local storage by reading the GS base model-specific register.
 pub(crate) fn get_base() -> u64 {
     GS::read_base().as_u64()
 }
@@ -15,6 +18,14 @@ macro_rules! impl_numeric_single_instruction_for {
 
         impl SingleInstructionAddAssign<$typ> for $typ {
             unsafe fn add_assign(offset: usize, val: Self) {
+
+
+
+
+
+
+
+
                 unsafe {
                     core::arch::asm!(
                         concat!("add gs:[{0}], {1", $register_format, "}"),
@@ -28,6 +39,7 @@ macro_rules! impl_numeric_single_instruction_for {
 
         impl SingleInstructionSubAssign<$typ> for $typ {
             unsafe fn sub_assign(offset: usize, val: Self) {
+
                 unsafe {
                     core::arch::asm!(
                         concat!("sub gs:[{0}], {1", $register_format, "}"),
@@ -41,6 +53,7 @@ macro_rules! impl_numeric_single_instruction_for {
 
         impl SingleInstructionBitAndAssign<$typ> for $typ {
             unsafe fn bitand_assign(offset: usize, val: Self) {
+
                 unsafe {
                     core::arch::asm!(
                         concat!("and gs:[{0}], {1", $register_format, "}"),
@@ -54,6 +67,7 @@ macro_rules! impl_numeric_single_instruction_for {
 
         impl SingleInstructionBitOrAssign<$typ> for $typ {
             unsafe fn bitor_assign(offset: usize, val: Self) {
+
                 unsafe {
                     core::arch::asm!(
                         concat!("or gs:[{0}], {1", $register_format, "}"),
@@ -67,6 +81,7 @@ macro_rules! impl_numeric_single_instruction_for {
 
         impl SingleInstructionBitXorAssign<$typ> for $typ {
             unsafe fn bitxor_assign(offset: usize, val: Self) {
+
                 unsafe {
                     core::arch::asm!(
                         concat!("xor gs:[{0}], {1", $register_format, "}"),
@@ -81,6 +96,7 @@ macro_rules! impl_numeric_single_instruction_for {
         impl SingleInstructionLoad for $typ {
             unsafe fn load(offset: usize) -> Self {
                 let val: Self;
+
                 unsafe {
                     core::arch::asm!(
                         concat!("mov {0", $register_format, "}, gs:[{1}]"),
@@ -95,6 +111,7 @@ macro_rules! impl_numeric_single_instruction_for {
 
         impl SingleInstructionStore for $typ {
             unsafe fn store(offset: usize, val: Self) {
+
                 unsafe {
                     core::arch::asm!(
                         concat!("mov gs:[{0}], {1", $register_format, "}"),
@@ -128,6 +145,7 @@ macro_rules! impl_generic_single_instruction_for {
         impl<$gen_type $(, $more_gen_type)*> SingleInstructionLoad for $typ {
             unsafe fn load(offset: usize) -> Self {
                 let val: Self;
+
                 unsafe {
                     core::arch::asm!(
                         concat!("mov {0}, gs:[{1}]"),
@@ -142,6 +160,7 @@ macro_rules! impl_generic_single_instruction_for {
 
         impl<$gen_type $(, $more_gen_type)*> SingleInstructionStore for $typ {
             unsafe fn store(offset: usize, val: Self) {
+
                 unsafe {
                     core::arch::asm!(
                         concat!("mov gs:[{0}], {1}"),
@@ -164,6 +183,7 @@ impl_generic_single_instruction_for!(
 impl SingleInstructionLoad for bool {
     unsafe fn load(offset: usize) -> Self {
         let val: u8;
+
         unsafe {
             core::arch::asm!(
                 "mov {0}, gs:[{1}]",
@@ -180,6 +200,7 @@ impl SingleInstructionLoad for bool {
 impl SingleInstructionStore for bool {
     unsafe fn store(offset: usize, val: Self) {
         let val: u8 = if val { 1 } else { 0 };
+
         unsafe {
             core::arch::asm!(
                 "mov gs:[{0}], {1}",

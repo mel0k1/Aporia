@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::prelude::*;
 
+/// A compact array of bits.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct BitMap {
     bits: Vec<u64>,
@@ -12,10 +13,13 @@ pub(crate) struct BitMap {
 }
 
 impl BitMap {
+    /// The one bit represents `true`.
     const ONE: bool = true;
 
+    /// The zero bit represents `false`.
     const ZERO: bool = false;
 
+    /// Create a new `BitMap` by repeating the `value` for the desired length.
     pub(crate) fn repeat(value: bool, nbits: usize) -> Self {
         let vec_len = nbits.div_ceil(64);
         let mut bits = Vec::with_capacity(vec_len);
@@ -35,6 +39,7 @@ impl BitMap {
         Self { bits, nbits }
     }
 
+    /// Return the total number of bits.
     pub(crate) fn len(&self) -> usize {
         self.nbits
     }
@@ -48,21 +53,45 @@ impl BitMap {
         }
     }
 
+    /// Test if the given bit is set.
+    ///
+    /// Return `true` if the given bit is one bit.
+    ///
+    /// # Panics
+    ///
+    /// The `index` must be within the total number of bits. Otherwise, this method panics.
     pub(crate) fn test_bit(&self, index: usize) -> bool {
         self.check_index(index);
         self.bits.test_bit(index as _)
     }
 
+    /// Set the given bit with one bit.
+    ///
+    /// # Panics
+    ///
+    /// The `index` must be within the total number of bits. Otherwise, this method panics.
     pub(crate) fn set_bit(&mut self, index: usize) {
         self.check_index(index);
         self.bits.set_bit(index as _);
     }
 
+    /// Clear the given bit with zero bit.
+    ///
+    /// # Panics
+    ///
+    /// The `index` must be within the total number of bits. Otherwise, this method panics.
     pub(crate) fn clear_bit(&mut self, index: usize) {
         self.check_index(index);
         self.bits.clear_bit(index as _)
     }
 
+    /// Set the given bit with `value`.
+    ///
+    /// One bit is set for `true`, and zero bit for `false`.
+    ///
+    /// # Panics
+    ///
+    /// The `index` must be within the total number of bits. Otherwise, this method panics.
     pub(crate) fn set(&mut self, index: usize, value: bool) {
         if value == Self::ONE {
             self.set_bit(index);
@@ -75,15 +104,24 @@ impl BitMap {
         self.bits.len() * 64 - self.nbits
     }
 
+    /// Get the number of one bits in the bitmap.
     pub(crate) fn count_ones(&self) -> usize {
         self.bits.count_ones() as _
     }
 
+    /// Get the number of zero bits in the bitmap.
     pub(crate) fn count_zeros(&self) -> usize {
         let total_zeros = self.bits.count_zeros() as usize;
         total_zeros - self.bits_not_in_use()
     }
 
+    /// Find the index of the first one bit, starting from the given index (inclusively).
+    ///
+    /// Return `None` if no one bit is found.
+    ///
+    /// # Panics
+    ///
+    /// The `from` index must be within the total number of bits. Otherwise, this method panics.
     pub(crate) fn first_one(&self, from: usize) -> Option<usize> {
         self.check_index(from);
         let first_u64_index = from / 64;
@@ -94,6 +132,13 @@ impl BitMap {
             .find(|&index| index >= from)
     }
 
+    /// Find `count` indexes of the first one bits, starting from the given index (inclusively).
+    ///
+    /// Return `None` if fewer than `count` one bits are found.
+    ///
+    /// # Panics
+    ///
+    /// The `from + count` index must be within the total number of bits. Otherwise, this method panics.
     pub(crate) fn first_ones(&self, from: usize, count: usize) -> Option<Vec<usize>> {
         self.check_index(from + count - 1);
         let first_u64_index = from / 64;
@@ -111,6 +156,9 @@ impl BitMap {
         }
     }
 
+    /// Find the index of the last one bit.
+    ///
+    /// Return `None` if no one bit is found.
     pub(crate) fn last_one(&self) -> Option<usize> {
         self.bits
             .iter_ones()
@@ -119,6 +167,13 @@ impl BitMap {
             .next()
     }
 
+    /// Find the index of the first zero bit, starting from the given index (inclusively).
+    ///
+    /// Return `None` if no zero bit is found.
+    ///
+    /// # Panics
+    ///
+    /// The `from` index must be within the total number of bits. Otherwise, this method panics.
     pub(crate) fn first_zero(&self, from: usize) -> Option<usize> {
         self.check_index(from);
         let first_u64_index = from / 64;
@@ -129,6 +184,13 @@ impl BitMap {
             .find(|&index| index >= from && index < self.len())
     }
 
+    /// Find `count` indexes of the first zero bits, starting from the given index (inclusively).
+    ///
+    /// Return `None` if fewer than `count` zero bits are found.
+    ///
+    /// # Panics
+    ///
+    /// The `from + count` index must be within the total number of bits. Otherwise, this method panics.
     pub(crate) fn first_zeros(&self, from: usize, count: usize) -> Option<Vec<usize>> {
         self.check_index(from + count - 1);
         let first_u64_index = from / 64;
@@ -146,6 +208,9 @@ impl BitMap {
         }
     }
 
+    /// Find the index of the last zero bit.
+    ///
+    /// Return `None` if no zero bit is found.
     pub(crate) fn last_zero(&self) -> Option<usize> {
         self.bits
             .iter_zeros()

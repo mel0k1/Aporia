@@ -1,3 +1,14 @@
+//! KMS objects and their device-local object store.
+//!
+//! This module defines planes, CRTCs, encoders, connectors, framebuffers, properties, and property blobs.
+//!
+//! Static objects belonging to a DRM device are registered by type in [`DrmKmsObjectStore`].
+//!
+//! Static objects and per-file objects such as framebuffers share a device-local `KmsObjectId` namespace.
+//!
+//! [`builder::DrmKmsObjectStoreBuilder`] constructs and validates the static KMS topology
+//! before materializing the objects in the store.
+
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use core::fmt::Debug;
 
@@ -28,10 +39,22 @@ pub(crate) type KmsObjectId = u32;
 
 pub(crate) const MAX_OBJECTS_PER_TYPE: usize = u32::BITS as usize;
 
+/// A zero-based position in one KMS object type's registration order.
+///
+/// The index is local to an object type.
+///
+/// For example, encoder index 0 and CRTC index 0 refer to entries in different lists.
 pub type KmsObjectIndex = RangedUsize<0, { MAX_OBJECTS_PER_TYPE - 1 }>;
 
 type KmsObjectMask = BitArray<[u32; MAX_OBJECTS_PER_TYPE / u32::BITS as usize]>;
 
+/// Registers all KMS objects belonging to a DRM device.
+///
+/// Static objects are grouped by type and looked up by their device-local `KmsObjectId`.
+/// Each object stores its own per-type registration index.
+///
+/// The ID allocator is also used for per-file KMS objects,
+/// but those objects are owned and tracked outside this store.
 #[derive(Debug)]
 pub struct DrmKmsObjectStore {
     id_allocator: SparseIdAlloc,
@@ -41,7 +64,10 @@ pub struct DrmKmsObjectStore {
     connectors: HashMap<KmsObjectId, Arc<DrmConnector>>,
 
     properties: HashMap<KmsObjectId, Arc<DrmProperty>>,
+    /// Provides a semantic index for standard properties;
+    /// driver-specific properties remain accessible through `properties` by object ID.
     standard_property_ids: HashMap<DrmStandardProperty, KmsObjectId>,
+
     property_blobs: HashMap<KmsObjectId, Arc<DrmPropertyBlob>>,
 }
 
@@ -165,6 +191,14 @@ impl DrmKmsObjectStore {
         self.property_blobs.get(&id)
     }
 
+    /// Looks up a KMS mode object's property table without specifying its type.
+    ///
+    /// The object ID may refer to any KMS mode object,
+    /// such as a plane, CRTC, encoder, or connector.
+    /// This is an object ID, not a property ID.
+    ///
+    /// Returns `EINVAL` for an encoder, which has no property table,
+    /// and `None` if no supported object matches the ID.
     pub(crate) fn lookup_any_object_properties(
         &self,
         id: KmsObjectId,

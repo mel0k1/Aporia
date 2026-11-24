@@ -17,6 +17,7 @@ pub(crate) fn calc_checksum_32(data: &[u8]) -> u32 {
     checksum
 }
 
+/// Calculating checksum, ignoring certarin bytes in the range
 pub(crate) fn calc_checksum_16(data: &[u8], ignore: Range<usize>, prev_checksum: u16) -> u16 {
     let mut result = prev_checksum;
     for (pos, &value) in data.iter().enumerate() {
@@ -45,6 +46,7 @@ const EXFAT_TIME_ZONE_VALID: u8 = 1 << 7;
 pub(crate) struct DosTimestamp {
     pub(super) time: u16,
     pub(super) date: u16,
+
     pub(super) increment_10ms: u8,
     pub(super) utc_offset: u8,
 }
@@ -140,7 +142,6 @@ impl DosTimestamp {
 
         if (self.utc_offset & EXFAT_TIME_ZONE_VALID) != 0u8 {
             sec = Self::adjust_time_zone(sec, self.utc_offset & (!EXFAT_TIME_ZONE_VALID));
-        } else {
         }
 
         Ok(Duration::new(sec, nano_sec))

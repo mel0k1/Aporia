@@ -26,6 +26,7 @@ pub(super) fn sys_pidfd_open(pid: Pid, flags: u32, ctx: &Context) -> Result<Sysc
     let pid_fd = {
         let pid_file = Arc::new(PidFile::new(process, is_nonblocking));
         let file_table = ctx.thread_local.borrow_file_table();
+
         file_table.lock_and_insert(pid_file, FdFlags::CLOEXEC)?
     };
 

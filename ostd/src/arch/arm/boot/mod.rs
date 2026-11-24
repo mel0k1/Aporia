@@ -1,3 +1,5 @@
+//! The ARM boot module defines the entrypoints of Asterinas.
+
 pub(crate) mod smp;
 
 use core::arch::global_asm;
@@ -15,6 +17,7 @@ use crate::{
 
 global_asm!(include_str!("bsp_boot.S"));
 
+/// The Flattened Device Tree of the platform.
 pub static DEVICE_TREE: Once<Fdt> = Once::new();
 
 fn parse_bootloader_name() -> &'static str {
@@ -30,6 +33,7 @@ fn parse_initramfs() -> Option<&'static [u8]> {
 
     let base_va = paddr_to_vaddr(start);
     let length = end - start;
+
     Some(unsafe { core::slice::from_raw_parts(base_va as *const u8, length) })
 }
 
@@ -117,9 +121,16 @@ fn parse_initramfs_range() -> Option<(usize, usize)> {
     Some((initrd_start, initrd_end))
 }
 
+/// The entry point of the Rust code portion of Asterinas.
+///
+/// # Safety
+///
+/// - This function must be called only once at a proper timing in the BSP's boot assembly code.
+/// - The caller must follow C calling conventions and put the right arguments in registers.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn arm_boot(device_tree_paddr: usize) -> ! {
     let device_tree_ptr = paddr_to_vaddr(device_tree_paddr) as *const u8;
+
     let fdt = unsafe { Fdt::from_ptr(device_tree_ptr).unwrap() };
     DEVICE_TREE.call_once(|| fdt);
 

@@ -19,6 +19,7 @@ use crate::{
     process::posix_thread::AsThreadLocal,
 };
 
+/// A file system for managing cgroups.
 pub(super) struct CgroupFs {
     _anon_device_id: AnonDeviceId,
     sb: SuperBlock,
@@ -30,6 +31,7 @@ const BLOCK_SIZE: usize = 4096;
 const NAME_MAX: usize = 255;
 
 impl CgroupFs {
+    /// Returns the `CgroupFs` singleton.
     pub(super) fn singleton() -> &'static Arc<CgroupFs> {
         static SINGLETON: Once<Arc<CgroupFs>> = Once::new();
 

@@ -15,6 +15,9 @@ sensitive_io_port! {
 
 const IRQ_OFFSET: u8 = 0x20;
 
+/// Probes whether a legacy 8259A PIC is present.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v7.0/source/arch/x86/kernel/i8259.c#L306>
 pub(super) fn probe_legacy_pic() -> bool {
     const PROBE_VAL: u8 = 0xFB;
 
@@ -25,6 +28,7 @@ pub(super) fn probe_legacy_pic() -> bool {
     MASTER_DATA.read() == PROBE_VAL
 }
 
+/// Initializes and disables the 8259 Programmable Interrupt Controller (PIC).
 pub(super) fn init_and_disable() {
     info!("Initializing PIC as disabled");
 
@@ -36,6 +40,7 @@ fn set_mask(master_mask: u8, slave_mask: u8) {
     SLAVE_CMD.write(0x11);
 
     MASTER_DATA.write(IRQ_OFFSET);
+
     SLAVE_DATA.write(IRQ_OFFSET + 0x08);
 
     MASTER_DATA.write(4);

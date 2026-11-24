@@ -5,6 +5,72 @@ use quote::quote;
 use rand::{Rng, distr::Alphanumeric};
 use syn::{Expr, Ident, ItemFn, parse_macro_input};
 
+/// A macro attribute to mark the kernel entry point.
+///
+/// # Bootstrap Context
+///
+/// After initializing itself on the BSP,
+/// OSTD transfers control to this kernel entrypoint function marked with `#[ostd::main]`.
+/// Symmetrically, each AP also has a kernel entrypoint function,
+/// which is specified with `ostd::boot::smp::register_ap_entry`.
+///
+/// Both BSP and AP kernel entrypoints execute code in the **bootstrap context**,
+/// which is intended to provide an opportunity for an OSTD-based kernel to
+/// perform all sorts of necessary initialization steps
+/// before spawning kernel/user tasks to execute code in the task context.
+///
+/// The bootstrap context has the following limitations:
+/// 1. No current task: Unlike the task context, the bootstrap context is not
+///    associated with a task. So calling `Task::current` in the bootstrap
+///    context always gets a `None`.
+/// 2. No turning back: The kernel code execution eventually transitions
+///    from the bootstrap context to the task context. This transition is
+///    triggered by doing `return` or by calling `Task::yield_now`
+///    in a kernel entrypoint function.
+///    Either way, there is no turning back once leaving the bootstrap context.
+///
+/// # Custom Task Scheduler
+///
+/// One key initialization step is to set up a custom task scheduler.
+/// To do so, the bootstrap code should initialize the task scheduler and then
+/// enable it by injecting it into OSTD (see `ostd::task::scheduler::inject_scheduler`).
+/// If no scheduler is injected until a scheduler-related operation (e.g., `Task::yield_now`) is triggered,
+/// then the default FIFO task scheduler will be used by OSTD.
+///
+/// # Examples
+///
+/// The high-level workflow of a typical entrypoint function is demonstrated below:
+///
+/// ```ignore
+/// use ostd::boot::smp;
+/// use ostd::task::{Task, TaskOptions};
+///
+/// #[ostd::main]
+/// fn bsp_entrypoint() {
+///     // Call `ostd::task::scheduler::inject_scheduler` here
+///     // to specify a custom scheduler.
+///
+///     // Perform initialization steps on BSP here.
+///
+///     smp::register_ap_entry(ap_entrypoint);
+///
+///     TaskOptions::new(idle_task_fn).spawn();
+///     // Returning from here transitions to the task context.
+/// }
+///
+/// fn ap_entrypoint() {
+///     // Perform initialization steps on AP here.
+///
+///     TaskOptions::new(idle_task_fn).spawn().unwrap();
+///     // Returning from here transitions to the task context.
+/// }
+///
+/// fn idle_task_fn() {
+///     loop {
+///         Task::yield_now();
+///     }
+/// }
+/// ```
 #[proc_macro_attribute]
 pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let main_fn = parse_macro_input!(item as ItemFn);
@@ -13,6 +79,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     quote!(
         #[cfg(not(ktest))]
+
         #[unsafe(no_mangle)]
         extern "Rust" fn __ostd_main() -> ! {
             #body
@@ -24,6 +91,10 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
     .into()
 }
 
+/// A macro attribute to mark the unit test kernel entry point.
+///
+/// This macro is used for internal OSDK implementation. Do not use it
+/// directly.
 #[doc(hidden)]
 #[proc_macro_attribute]
 pub fn test_main(_attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -32,6 +103,7 @@ pub fn test_main(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let body = ostd_main_body(main_fn_name);
 
     quote!(
+
         #[unsafe(no_mangle)]
         extern "Rust" fn __ostd_main() -> ! {
             #body
@@ -48,17 +120,44 @@ fn ostd_main_body(main_fn_name: &Ident) -> proc_macro2::TokenStream {
 
         ::ostd::task::Task::yield_now();
 
+
+
+
         ::core::assert!(::ostd::task::Task::current().is_none());
         ::ostd::power::poweroff(::ostd::power::ExitCode::Success);
     }
 }
 
+/// A macro attribute for the global frame allocator.
+///
+/// The attributed static variable will be used to provide frame allocation
+/// for the kernel.
+///
+/// # Examples
+///
+/// ```ignore
+/// use core::alloc::Layout;
+/// use ostd::{mm::{frame::GlobalFrameAllocator, Paddr}, global_frame_allocator};
+///
+/// // Of course it won't work because all allocations will fail.
+/// // It's just an example.
+/// #[global_frame_allocator]
+/// static ALLOCATOR: MyFrameAllocator = MyFrameAllocator;
+///
+/// struct MyFrameAllocator;
+///
+/// impl GlobalFrameAllocator for MyFrameAllocator {
+///     fn alloc(&self, _layout: Layout) -> Option<Paddr> { None }
+///     fn dealloc(&self, _paddr: Paddr, _size: usize) {}
+/// }
+/// ```
 #[proc_macro_attribute]
 pub fn global_frame_allocator(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let item = parse_macro_input!(item as syn::ItemStatic);
     let static_name = &item.ident;
 
     quote!(
+
         #[unsafe(no_mangle)]
         static __GLOBAL_FRAME_ALLOCATOR_REF: &'static dyn ::ostd::mm::frame::GlobalFrameAllocator =
             &#static_name;
@@ -68,12 +167,43 @@ pub fn global_frame_allocator(_attr: TokenStream, item: TokenStream) -> TokenStr
     .into()
 }
 
+/// A macro attribute to register the global heap allocator.
+///
+/// The attributed static variable will be used to provide heap allocation
+/// for the kernel.
+///
+/// This attribute is not to be confused with Rust's built-in
+/// [`global_allocator`] attribute, which applies to a static variable
+/// implementing the unsafe `GlobalAlloc` trait. In contrast, the
+/// [`macro@global_heap_allocator`] attribute does not require the heap allocator to
+/// implement an unsafe trait. [`macro@global_heap_allocator`] eventually relies on
+/// [`global_allocator`] to customize Rust's heap allocator.
+///
+/// # Examples
+///
+/// ```ignore
+/// use core::alloc::{AllocError, Layout};
+/// use ostd::{mm::heap::{GlobalHeapAllocator, HeapSlot}, global_heap_allocator};
+///
+/// // Of course it won't work and all allocations will fail.
+/// // It's just an example.
+/// #[global_heap_allocator]
+/// static ALLOCATOR: MyHeapAllocator = MyHeapAllocator;
+///
+/// struct MyHeapAllocator;
+///
+/// impl GlobalHeapAllocator for MyHeapAllocator {
+///     fn alloc(&self, _layout: Layout) -> Result<HeapSlot, AllocError> { None }
+///     fn dealloc(&self, _slot: HeapSlot) -> Result<(), AllocError> {}
+/// }
+/// ```
 #[proc_macro_attribute]
 pub fn global_heap_allocator(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let item = parse_macro_input!(item as syn::ItemStatic);
     let static_name = &item.ident;
 
     quote!(
+
         #[unsafe(no_mangle)]
         static __GLOBAL_HEAP_ALLOCATOR_REF: &'static dyn ::ostd::mm::heap::GlobalHeapAllocator =
             &#static_name;
@@ -83,6 +213,21 @@ pub fn global_heap_allocator(_attr: TokenStream, item: TokenStream) -> TokenStre
     .into()
 }
 
+/// A macro attribute to map allocation layouts to slot sizes and types.
+///
+/// In OSTD, both slab slots and large slots are used to serve heap allocations.
+/// Slab slots must come from slabs of fixed sizes, while large slots can be
+/// allocated by frame allocation, with sizes being multiples of pages.
+/// OSTD must know the user's decision on the size and type of a slot to serve
+/// an allocation with a given layout.
+///
+/// This macro should be used to annotate a function that maps a layout to the
+/// slot size and the type. The function should return `None` if the layout is
+/// not supported.
+///
+/// The annotated function should be idempotent, meaning the result should be the
+/// same for the same layout. OSDK enforces this by only allowing the function
+/// to be `const`.
 #[proc_macro_attribute]
 pub fn global_heap_allocator_slot_map(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let item = parse_macro_input!(item as ItemFn);
@@ -94,6 +239,7 @@ pub fn global_heap_allocator_slot_map(_attr: TokenStream, item: TokenStream) -> 
     );
 
     quote!(
+
         #[unsafe(no_mangle)]
         const extern "Rust" fn __global_heap_slot_info_from_layout(
             layout: ::core::alloc::Layout,
@@ -106,6 +252,16 @@ pub fn global_heap_allocator_slot_map(_attr: TokenStream, item: TokenStream) -> 
     .into()
 }
 
+/// A macro attribute to register a parser for early command line arguments.
+///
+/// The attributed function will be used to parse the early command line
+/// arguments. The function takes a single parameter of type `&str` and
+/// returns an `EarlyCmdline` struct.
+///
+/// Note that the function will be called during an early boot stage. It
+/// must not cause soundness issues even if OSTD has not been fully initialized
+/// (e.g., the heap may be unavailable). OSDK enforces this by only allowing
+/// the function to be `const`.
 #[proc_macro_attribute]
 pub fn early_cmdline_parser(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let item = parse_macro_input!(item as ItemFn);
@@ -117,6 +273,7 @@ pub fn early_cmdline_parser(_attr: TokenStream, item: TokenStream) -> TokenStrea
     );
 
     quote!(
+
         #[unsafe(no_mangle)]
         const extern "Rust" fn __early_cmdline_parser(
             cmdline: &str,
@@ -129,6 +286,11 @@ pub fn early_cmdline_parser(_attr: TokenStream, item: TokenStream) -> TokenStrea
     .into()
 }
 
+/// A macro attribute for the panic handler.
+///
+/// The attributed function will be used to override OSTD's default
+/// implementation of Rust's `#[panic_handler]`. The function takes a single
+/// parameter of type `&core::panic::PanicInfo` and does not return.
 #[proc_macro_attribute]
 pub fn panic_handler(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let handler_fn = parse_macro_input!(item as ItemFn);
@@ -136,6 +298,7 @@ pub fn panic_handler(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     quote!(
         #[cfg(not(ktest))]
+
         #[unsafe(no_mangle)]
         extern "Rust" fn __ostd_panic_handler(info: &::core::panic::PanicInfo) -> ! {
             #handler_fn_name(info);
@@ -147,6 +310,10 @@ pub fn panic_handler(_attr: TokenStream, item: TokenStream) -> TokenStream {
     .into()
 }
 
+/// A macro attribute for the unit test panic handler.
+///
+/// This macro is used for internal OSDK implementation. Do not use it
+/// directly.
 #[doc(hidden)]
 #[proc_macro_attribute]
 pub fn test_panic_handler(_attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -154,6 +321,7 @@ pub fn test_panic_handler(_attr: TokenStream, item: TokenStream) -> TokenStream 
     let handler_fn_name = &handler_fn.sig.ident;
 
     quote!(
+
         #[unsafe(no_mangle)]
         extern "Rust" fn __ostd_panic_handler(info: &::core::panic::PanicInfo) -> ! {
             #handler_fn_name(info);
@@ -164,6 +332,33 @@ pub fn test_panic_handler(_attr: TokenStream, item: TokenStream) -> TokenStream 
     .into()
 }
 
+/// The test attribute macro to mark a test function.
+///
+/// # Examples
+///
+/// For crates other than `ostd`,
+/// this macro can be used in the following form.
+///
+/// ```ignore
+/// use ostd::prelude::*;
+///
+/// #[ktest]
+/// fn test_fn() {
+///     assert_eq!(1 + 1, 2);
+/// }
+/// ```
+///
+/// For `ostd` crate itself,
+/// this macro can be used in the form
+///
+/// ```ignore
+/// use crate::prelude::*;
+///
+/// #[ktest]
+/// fn test_fn() {
+///     assert_eq!(1 + 1, 2);
+/// }
+/// ```
 #[proc_macro_attribute]
 pub fn ktest(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemFn);
@@ -201,6 +396,7 @@ pub fn ktest(attr: TokenStream, item: TokenStream) -> TokenStream {
         quote! {
             #[cfg(ktest)]
             #[used]
+
             #[unsafe(link_section = ".ktest_array")]
             static #fn_ktest_item_name: ::ostd_test::KtestItem = ::ostd_test::KtestItem::new(
                 #fn_name,
@@ -219,6 +415,7 @@ pub fn ktest(attr: TokenStream, item: TokenStream) -> TokenStream {
         quote! {
             #[cfg(ktest)]
             #[used]
+
             #[unsafe(link_section = ".ktest_array")]
             static #fn_ktest_item_name: ::ostd::ktest::KtestItem = ::ostd::ktest::KtestItem::new(
                 #fn_name,

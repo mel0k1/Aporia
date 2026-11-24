@@ -1,3 +1,5 @@
+//! This module specifies the type of the children of a page table node.
+
 use core::mem::ManuallyDrop;
 
 use ostd_pod::FromZeros;
@@ -11,14 +13,19 @@ use crate::{
     sync::RcuDrop,
 };
 
+/// A page table entry that owns the child of a page table node if present.
 #[derive(Debug)]
 pub(in crate::mm) enum PteState<C: PageTableConfig> {
+    /// A child page table node.
     PageTable(RcuDrop<PageTableNode<C>>),
+    /// A mapped item, often a mapped physical frame. The actual type is
+    /// defined by the page table configuration.
     Mapped(RcuDrop<C::Item>),
     Absent,
 }
 
 impl<C: PageTableConfig> PteState<C> {
+    /// Returns whether the child is not present.
     pub(in crate::mm) fn is_absent(&self) -> bool {
         matches!(self, PteState::Absent)
     }
@@ -41,6 +48,13 @@ impl<C: PageTableConfig> PteState<C> {
         }
     }
 
+    /// # Safety
+    ///
+    /// The provided PTE must be the output of [`Self::into_pte`], and the PTE:
+    ///  - must not be used to created a [`PteState`] twice;
+    ///  - must not be referenced by a living [`PteStateRef`].
+    ///
+    /// The level must match the original level of the child.
     pub(super) unsafe fn from_pte(pte: C::E, level: PagingLevel) -> Self {
         let repr = pte.to_repr(level);
 
@@ -59,14 +73,25 @@ impl<C: PageTableConfig> PteState<C> {
     }
 }
 
+/// A reference to the child of a page table node.
 #[derive(Debug)]
 pub(in crate::mm) enum PteStateRef<'a, C: PageTableConfig> {
+    /// A child page table node.
     PageTable(PageTableNodeRef<'a, C>),
+    /// A reference to a mapped item, often a mapped physical frame. The actual
+    /// reference type is defined by the page table configuration.
     Mapped(C::ItemRef<'a>),
     Absent,
 }
 
 impl<C: PageTableConfig> PteStateRef<'_, C> {
+    /// # Safety
+    ///
+    /// The PTE must be the output of a [`PteState::into_pte`], where the child
+    /// outlives the reference created by this function.
+    ///
+    /// The provided level must be the same with the level of the page table
+    /// node that contains this PTE.
     pub(super) unsafe fn from_pte(pte: &C::E, level: PagingLevel) -> Self {
         let repr = pte.to_repr(level);
 

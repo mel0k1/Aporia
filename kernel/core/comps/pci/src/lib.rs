@@ -1,3 +1,8 @@
+//! PCI enumeration, topology, and device-model integration.
+//!
+//! Drivers implement `aster_device::bus::Driver<PciBus>` and register with [`PCI_BUS`].
+//! Devices keep their identity and resources in [`PciCommonDevice`] while bound or unbound.
+
 #![no_std]
 #![deny(unsafe_code)]
 
@@ -46,6 +51,7 @@ fn pci_init() -> Result<(), ComponentInitError> {
     Ok(())
 }
 
+/// The PCI bus instance.
 pub static PCI_BUS: Once<Arc<BusHandle<PciBus>>> = Once::new();
 
 fn init() {
@@ -152,7 +158,9 @@ fn register_function(
 
 #[derive(Debug)]
 enum Error {
+    /// A bus number is outside the accessible range.
     InvalidTopology,
+    /// The device model failed to register a PCI function or root device.
     DeviceModel(#[expect(dead_code)] aster_device::common::Error),
 }
 

@@ -18,9 +18,15 @@ use crate::{
     process::{Gid, Uid},
 };
 
+/// Same major number with Linux.
 const PTMX_MAJOR_NUM: u16 = 5;
+/// Same minor number with Linux.
 const PTMX_MINOR_NUM: u32 = 2;
 
+/// Ptmx is the multiplexing master of devpts.
+///
+/// Every time the multiplexing master is opened, a new instance of pty master inode is returned
+/// and an corresponding pty slave inode is also created.
 pub(crate) struct Ptmx {
     inner: Inner,
     metadata: RwLock<Metadata>,

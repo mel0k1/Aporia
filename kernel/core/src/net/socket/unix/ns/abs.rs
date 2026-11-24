@@ -41,10 +41,10 @@ impl HandleTable {
 
         let mut entry = handles.entry(name.clone());
 
-        if let Entry::Occupied(ref occupied) = entry {
-            if occupied.get().strong_count() > 0 {
-                return None;
-            }
+        if let Entry::Occupied(ref occupied) = entry
+            && occupied.get().strong_count() > 0
+        {
+            return None;
         }
 
         let new_handle = Arc::new(AbstractHandle::new(name));

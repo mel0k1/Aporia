@@ -1,3 +1,9 @@
+//! A lightweight fixed-point number implementation optimized for kernel use.
+//!
+//! This crate provides a minimal, safe fixed-point arithmetic implementation
+//! designed specifically for kernel development where zero `unsafe` code usage
+//! throughout the entire implementation.
+
 use core::{
     fmt,
     ops::{Add, Div, Mul, Sub},
@@ -5,6 +11,17 @@ use core::{
 
 macro_rules! define_fixed_unsigned {
     ($name:ident, $raw:ty, $wide:ty) => {
+        /// A generic fixed-point number with `FRAC_BITS` fractional bits.
+        ///
+        /// This type represents a non-negative real number using an unsigned
+        /// integer for storage, with the lower `FRAC_BITS` representing the
+        /// fractional part.
+        ///
+        /// **Standard arithmetic operations can overflow and wrap around.**
+        /// This follows Rust's default integer overflow behavior.
+        ///
+        /// For safer arithmetic that prevents overflow, use the
+        /// `saturating_*` methods.
         #[derive(Clone, Copy, Debug, Eq, PartialEq)]
         pub struct $name<const FRAC_BITS: u32>($raw);
 
@@ -15,6 +32,10 @@ macro_rules! define_fixed_unsigned {
             pub const ONE: Self = Self(Self::FRAC_SCALE);
             const MAX_INT: $raw = <$raw>::MAX >> FRAC_BITS;
 
+            /// Creates a fixed-point number from an integer.
+            ///
+            /// If the value is too large to be represented, it will saturate
+            /// at the maximum representable value.
             pub const fn saturating_from_num(val: $raw) -> Self {
                 if val > Self::MAX_INT {
                     Self(<$raw>::MAX)
@@ -23,22 +44,27 @@ macro_rules! define_fixed_unsigned {
                 }
             }
 
+            /// Creates a fixed-point number from raw bits.
             pub const fn from_raw(raw: $raw) -> Self {
                 Self(raw)
             }
 
+            /// Returns the raw underlying fixed-point value.
             pub const fn raw(self) -> $raw {
                 self.0
             }
 
+            /// Adds two fixed-point numbers, saturating on overflow.
             pub const fn saturating_add(self, other: Self) -> Self {
                 Self(self.0.saturating_add(other.0))
             }
 
+            /// Subtracts two fixed-point numbers, saturating on underflow.
             pub const fn saturating_sub(self, other: Self) -> Self {
                 Self(self.0.saturating_sub(other.0))
             }
 
+            /// Multiplies two fixed-point numbers, saturating on overflow.
             pub const fn saturating_mul(self, other: Self) -> Self {
                 let result = (self.0 as $wide * other.0 as $wide) >> FRAC_BITS;
                 Self(if result > <$raw>::MAX as $wide {
@@ -48,6 +74,9 @@ macro_rules! define_fixed_unsigned {
                 })
             }
 
+            /// Divides two fixed-point numbers, saturating on overflow.
+            ///
+            /// Returns `None` if division by zero is attempted.
             pub const fn saturating_div(self, other: Self) -> Option<Self> {
                 if other.0 == 0 {
                     return None;

@@ -1,3 +1,14 @@
+//! NVMe Block Device implementation.
+//!
+//! Implements the [`aster_block::BlockDevice`] trait on top of the NVMe transport.
+//! BIOs are staged in [`BioRequestSingleQueue`] and drained by repeated calls to
+//! [`NvmeBlockDevice::handle_requests`] from the kernel registry's per-device kthread.
+//!
+//! Each in-flight hardware command is stored in the I/O submission queue's per-slot
+//! context under its CID. One [`BioRequest`] may require several NVMe commands (MDTS /
+//! NLB limits), so those CIDs share one [`InFlightRequest`] that completes the whole
+//! `BioRequest` when the last command finishes.
+
 use alloc::{borrow::ToOwned, format, string::String, sync::Arc, vec, vec::Vec};
 use core::{
     ffi::CStr,
@@ -40,8 +51,11 @@ use crate::{
     transport::pci::transport::{NvmePciTransport, NvmePciTransportLock},
 };
 
+/// Admin submission and completion queue pair (NVMe queue ID 0).
 const ADMIN_QID: usize = 0;
+/// I/O submission and completion queue pair (NVMe queue ID 1).
 const IO_QID: usize = 1;
+
 ostd::const_assert!(IO_QID + 1 == QUEUE_NUM);
 
 #[derive(Debug)]
@@ -85,6 +99,8 @@ impl NvmeBlockDevice {
         Ok(())
     }
 
+    /// Dequeues a `BioRequest` from the software staging queue and
+    /// processes the request.
     pub fn handle_requests(&self) {
         let request = self.queue.dequeue();
         debug!("Handle Request: {:?}", request);
@@ -130,6 +146,7 @@ fn formatted_device_name(index: u32, nsid: u32) -> String {
 
 struct NvmeDeviceInner {
     submission_queues: [SpinLock<NvmeSubmissionQueueWithRequests, LocalIrqDisabled>; QUEUE_NUM],
+
     completion_queues: [SpinLock<NvmeCompletionQueue>; QUEUE_NUM],
     completion_wait_queues: [WaitQueue; QUEUE_NUM],
     transport: NvmePciTransportLock,
@@ -148,6 +165,10 @@ enum IoOp {
     Write,
 }
 
+/// Shared state for one outstanding [`BioRequest`] that may span multiple NVMe commands.
+///
+/// Large requests are split across several NVMe commands, so multiple
+/// [`SubmittedRequest`] entries share this state until `remaining` reaches zero.
 struct InFlightRequest {
     bio_request: SpinLock<Option<BioRequest>>,
     remaining: AtomicUsize,
@@ -173,6 +194,10 @@ impl InFlightRequest {
     }
 }
 
+/// Per-command completion context stored until the matching CQE arrives.
+///
+/// The table key is the command's CID, and `_prp` keeps PRP list pages alive for
+/// the command lifetime.
 struct SubmittedRequest {
     request: Arc<InFlightRequest>,
     _prp: Option<PrpPointers>,
@@ -212,6 +237,7 @@ impl NvmeDeviceInner {
         }
 
         let timeout_units = (cap >> NvmeRegs64::CAP_TO_SHIFT) & NvmeRegs64::CAP_TO_MASK;
+
         let timeout_millis = timeout_units.max(1) * Self::CAP_TO_UNIT_MILLIS;
         let controller_ready_timeout = Duration::from_millis(timeout_millis);
 
@@ -247,6 +273,7 @@ impl NvmeDeviceInner {
         Ok((device, io_msix_vectors))
     }
 
+    /// Registers MSI-X handlers that wake completion wait queues for admin and I/O queues.
     fn setup_msix_handlers(
         &self,
         block_device: &Arc<NvmeBlockDevice>,
@@ -294,6 +321,7 @@ impl NvmeDeviceInner {
         self.submit_io_commands(&inflight, vec![(entry, None)]);
     }
 
+    /// Builds and submits all NVMe commands for `bio_request` without waiting for completion.
     fn submit_request(&self, bio_request: BioRequest, io_op: IoOp) {
         let mut prepared = Vec::new();
         let mut is_build_failed = false;
@@ -302,6 +330,7 @@ impl NvmeDeviceInner {
         for bio in bio_request.bios() {
             for segment in bio.segments() {
                 let dma_slice = segment.dma_slice();
+
                 debug_assert!(dma_slice.daddr().is_multiple_of(SECTOR_SIZE));
                 debug_assert!(dma_slice.size().is_multiple_of(SECTOR_SIZE));
 
@@ -364,6 +393,10 @@ impl NvmeDeviceInner {
         Ok((entry, Some(prp)))
     }
 
+    /// Enqueues commands for a shared [`InFlightRequest`], then rings the SQ doorbell.
+    ///
+    /// Each command is an SQE plus optional PRP pages (`None` for commands like flush).
+    /// If the I/O SQ is full, waits until the MSI-X handler drains completions and frees slots.
     fn submit_io_commands(
         &self,
         request: &Arc<InFlightRequest>,
@@ -401,6 +434,10 @@ impl NvmeDeviceInner {
         });
     }
 
+    /// Drains ready I/O completions and finishes any requests whose commands have all completed.
+    ///
+    /// Each CQE is matched by CID to an entry in the I/O submission queue. Invoked from the
+    /// I/O MSI-X handler.
     fn handle_io_completions(&self) {
         let completions = self.lock_cq(IO_QID).complete();
 
@@ -495,20 +532,35 @@ struct InitContext {
 struct IoMsixVectors([u16; QUEUE_NUM - 1]);
 
 impl InitContext {
+    /// Controller Configuration Enable bit.
     const CC_ENABLE: u32 = 0x1;
+    /// Controller Configuration I/O Submission Queue Entry Size shift.
     const IOSQES_SHIFT: u32 = 16;
+    /// Controller Configuration I/O Submission Queue Entry Size value.
     const IOSQES_VALUE: u32 = 6;
+    /// Controller Configuration I/O Completion Queue Entry Size shift.
     const IOCQES_SHIFT: u32 = 20;
+    /// Controller Configuration I/O Completion Queue Entry Size value.
     const IOCQES_VALUE: u32 = 4;
+    /// Controller Configuration memory page size shift.
     const MPS_SHIFT: u32 = 7;
+    /// Controller Configuration command set selection shift.
     const CSS_SHIFT: u32 = 4;
+    /// Controller Configuration arbitration mechanism shift.
     const AMS_SHIFT: u32 = 11;
+    /// Controller Configuration memory page size mask.
     const MPS_MASK: u32 = 0b1111 << Self::MPS_SHIFT;
+    /// Controller Configuration command set selection mask.
     const CSS_MASK: u32 = 0b111 << Self::CSS_SHIFT;
+    /// Controller Configuration arbitration mechanism mask.
     const AMS_MASK: u32 = 0b111 << Self::AMS_SHIFT;
+    /// Controller Configuration IOSQES field mask.
     const IOSQES_MASK: u32 = 0b1111 << Self::IOSQES_SHIFT;
+    /// Controller Configuration IOCQES field mask.
     const IOCQES_MASK: u32 = 0b1111 << Self::IOCQES_SHIFT;
+    /// Controller Status Ready bit.
     const CSTS_RDY: u32 = 0x1;
+    /// Controller Fatal Status bit.
     const CSTS_CFS: u32 = 0x2;
 
     fn new(
@@ -815,16 +867,32 @@ struct IdentifyNamespaceListData {
     nsids: [u32; MAX_NS_NUM],
 }
 
+/// Identify Namespace data structure returned for CNS 00h
+/// (NVM Command Set Specification Figure 114).
+///
+/// Only the fields needed to determine the active LBA format are captured here;
+/// the remaining bytes of the 4096-byte response are not used.
 #[repr(C)]
 #[derive(Clone, Copy, Pod)]
 struct IdentifyNamespaceData {
+    /// NSZE: total number of logical blocks.
     nsze: u64,
+    /// NCAP: namespace capacity in logical blocks.
     _ncap: u64,
+    /// NUSE: namespace utilization in logical blocks.
     _nuse: u64,
+    /// NSFEAT (byte 24).
     _nsfeat: u8,
+    /// NLBAF: number of LBA formats supported minus one (byte 25).
     _nlbaf: u8,
+    /// FLBAS: formatted LBA size; bits[3:0] index into `lbaf[]` (byte 26).
     flbas: u8,
+    /// RESERVED: bytes 27–127.
     _reserved: [u8; 101],
+    /// LBAF[0..15]: LBA format support descriptors (bytes 128–191).
+    ///
+    /// Each entry is a u32: bits[23:16] = LBADS (LBA data-size exponent,
+    /// so actual size = 2^LBADS bytes).
     lbaf: [u32; 16],
 }
 
@@ -837,9 +905,15 @@ fn bytes_to_cstr_string(bytes: &[u8]) -> String {
     }
 }
 
+/// Maximum bytes transferable in one NVMe command.
+///
+/// `NLB` is zero-based in a `u16`, so one command covers at most 65536 LBAs.
 const MAX_BYTES_BY_NLB: NonZeroUsize =
     NonZeroUsize::new((u16::MAX as usize + 1) * SECTOR_SIZE).unwrap();
 
+/// Converts Identify Controller MDTS into an effective per-command byte limit.
+///
+/// MDTS `0` means no device-side limit; we still cap at [`MAX_BYTES_BY_NLB`].
 fn max_io_bytes_from_mdts(mdts: u8) -> NonZeroUsize {
     if mdts == 0 {
         return MAX_BYTES_BY_NLB;
@@ -952,6 +1026,8 @@ mod test {
         assert!(read_buf.iter().all(|&x| x == TEST_CHAR));
     }
 
+    /// Submits one bio built from many single-page segments so the driver must issue
+    /// multiple NVMe commands for that bio.
     #[ktest]
     fn multi_segment_bio_uses_queue_depth() {
         ensure_initialized();
@@ -994,6 +1070,10 @@ mod test {
         );
     }
 
+    /// Builds and submits one bio whose segments have the given page counts.
+    ///
+    /// - `&[n]`: one contiguous segment of `n` pages (basic R/W).
+    /// - `&[1, 1, ...]`: many single-page segments (exercises multi-command depth).
     fn create_and_submit_bio(
         device: &NvmeBlockDevice,
         io_batch: &mut IoBatch,

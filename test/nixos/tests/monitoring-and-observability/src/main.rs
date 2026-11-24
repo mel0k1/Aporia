@@ -1,6 +1,17 @@
+
+
+//! The test suite for monitoring and observability applications on Asterinas NixOS.
+//!
+//! See `test/nixos/README.md#documentation-maintenance` for sync requirements
+//! between this test suite and the corresponding "Verified Usage" book section.
+
 use nixos_test_framework::*;
 
 nixos_test_main!();
+
+
+
+
 
 #[nixos_test]
 fn prometheus_query_metrics(nixos_shell: &mut Session) -> Result<(), Error> {

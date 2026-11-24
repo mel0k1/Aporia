@@ -95,47 +95,89 @@ bitflags::bitflags! {
     }
 }
 
+/// File status; `struct stat` in Linux.
+///
+/// This is the x86_64-specific version.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.16.9/source/arch/x86/include/uapi/asm/stat.h#L83>.
 #[cfg(target_arch = "x86_64")]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
 struct Stat {
+    /// Device.
     st_dev: u64,
+    /// File serial number.
     st_ino: u64,
+    /// Link count.
     st_nlink: u64,
+    /// File mode.
     st_mode: u32,
+    /// User ID of the file's owner.
     st_uid: u32,
+    /// Group ID of the file's group.
     st_gid: u32,
+    /// Padding bytes.
     __pad0: u32,
+    /// Device number, if device.
     st_rdev: u64,
+    /// Total size, in bytes
     st_size: i64,
+    /// Optimal block size for I/O.
     st_blksize: i64,
+    /// Number 512-byte blocks allocated.
     st_blocks: i64,
+    /// Time of last access.
     st_atime: timespec_t,
+    /// Time of last modification.
     st_mtime: timespec_t,
+    /// Time of last status change.
     st_ctime: timespec_t,
+    /// Unused fields.
     __unused: [i64; 3],
 }
 
+/// File status; `struct stat` in Linux.
+///
+/// This is the generic version that is used by most popular 64-bit architectures except x86_64.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.16.9/source/include/uapi/asm-generic/stat.h#L24>.
 #[cfg(not(target_arch = "x86_64"))]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
 struct Stat {
+    /// Device.
     st_dev: u64,
+    /// File serial number.
     st_ino: u64,
+    /// File mode.
     st_mode: u32,
+    /// Link count.
     st_nlink: u32,
+    /// User ID of the file's owner.
     st_uid: u32,
+    /// Group ID of the file's group.
     st_gid: u32,
+    /// Device number, if device.
     st_rdev: u64,
+    /// Padding bytes.
     __pad1: u64,
+    /// Size of file, in bytes.
     st_size: i64,
+    /// Optimal block size for I/O.
     st_blksize: i32,
+    /// Padding bytes.
     __pad2: i32,
+    /// Number 512-byte blocks allocated.
     st_blocks: i64,
+    /// Time of last access.
     st_atime: timespec_t,
+    /// Time of last modification.
     st_mtime: timespec_t,
+    /// Time of last status change.
     st_ctime: timespec_t,
+    /// Unused fields.
     __unused4: u32,
+    /// Unused fields.
     __unused5: u32,
 }
 

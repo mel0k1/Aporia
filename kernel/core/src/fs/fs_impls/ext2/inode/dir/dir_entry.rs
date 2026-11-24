@@ -1,3 +1,45 @@
+//! Ext2 directory entry layout, validation, and page-cache access.
+//!
+//! Ext2 stores directory contents as a flat linear list of variable-length
+//! records packed into ordinary data blocks. Each record begins with an
+//! 8-byte `DirEntryHeader` followed immediately by the entry's name bytes.
+//! The `inode` module's directory operations (lookup, create, unlink, readdir)
+//! access these records through `DirBlockView`, which provides a bounded view
+//! into one Ext2 directory block.
+//! A view may cover a whole block or a sub-range used for a single write,
+//! but it never crosses the block boundary because Ext2 directory entries
+//! cannot span blocks.
+//!
+//! # On-disk format
+//!
+//! ```text
+//! ┌──────────────────────────────────────────────────────────┐
+//! │ inode (4 B) │ rec_len (2 B) │ name_len (1 B) │ type (1 B)│ name … │ pad …
+//! └──────────────────────────────────────────────────────────┘
+//! ```
+//!
+//! - `rec_len` — byte length of this entire record (header + name + padding),
+//!   always a multiple of 4. The last record in a block is padded to fill the
+//!   block, so its `rec_len` may be much larger than its `name_len` requires.
+//! - `ino == 0` — marks a free (deleted) slot. The iterator yields it with
+//!   an empty name, and higher-level directory operations decide whether to
+//!   skip or reuse it.
+//! - `file_type` — the `DirEntryFileType` byte encodes the inode type,
+//!   avoiding an extra inode lookup during readdir.
+//!
+//! # Types
+//!
+//! - `DirEntryHeader` — the 8-byte on-disk header (`#[repr(C)]`, `Pod`).
+//! - `DirEntry` — a parsed header plus a borrowed name slice from the
+//!   iterator's reusable name buffer.
+//! - `DirEntryFileType` — the `file_type` field enum, with conversions
+//!   to/from `InodeType`.
+//! - `DirBlockView` — a bounded view into one directory block,
+//!   providing entry iteration, entry writing, deletion, and field updates.
+//! - `DirBlockViewIter` — the iterator returned by `DirBlockView::iter_entries`;
+//!   reads entry headers from the page cache, copies live-entry names into a
+//!   reusable buffer, and validates each header before yielding it.
+
 use ostd::const_assert;
 
 use crate::fs::{ext2::prelude::*, utils::NAME_MAX};
@@ -5,6 +47,9 @@ use crate::fs::{ext2::prelude::*, utils::NAME_MAX};
 pub(super) const DOT_BYTE: &[u8] = b".";
 pub(super) const DOT_DOT_BYTE: &[u8] = b"..";
 
+/// Parsed ext2 directory entry.
+///
+/// The `name` slice borrows from the iterator's reusable name buffer.
 #[derive(Clone, Debug)]
 pub(super) struct DirEntry<'a> {
     pub header: DirEntryHeader,
@@ -54,6 +99,7 @@ impl From<InodeType> for DirEntryFileType {
     }
 }
 
+/// On-disk directory entry header.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(super) struct DirEntryHeader {
@@ -70,20 +116,29 @@ impl DirEntryHeader {
     const FILE_TYPE_OFFSET: usize = core::mem::offset_of!(DirEntryHeader, file_type);
     const ALIGN_MASK: usize = 3;
 
+    /// Returns the minimal record length for a given name length.
     pub(super) const fn min_rec_len(name_len: usize) -> u16 {
         ((name_len + size_of::<Self>()).next_multiple_of(4)) as u16
     }
 }
 
+/// A bounded view into one Ext2 directory block in the page cache.
+///
+/// Ext2 directory entries cannot cross block boundaries.
+/// `from_index` creates a block-aligned view for iteration and deletion;
+/// `create_view` creates a temporary sub-view for writing inside one block.
 pub(super) struct DirBlockView<'a> {
     page_cache: &'a PageCache,
+    /// Absolute byte offset of this view in the page cache.
     offset: usize,
+    /// Valid data length within this view.
     limit: usize,
 }
 
 impl<'a> DirBlockView<'a> {
     const HEADER_LEN: usize = size_of::<DirEntryHeader>();
 
+    /// Creates a block-aligned `DirBlockView` from a block index.
     pub(super) fn from_index(
         page_cache: &'a PageCache,
         block_idx: usize,
@@ -98,6 +153,7 @@ impl<'a> DirBlockView<'a> {
         }
     }
 
+    /// Creates a non-aligned temporary view for writing a single entry.
     pub(super) fn create_view(page_cache: &'a PageCache, offset: usize, limit: usize) -> Self {
         let block_remaining = BLOCK_SIZE - offset % BLOCK_SIZE;
         debug_assert!(limit <= block_remaining);
@@ -109,6 +165,11 @@ impl<'a> DirBlockView<'a> {
         }
     }
 
+    /// Reads and validates a directory entry header at an absolute offset.
+    ///
+    /// `offset` is an absolute byte offset in the page cache, matching the
+    /// iterator cursor. The header is checked before being returned, so callers
+    /// can use its `rec_len` and `name_len` to advance within this view.
     fn read_header(&self, offset: usize) -> Result<DirEntryHeader> {
         let header: DirEntryHeader = self
             .page_cache
@@ -145,6 +206,7 @@ impl<'a> DirBlockView<'a> {
         Ok(header)
     }
 
+    /// Returns an iterator over entries in this view.
     pub(super) fn iter_entries(&self) -> DirBlockViewIter<'_> {
         DirBlockViewIter {
             block: self,
@@ -153,6 +215,7 @@ impl<'a> DirBlockView<'a> {
         }
     }
 
+    /// Writes a complete directory entry (header + name) at `entry_offset`.
     pub(super) fn write_entry(
         &self,
         entry_offset: usize,
@@ -171,6 +234,7 @@ impl<'a> DirBlockView<'a> {
         Ok(())
     }
 
+    /// Deletes an entry and merges its `rec_len` into the predecessor if one exists.
     pub(super) fn delete_entry(&self, entry_offset: usize, entry_rec_len: usize) -> Result<()> {
         let entry_end_offset = entry_offset + entry_rec_len;
         if entry_rec_len == 0 || entry_end_offset > self.limit {
@@ -212,12 +276,14 @@ impl<'a> DirBlockView<'a> {
         Ok(())
     }
 
+    /// Overwrites the inode number field at an entry offset.
     pub(super) fn set_inode(&self, entry_offset: usize, ino: Ext2Ino) -> Result<()> {
         let entry_abs_offset = self.offset + entry_offset;
         self.page_cache.write_val(entry_abs_offset, &ino.to_le())?;
         Ok(())
     }
 
+    /// Overwrites the `rec_len` field at an entry offset.
     pub(super) fn set_rec_len(&self, entry_offset: usize, rec_len: u16) -> Result<()> {
         let rec_len_abs_offset = self.offset + entry_offset + DirEntryHeader::REC_LEN_OFFSET;
         self.page_cache
@@ -225,6 +291,7 @@ impl<'a> DirBlockView<'a> {
         Ok(())
     }
 
+    /// Overwrites the file type byte at an entry offset.
     pub(super) fn set_file_type(
         &self,
         entry_offset: usize,
@@ -237,13 +304,21 @@ impl<'a> DirBlockView<'a> {
     }
 }
 
+/// Iterator over directory entries in a [`DirBlockView`].
 pub(super) struct DirBlockViewIter<'a> {
     block: &'a DirBlockView<'a>,
+    /// Absolute offset of the next entry in the page cache.
     cursor: usize,
+    /// Reusable buffer for the current entry's name bytes.
     name_buf: [u8; NAME_MAX],
 }
 
 impl DirBlockViewIter<'_> {
+    /// Reads the next entry header and advances the iterator.
+    ///
+    /// Returns `(offset_within_block, DirEntryHeader)` when an entry is found.
+    /// The `offset_within_block` is relative to the start of the
+    /// `DirBlockView`.
     pub(super) fn next_entry_header(&mut self) -> Result<Option<(usize, DirEntryHeader)>> {
         let end = self.block.offset + self.block.limit;
         if self.cursor >= end {
@@ -258,6 +333,13 @@ impl DirBlockViewIter<'_> {
         Ok(Some((entry_offset, header)))
     }
 
+    /// Reads the next entry and advances the iterator.
+    ///
+    /// Returns `(offset_within_block, DirEntry)` when an entry is found. The
+    /// `offset_within_block` is relative to the start of the `DirBlockView`.
+    /// Deleted entries are returned with an empty `name`.
+    ///
+    /// The returned `name` borrows from the iterator's reusable buffer.
     pub(super) fn next_entry(&mut self) -> Result<Option<(usize, DirEntry<'_>)>> {
         let Some((entry_offset, header)) = self.next_entry_header()? else {
             return Ok(None);
@@ -300,8 +382,11 @@ mod test {
         assert_eq!(DirEntryHeader::min_rec_len(2), 12);
         assert_eq!(DirEntryHeader::min_rec_len(3), 12);
         assert_eq!(DirEntryHeader::min_rec_len(4), 12);
+
         assert_eq!(DirEntryHeader::min_rec_len(5), 16);
+
         assert_eq!(DirEntryHeader::min_rec_len(255), 264);
+
         for name_len in 0..=NAME_MAX {
             assert_eq!(DirEntryHeader::min_rec_len(name_len) % 4, 0);
         }

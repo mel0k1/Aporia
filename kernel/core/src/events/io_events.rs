@@ -12,6 +12,7 @@ bitflags! {
         const NVAL        = 0x0020;
         const RDNORM      = 0x0040;
         const RDHUP       = 0x2000;
+        /// Events that are always polled even without specifying them.
         const ALWAYS_POLL = Self::ERR.bits() | Self::HUP.bits();
     }
 }

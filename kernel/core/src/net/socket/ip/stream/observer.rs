@@ -25,11 +25,13 @@ impl SocketEventObserver for StreamObserver {
 
         if events.contains(SocketEvents::CLOSED_RECV) {
             io_events |= IoEvents::IN | IoEvents::RDHUP;
+
             io_events |= IoEvents::HUP | IoEvents::ERR;
         }
 
         if events.contains(SocketEvents::CLOSED_SEND) {
             io_events |= IoEvents::OUT;
+
             io_events |= IoEvents::HUP | IoEvents::ERR;
         }
 

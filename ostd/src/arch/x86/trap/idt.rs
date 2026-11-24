@@ -1,3 +1,5 @@
+//! Configure the Interrupt Descriptor Table (IDT).
+
 use core::arch::global_asm;
 
 use spin::Once;
@@ -20,10 +22,16 @@ unsafe extern "C" {
 
 static GLOBAL_IDT: Once<[Entry<()>; NUM_INTERRUPTS]> = Once::new();
 
+/// Returns the IDT base address.
 pub(in crate::arch) fn idt_base() -> Vaddr {
     GLOBAL_IDT.get().unwrap().as_ptr() as Vaddr
 }
 
+/// Initializes and loads the IDT.
+///
+/// The caller should only call this method once in the boot context for each available processor.
+/// This is not a safety requirement, however, because calling this method again will do nothing
+/// more than load the same IDT.
 pub(super) fn init_on_cpu() {
     let idt = GLOBAL_IDT.call_once(|| {
         let mut idt = [const { Entry::missing() }; NUM_INTERRUPTS];
@@ -34,6 +42,7 @@ pub(super) fn init_on_cpu() {
             let handler = VirtAddr::new(handler as u64);
 
             let entry = &mut idt[intr_no];
+
             let opt = unsafe { entry.set_handler_addr(handler) };
 
             if intr_no == 3 || intr_no == 4 {
@@ -48,5 +57,6 @@ pub(super) fn init_on_cpu() {
         limit: (size_of_val(idt) - 1) as u16,
         base: VirtAddr::new(idt.as_ptr().addr() as u64),
     };
+
     unsafe { lidt(&idtr) };
 }

@@ -1,3 +1,34 @@
+//! This module defines the message segment,
+//! which is the basic unit of a netlink message.
+//!
+//! Typically, a segment will consist of three parts:
+//!
+//! 1. Header: The headers of all segments are of type [`CMsgSegHdr`],
+//!    which indicate the type and total length of the segment.
+//!
+//! 2. Body: The body is the main component of a segment.
+//!    Each segment will have one and only one body.
+//!    The body type is defined by the `type_` field of the header.
+//!
+//! 3. Attributes: Attributes are optional.
+//!    A segment can have zero or multiple attributes.
+//!    Attributes belong to different classes,
+//!    with the class defined by the `type_` field of the header.
+//!    The total number of attributes is controlled by the `len` field of the header.
+//!
+//! Note that all headers, bodies, and attributes require
+//! their starting address in memory to be aligned to [`NLMSG_ALIGN`]
+//! when copying to and from user space.
+//! Therefore, necessary padding must be added to ensure alignment.
+//!
+//! The layout of a segment in memory is shown below:
+//!
+//! ┌────────┬─────────┬──────┬─────────┬──────┬──────┬──────┐
+//! │ Header │ Padding │ Body │ Padding │ Attr │ Attr │ Attr │
+//! └────────┴─────────┴──────┴─────────┴──────┴──────┴──────┘
+//!
+//! [`NLMSG_ALIGN`]: crate::net::socket::netlink::message::NLMSG_ALIGN
+
 pub(super) mod addr;
 mod legacy;
 pub(super) mod link;
@@ -14,6 +45,7 @@ use crate::{
     util::{MultiRead, MultiWrite},
 };
 
+/// The netlink route segment, which is the basic unit of a netlink route message.
 #[derive(Debug)]
 pub(crate) enum RtnlSegment {
     NewLink(LinkSegment),

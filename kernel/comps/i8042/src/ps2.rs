@@ -1,3 +1,5 @@
+//! Common utilities for PS/2 devices.
+
 use crate::controller::{I8042Controller, I8042ControllerError};
 
 const PS2_CMD_RESET: u8 = 0xFF;
@@ -8,6 +10,7 @@ const PS2_NAK: u8 = 0xFE;
 const PS2_ERR: u8 = 0xFC;
 const PS2_RESULTS: &[u8] = &[PS2_ACK, PS2_NAK, PS2_ERR];
 
+/// PS/2 device commands.
 pub(super) trait Command {
     const CMD_BYTE: u8;
     const DATA_LEN: usize;
@@ -32,6 +35,7 @@ macro_rules! define_commands {
 }
 pub(super) use define_commands;
 
+/// Context to perform PS/2 commands.
 pub(super) trait CommandCtx {
     fn controller(&mut self) -> &mut I8042Controller;
 
@@ -45,9 +49,11 @@ pub(super) trait CommandCtx {
         if controller.wait_for_specific_data(PS2_RESULTS)? != PS2_ACK {
             return Err(I8042ControllerError::DeviceResetFailed);
         }
+
         if controller.wait_long_and_recv_data()? != PS2_BAT_OK {
             return Err(I8042ControllerError::DeviceResetFailed);
         }
+
         Ok(controller.wait_and_recv_data().ok())
     }
 

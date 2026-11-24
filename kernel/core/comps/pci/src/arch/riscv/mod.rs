@@ -1,3 +1,5 @@
+//! PCI bus access
+
 use core::ops::RangeInclusive;
 
 use fdt_util::AcquireIoMems;
@@ -28,18 +30,23 @@ pub(crate) fn read32(location: &PciDeviceLocation, offset: u32) -> Result<u32, E
         .read_once((encode_as_address_offset(location) | offset) as usize)
 }
 
+/// The maximum offset in the 12-bit configuration space when using [`encode_as_address_offset`].
 const PCI_ECAM_MAX_OFFSET: u32 = 0xffc;
 
 const PCI_ECAM_BUS_SHIFT: u32 = 20;
 const PCI_ECAM_DEVICE_SHIFT: u32 = 15;
 const PCI_ECAM_FUNCTION_SHIFT: u32 = 12;
 
+/// Encodes the bus, device, and function into an address offset in the PCI MMIO region.
 fn encode_as_address_offset(location: &PciDeviceLocation) -> u32 {
     ((location.bus as u32) << PCI_ECAM_BUS_SHIFT)
         | ((location.device as u32) << PCI_ECAM_DEVICE_SHIFT)
         | ((location.function as u32) << PCI_ECAM_FUNCTION_SHIFT)
 }
 
+/// Initializes the platform-specific module for accessing the PCI configuration space.
+///
+/// Returns a range for the PCI bus number, or [`None`] if there is no PCI bus.
 pub(crate) fn init() -> Option<RangeInclusive<u8>> {
     let Some(pci) = DEVICE_TREE
         .get()

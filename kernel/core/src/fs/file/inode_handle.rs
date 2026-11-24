@@ -1,3 +1,5 @@
+//! Opened Inode-backed File Handle
+
 use core::fmt::Display;
 
 use super::{
@@ -23,8 +25,12 @@ use crate::{
 };
 
 pub(crate) struct InodeHandle {
+    /// `open_file` is similar to the `file_private` field in Linux's `file` structure. If
+    /// `open_file` is `Some(_)`, typical file operations including `read`, `write`, `poll`,
+    /// and `ioctl` will be provided by the per-open file object instead of `path`.
     open_file: Option<Box<dyn PerOpenFileOps>>,
     offset: Mutex<usize>,
+    /// Path and common states of the handle.
     common: FileCommon,
 }
 
@@ -103,6 +109,8 @@ impl InodeHandle {
         (inode.as_ref(), is_offset_aware)
     }
 
+    /// Returns the `FileOps` for positional I/O, rejecting files
+    /// that do not support `pread`/`pwrite`.
     fn file_ops_for_positional_io(&self) -> Result<&dyn FileOps> {
         if let Some(ref open_file) = self.open_file {
             open_file.check_positional_io()?;
@@ -379,6 +387,7 @@ impl FileLike for InodeHandle {
         if self.status_flags().contains(StatusFlags::O_APPEND) {
             return Err(errno!(EPERM, "can not resize append-only file"));
         }
+
         self.path().resize_unchecked_access(new_size)
     }
 
@@ -508,6 +517,7 @@ impl Debug for InodeHandle {
     }
 }
 
+/// Describes the position to seek from.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SeekFrom {
     Start(usize),
@@ -515,15 +525,39 @@ pub(crate) enum SeekFrom {
     Current(isize),
 }
 
+/// File operations for one opened file description.
+///
+/// A per-open file object can hold file-description-specific state and override
+/// operations that are not purely inode-backed, such as state and operations for
+/// devices, pipes, namespace files, and procfs files.
 pub trait PerOpenFileOps: Pollable + FileOps + Any + Send + Sync + 'static {
+    /// Checks whether the `seek()` operation should fail.
     fn check_seekable(&self) -> Result<()>;
 
+    /// Returns whether the `read()`/`write()` operation should use and advance the offset.
+    ///
+    /// If [`PerOpenFileOps::check_seekable`] succeeds but this method returns `false`,
+    /// the offset in the `seek()` operation will be ignored.
+    /// In that case, the `seek()` operation will do nothing but succeed.
     fn is_offset_aware(&self) -> bool;
 
+    /// Checks whether positional I/O (`pread`/`pwrite`) is supported.
+    ///
+    /// The default delegates to [`check_seekable`], which is correct for
+    /// most files. Override this for files that support positional I/O
+    /// but not seeking (e.g., nsfs).
+    ///
+    /// [`check_seekable`]: PerOpenFileOps::check_seekable
     fn check_positional_io(&self) -> Result<()> {
         self.check_seekable()
     }
 
+    /// Returns the end position for [`SeekFrom::End`].
+    ///
+    /// This is intentionally separate from `Inode::seek_end`. Both `Inode`
+    /// and [`PerOpenFileOps`] need `SEEK_END` support, but `Inode::seek_end`
+    /// has an inode-specific default implementation, so the two cannot be
+    /// cleanly unified under [`FileOps`].
     fn seek_end(&self) -> Result<Option<usize>> {
         Ok(None)
     }
@@ -536,10 +570,15 @@ pub trait PerOpenFileOps: Pollable + FileOps + Any + Send + Sync + 'static {
         Err(errno!(ENOTTY, "ioctl is not supported"))
     }
 
+    /// Returns the status flags that can be set for this opened file.
     fn settable_status_flags(&self) -> SettableStatusFlags {
         SettableStatusFlags::minimal()
     }
 
+    /// Synchronizes the file according to `mode`.
+    ///
+    /// Per-open file operations do not support synchronization by default.
+    /// Implementations that support synchronization must override this method.
     fn sync(&self, _mode: SyncMode) -> Result<()> {
         Err(errno!(EINVAL, "the file does not support synchronization"))
     }

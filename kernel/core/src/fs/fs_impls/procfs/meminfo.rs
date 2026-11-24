@@ -1,3 +1,9 @@
+//! This module offers `/proc/meminfo` file support, which tells the user space
+//! about the memory statistics in the entire system. The definition of the
+//! fields are similar to that of Linux's but there exist differences.
+//!
+//! Reference: <https://man7.org/linux/man-pages/man5/proc_meminfo.5.html>
+
 use aster_util::printer::VmPrinter;
 
 use crate::{
@@ -9,6 +15,7 @@ use crate::{
     prelude::*,
 };
 
+/// Represents the inode at `/proc/meminfo`.
 pub(super) struct MemInfoFileOps;
 
 impl MemInfoFileOps {
@@ -22,6 +29,7 @@ impl ProcFileOps for MemInfoFileOps {
         let mut printer = VmPrinter::new_skip(writer, offset);
 
         let total = crate::vm::mem_total();
+
         let available = osdk_frame_allocator::load_total_free_size();
 
         let total = total / 1024;

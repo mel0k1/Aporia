@@ -4,6 +4,14 @@ use super::{Interval, Vmar, util::get_intersected_range};
 use crate::{prelude::*, vm::perms::VmPerms};
 
 impl Vmar {
+    /// Change the permissions of the memory mappings in the specified range.
+    ///
+    /// The range's start and end addresses must be page-aligned.
+    ///
+    /// If the range contains unmapped pages, an [`ENOMEM`] error will be returned.
+    /// Note that pages before the unmapped hole are still protected.
+    ///
+    /// [`ENOMEM`]: Errno::ENOMEM
     pub(crate) fn protect(&self, perms: VmPerms, range: Range<usize>) -> Result<()> {
         debug_assert!(range.start.is_multiple_of(PAGE_SIZE));
         debug_assert!(range.end.is_multiple_of(PAGE_SIZE));

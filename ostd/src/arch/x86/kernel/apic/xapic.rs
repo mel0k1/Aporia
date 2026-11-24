@@ -58,6 +58,7 @@ impl XApic {
 impl super::Apic for XApic {
     fn id(&self) -> u32 {
         let raw: u32 = unsafe { self.io_mem.read_once(xapic::XAPIC_ID as usize) };
+
         (raw >> 24) & 0xff
     }
 
@@ -74,6 +75,7 @@ impl super::Apic for XApic {
 
         unsafe {
             self.io_mem.write_once(xapic::XAPIC_ESR as usize, &0u32);
+
             self.io_mem
                 .write_once(xapic::XAPIC_ICR1 as usize, &icr.upper());
             self.io_mem
@@ -121,8 +123,18 @@ impl ApicTimer for XApic {
     }
 }
 
+/// Reads xAPIC base address from the MSR.
+///
+/// # Safety
+///
+/// The caller must ensure that xAPIC is present.
 pub(super) unsafe fn read_xapic_base_address() -> usize {
     (unsafe { rdmsr(IA32_APIC_BASE) & 0xffff_f000 }) as usize
 }
 
+/// The size of the xAPIC MMIO region.
+///
+/// Intel(R) 64 and IA-32 Architectures Software Developer's Manual, CHAPTER 11 ADVANCED
+/// PROGRAMMABLE INTERRUPT CONTROLLER (APIC) says "The local-APIC register-address space comprises
+/// the 4 KBytes at the physical address specified in the IA32_APIC_BASE MSR."
 pub(super) const XAPIC_MMIO_SIZE: usize = crate::mm::PAGE_SIZE;

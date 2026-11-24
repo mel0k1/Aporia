@@ -1,3 +1,5 @@
+//! The console I/O.
+
 use core::fmt;
 
 use bitflags::bitflags;
@@ -11,8 +13,10 @@ use crate::{
     sync::{LocalIrqDisabled, SpinLock},
 };
 
+/// The primary serial port, which serves as an early console.
 pub static SERIAL_PORT: Once<SpinLock<Pl011Uart, LocalIrqDisabled>> = Once::new();
 
+/// A PL011 serial port.
 pub struct Pl011Uart {
     base: *mut u32,
     node: FdtNode<'static, 'static>,
@@ -22,9 +26,12 @@ unsafe impl Send for Pl011Uart {}
 unsafe impl Sync for Pl011Uart {}
 
 bitflags! {
+
     #[derive(Clone, Copy, Debug)]
     struct Status: u32 {
+        /// Transmit FIFO full.
         const TXFF = 1 << 5;
+        /// Receive FIFO empty.
         const RXFE = 1 << 4;
     }
 }
@@ -34,14 +41,20 @@ impl Pl011Uart {
     const OFFSET_UARTFR: usize = 0x018;
     const OFFSET_UARTIMSC: usize = 0x038;
 
+    /// # Safety
+    ///
+    /// The caller must ensure that the base address is a valid serial base address and that it has
+    /// exclusive ownership of the serial registers.
     pub(self) unsafe fn new(base: *mut u32, node: FdtNode<'static, 'static>) -> Self {
         Self { base, node }
     }
 
+    /// Returns the FDT node of the serial port.
     pub fn fdt_node(&self) -> FdtNode<'static, 'static> {
         self.node
     }
 
+    /// Enables receive interrupts.
     pub fn enable_recv_interrupt(&mut self) {
         const RXIM: u32 = 1 << 4;
         const RTIM: u32 = 1 << 6;
@@ -53,6 +66,7 @@ impl Pl011Uart {
         }
     }
 
+    /// Sends a byte to the serial port.
     pub fn send(&mut self, byte: u8) {
         while self.read_status().contains(Status::TXFF) {
             core::hint::spin_loop();
@@ -60,6 +74,7 @@ impl Pl011Uart {
         self.write_data(byte);
     }
 
+    /// Receives a byte from the serial port.
     pub fn recv(&mut self) -> Option<u8> {
         if self.read_status().contains(Status::RXFE) {
             None
@@ -95,6 +110,7 @@ impl fmt::Write for Pl011Uart {
     }
 }
 
+/// Initializes the serial port.
 pub(crate) fn init(early_cmdline: &EarlyCmdline) {
     if !early_cmdline.has_early_console {
         return;

@@ -12,21 +12,110 @@ core::arch::global_asm!(include_str!("header.S"));
 
 const MULTIBOOT_ENTRY_MAGIC: u32 = 0x2BADB002;
 
+/// Representation of Multiboot Information according to specification.
+///
+/// Ref: <https://www.gnu.org/software/grub/manual/multiboot/multiboot.html#Boot-information-format>.
+///
+///```text
+///         +-------------------+
+/// 0       | flags             |    (required)
+///         +-------------------+
+/// 4       | mem_lower         |    (present if flags[0] is set)
+/// 8       | mem_upper         |    (present if flags[0] is set)
+///         +-------------------+
+/// 12      | boot_device       |    (present if flags[1] is set)
+///         +-------------------+
+/// 16      | cmdline           |    (present if flags[2] is set)
+///         +-------------------+
+/// 20      | mods_count        |    (present if flags[3] is set)
+/// 24      | mods_addr         |    (present if flags[3] is set)
+///         +-------------------+
+/// 28 - 40 | syms              |    (present if flags[4] or
+///         |                   |                flags[5] is set)
+///         +-------------------+
+/// 44      | mmap_length       |    (present if flags[6] is set)
+/// 48      | mmap_addr         |    (present if flags[6] is set)
+///         +-------------------+
+/// 52      | drives_length     |    (present if flags[7] is set)
+/// 56      | drives_addr       |    (present if flags[7] is set)
+///         +-------------------+
+/// 60      | config_table      |    (present if flags[8] is set)
+///         +-------------------+
+/// 64      | boot_loader_name  |    (present if flags[9] is set)
+///         +-------------------+
+/// 68      | apm_table         |    (present if flags[10] is set)
+///         +-------------------+
+/// 72      | vbe_control_info  |    (present if flags[11] is set)
+/// 76      | vbe_mode_info     |
+/// 80      | vbe_mode          |
+/// 82      | vbe_interface_seg |
+/// 84      | vbe_interface_off |
+/// 86      | vbe_interface_len |
+///         +-------------------+
+/// 88      | framebuffer_addr  |    (present if flags[12] is set)
+/// 96      | framebuffer_pitch |
+/// 100     | framebuffer_width |
+/// 104     | framebuffer_height|
+/// 108     | framebuffer_bpp   |
+/// 109     | framebuffer_type  |
+/// 110-115 | color_info        |
+///         +-------------------+
+///```
+///
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
 struct MultibootLegacyInfo {
+    /// Indicate whether the below field exists.
     flags: u32,
 
+    /// Physical memory low.
     mem_lower: u32,
+    /// Physical memory high.
     mem_upper: u32,
 
+    /// Indicates which BIOS disk device the boot loader loaded the OS image from.
     boot_device: u32,
 
+    /// Command line passed to kernel.
     cmdline: u32,
 
+    /// Modules count.
     mods_count: u32,
+    /// The start address of modules list, each module structure format:
+    /// ```text
+    ///         +-------------------+
+    /// 0       | mod_start         |
+    /// 4       | mod_end           |
+    ///         +-------------------+
+    /// 8       | string            |
+    ///         +-------------------+
+    /// 12      | reserved (0)      |
+    ///         +-------------------+
+    /// ```
     mods_addr: u32,
 
+    /// If flags\[4\] = 1, then the field starting at byte 28 are valid:
+    /// ```text
+    ///         +-------------------+
+    /// 28      | tabsize           |
+    /// 32      | strsize           |
+    /// 36      | addr              |
+    /// 40      | reserved (0)      |
+    ///         +-------------------+
+    /// ```
+    /// These indicate where the symbol table from kernel image can be found.
+    ///
+    /// If flags\[5\] = 1, then the field starting at byte 28 are valid:
+    /// ```text
+    ///         +-------------------+
+    /// 28      | num               |
+    /// 32      | size              |
+    /// 36      | addr              |
+    /// 40      | shndx             |
+    ///         +-------------------+
+    /// ```
+    /// These indicate where the section header table from an ELF kernel is,
+    /// the size of each entry, number of entries, and the string table used as the index of names.
     symbols: [u8; 16],
 
     memory_map_len: u32,
@@ -49,6 +138,7 @@ struct MultibootLegacyInfo {
 impl MultibootLegacyInfo {
     fn get_memory_map(&self) -> MemoryEntryIter {
         let cur_ptr = paddr_to_vaddr(self.memory_map_addr as Paddr) as *const u8;
+
         let region_end = unsafe { cur_ptr.add(self.memory_map_len as usize) };
 
         MemoryEntryIter {
@@ -81,6 +171,25 @@ struct FramebufferTable {
     color_info: [u8; 6],
 }
 
+/// A memory entry in the memory map header info region.
+///
+/// The memory layout of the entry structure doesn't fit in any scheme
+/// provided by Rust:
+///
+/// ```text
+///         +-------------------+   <- start of the struct pointer
+/// -4      | size              |
+///         +-------------------+
+/// 0       | base_addr         |
+/// 8       | length            |
+/// 16      | type              |
+///         +-------------------+
+/// ```
+///
+/// The start of a entry is not 64-bit aligned. Although the boot
+/// protocol may provide the `mmap_addr` 64-bit aligned when added with
+/// 4, it is not guaranteed. So we need to use pointer arithmetic to
+/// access the fields.
 struct MemoryEntry {
     ptr: *const u8,
 }
@@ -112,6 +221,7 @@ impl MemoryEntry {
     }
 }
 
+/// A memory entry iterator in the memory map header info region.
 #[derive(Clone, Copy, Debug)]
 struct MemoryEntryIter {
     cur_ptr: *const u8,
@@ -129,6 +239,7 @@ impl Iterator for MemoryEntryIter {
         let entry = MemoryEntry { ptr: self.cur_ptr };
 
         let entry_size = entry.size() as usize + 4;
+
         unsafe { self.cur_ptr = self.cur_ptr.add(entry_size) };
 
         Some(entry)
@@ -141,6 +252,7 @@ unsafe fn parse_as_cstr<'a>(ptr: u32) -> Option<&'a str> {
     }
 
     let name_ptr = paddr_to_vaddr(ptr as usize) as *const core::ffi::c_char;
+
     let name_cstr = unsafe { core::ffi::CStr::from_ptr(name_ptr) };
 
     name_cstr.to_str().ok()
@@ -161,6 +273,7 @@ impl ToEarlyBootInfo for MultibootLegacyInfo {
         }
 
         let mods_addr = paddr_to_vaddr(self.mods_addr as usize) as *const u32;
+
         let (start, end) = unsafe { (*mods_addr, *mods_addr.add(1)) };
 
         let ptr = paddr_to_vaddr(start as usize) as *const u8;
@@ -219,6 +332,13 @@ impl ToEarlyBootInfo for MultibootLegacyInfo {
     }
 }
 
+/// The entry point of the Rust code portion of Asterinas (with multiboot parameters).
+///
+/// # Safety
+///
+/// - This function must be called only once at a proper timing in the BSP's boot assembly code.
+/// - The caller must follow C calling conventions and put the right arguments in registers.
+/// - If this function is called, entry points of other boot protocols must never be called.
 #[unsafe(no_mangle)]
 unsafe extern "sysv64" fn __multiboot_entry(boot_magic: u32, boot_params: u64) -> ! {
     assert_eq!(boot_magic, MULTIBOOT_ENTRY_MAGIC);

@@ -11,6 +11,7 @@ use nom::{
 };
 
 thread_local! {
+    /// Storage for blocked syscalls by PID in multi-threaded strace output.
     static BLOCKED_SYSCALL: RefCell<HashMap<u32, String>> = RefCell::new(HashMap::new());
 }
 
@@ -41,6 +42,7 @@ impl fmt::Display for StraceParseError {
 
 impl Error for StraceParseError {}
 
+/// Syscall representation parsed from strace output.
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) struct Syscall<'a> {
     pid: u32,
@@ -51,6 +53,7 @@ pub(crate) struct Syscall<'a> {
 }
 
 impl<'a> Syscall<'a> {
+    /// Fetches and preprocesses a strace line before parsing.
     pub(crate) fn fetch(line: String) -> Result<String, StraceParseError> {
         let trimmed = line.as_str().trim();
 
@@ -83,6 +86,7 @@ impl<'a> Syscall<'a> {
         Ok(line)
     }
 
+    /// Parses a single line of strace output into a Syscall.
     pub(crate) fn parse(input: &'a str) -> Result<Self, StraceParseError> {
         let trimmed = input.trim();
 
@@ -128,23 +132,32 @@ impl<'a> Syscall<'a> {
 
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) enum SyscallArg<'a> {
+    /// Integer argument represented as a string.
     Integer(&'a str),
 
+    /// Quoted string argument.
     String(&'a str),
 
+    /// Unquoted flag argument.
     Flag(&'a str),
 
+    /// File descriptor with absolute path.
     FdPath(&'a str),
 
+    /// Combination of flags and/or integer values.
     Flags(SyscallFlagSet<'a>),
 
+    /// Structured data represented as key-value pairs.
     Struct(SyscallStruct<'a>),
 
+    /// Array of syscall arguments.
     Array(SyscallArray<'a>),
 
+    /// Argument is ignored.
     Ignored,
 }
 
+/// Wrapper for arrays of syscall arguments.
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) struct SyscallArray<'a>(Vec<SyscallArg<'a>>);
 
@@ -158,6 +171,7 @@ impl<'a> SyscallArray<'a> {
     }
 }
 
+/// Wrapper for flag sets with restricted element types.
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) struct SyscallFlagSet<'a>(Vec<SyscallArg<'a>>);
 
@@ -182,6 +196,7 @@ impl<'a> SyscallFlagSet<'a> {
     }
 }
 
+/// Wrapper for structured data represented as key-value pairs.
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) struct SyscallStruct<'a>(HashMap<&'a str, SyscallArg<'a>>);
 
@@ -265,6 +280,7 @@ impl Syscall<'_> {
         Ok((input, arg))
     }
 
+    /// Parses a file descriptor or `AT_FDCWD` with absolute path argument.
     fn parse_fd_path(input: &str) -> IResult<&str, SyscallArg<'_>> {
         let (input, _fd) =
             alt((tag("AT_FDCWD"), take_while1(|c: char| c.is_ascii_digit())))(input)?;
@@ -273,6 +289,7 @@ impl Syscall<'_> {
         Ok((input, SyscallArg::FdPath(path)))
     }
 
+    /// Parses content within angle brackets, handling nested brackets and arrows.
     fn parse_angle_bracket_content(input: &str) -> IResult<&str, &str> {
         let (input, _) = char::<&str, nom::error::Error<&str>>('<')(input)?;
 
@@ -310,6 +327,7 @@ impl Syscall<'_> {
         Ok((remaining, content))
     }
 
+    /// Parses a quoted string argument.
     fn parse_quoted_string(input: &str) -> IResult<&str, SyscallArg<'_>> {
         map(
             tuple((
@@ -321,6 +339,7 @@ impl Syscall<'_> {
         )(input)
     }
 
+    /// Helper to take characters until an unescaped quote is found.
     fn take_until_unescaped_quote(input: &str) -> IResult<&str, &str> {
         let chars = input.char_indices();
         let mut last_was_escape = false;
@@ -542,6 +561,7 @@ impl Syscall<'_> {
         )(input)
     }
 
+    /// Handles special cases for certain syscalls whose strace output is non-standard.
     fn handle_special_cases(mut syscall: Syscall) -> Syscall {
         if syscall.name == "clone" {
             syscall.args.insert(0, SyscallArg::Ignored);

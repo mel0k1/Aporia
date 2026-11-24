@@ -11,6 +11,7 @@ use crate::{
     security::lsm::hooks as lsm_hooks,
 };
 
+/// The cgroup namespace for the unified cgroup hierarchy.
 pub(crate) struct CgroupNamespace {
     root: Arc<dyn CgroupSysNode>,
     owner: Arc<UserNamespace>,
@@ -18,6 +19,7 @@ pub(crate) struct CgroupNamespace {
 }
 
 impl CgroupNamespace {
+    /// Returns a reference to the singleton initial cgroup namespace.
     pub(crate) fn get_init_singleton() -> &'static Arc<Self> {
         static INIT: Once<Arc<CgroupNamespace>> = Once::new();
 
@@ -30,6 +32,7 @@ impl CgroupNamespace {
         })
     }
 
+    /// Creates a new cgroup namespace rooted at the given cgroup.
     pub(crate) fn new_clone(
         current_cgroup: Option<Arc<CgroupNode>>,
         owner: Arc<UserNamespace>,
@@ -53,10 +56,16 @@ impl CgroupNamespace {
         }))
     }
 
+    /// Returns the cgroup subtree root exposed by this namespace.
     pub(crate) fn root_node(&self) -> Arc<dyn SysBranchNode> {
         self.root.clone()
     }
 
+    /// Renders the cgroup path visible from this namespace.
+    ///
+    /// Linux reports `/proc/[pid]/cgroup` relative to the namespace root.
+    /// When the target lies outside that subtree, the path climbs up with
+    /// `..` components instead of failing.
     pub(crate) fn virtualize_path(&self, cgroup: Arc<dyn CgroupSysNode>) -> String {
         let root_path = self.root.path();
         let cgroup_path = cgroup.path();

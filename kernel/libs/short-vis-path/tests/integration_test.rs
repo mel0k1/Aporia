@@ -1,5 +1,11 @@
+//! To add a new case:
+//! 2. Add a submodule in a current case crate, and apply `#[short_vis_path::add(...)]`.
+//! 3. Add a test below that runs `cargo expand` for the case,
+//!    and asserts the expected expanded visibility paths.
+
 use std::process::Command;
 
+/// The information of a testing project.
 struct TestCase {
     project_dir: String,
     cargo_expand_stdout: String,

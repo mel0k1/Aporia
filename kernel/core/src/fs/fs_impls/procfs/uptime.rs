@@ -1,3 +1,8 @@
+//! This module offers `/proc/uptime` file support, which provides
+//! information about the system uptime and idle time.
+//!
+//! Reference: <https://man7.org/linux/man-pages/man5/proc_uptime.5.html>
+
 use core::time::Duration;
 
 use aster_util::printer::VmPrinter;
@@ -12,6 +17,7 @@ use crate::{
     time::{NSEC_PER_SEC, cpu_time_stats::CpuTimeStatsManager},
 };
 
+/// Represents the inode at `/proc/uptime`.
 pub(super) struct UptimeFileOps;
 
 impl UptimeFileOps {
@@ -36,6 +42,7 @@ impl UptimeFileOps {
     }
 }
 
+/// Splits a duration into seconds and the centiseconds printed by `/proc/uptime`.
 fn duration_to_seconds_and_centiseconds(duration: Duration) -> (u64, u32) {
     let centiseconds = duration.subsec_nanos() / (NSEC_PER_SEC as u32 / 100);
     (duration.as_secs(), centiseconds)

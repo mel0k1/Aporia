@@ -25,10 +25,12 @@ use crate::{
 
 pub struct NetworkDevice {
     config_manager: ConfigManager<VirtioNetConfig>,
+
     caps: DeviceCapabilities,
     mac_addr: EthernetAddress,
     send_queue: VirtQueue,
     recv_queue: VirtQueue,
+
     header: VirtioNetHdr,
     tx_buffers: Vec<Option<TxBuffer>>,
     rx_buffers: SlotVec<RxBuffer>,
@@ -37,6 +39,7 @@ pub struct NetworkDevice {
     poll_stat: PollStatistics,
 }
 
+/// Structure to track the number of packets sent and received during a single polling process.
 struct PollStatistics {
     sent_packet: usize,
     received_packet: usize,
@@ -110,10 +113,12 @@ impl NetworkDevice {
             poll_stat: PollStatistics::new(),
         };
 
+        /// Interrupt handler if network device config space changes
         fn config_space_change(_: &TrapFrame) {
             debug!("network device config space change");
         }
 
+        /// Interrupt handlers if network device receives/sends some packet
         fn handle_send_event(_: &TrapFrame) {
             aster_network::raise_send_softirq();
         }
@@ -145,6 +150,7 @@ impl NetworkDevice {
         Ok(())
     }
 
+    /// Adds a `RxBuffer` to the receive queue.
     fn add_rx_buffer(&mut self, rx_buffer: RxBuffer) -> Result<(), queue::AddBufsError> {
         let token = self.recv_queue.add_output_bufs(&[&rx_buffer])?;
         assert!(self.rx_buffers.put_at(token as usize, rx_buffer).is_none());
@@ -158,6 +164,7 @@ impl NetworkDevice {
         Ok(())
     }
 
+    /// Receives a packet from network.
     fn receive(&mut self) -> Result<RxPacket<LinkLayer>, NetError> {
         if self.new_rx_buffer.is_none() {
             let rx_pool = RX_BUFFER_POOL.get().unwrap();
@@ -181,6 +188,7 @@ impl NetworkDevice {
         Ok(packet.peel(size_of::<VirtioNetHdr>()))
     }
 
+    /// Sends a packet to network.
     fn send(&mut self, packet: TxPacket<LinkLayer>) -> Result<(), NetError> {
         if !self.can_send() {
             return Err(NetError::Busy);

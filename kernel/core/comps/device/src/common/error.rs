@@ -1,26 +1,49 @@
+//! The errors the device model reports, and their conversions to and from `aster_systree::Error`.
+
 use core::fmt;
 
+/// Errors reported by the device model.
 #[derive(Debug)]
 pub enum Error {
+    /// The object has already been added, or is being added.
     AlreadyAdded,
+    /// The device has not been added, or has already been removed.
     NotAdded,
+    /// The parent device is not currently added.
     ParentNotAdded,
+    /// The device still has child devices.
     HasChildren,
+    /// A sibling with the same name already exists.
     NameConflict,
+    /// The named object does not exist.
     NotFound,
+    /// The name is empty or contains `/` or `NUL`.
     InvalidName,
+    /// No driver accepted the device.
     NoDriver,
+    /// The device is already bound to a driver.
     AlreadyBound,
+    /// The device is not bound to a driver.
     NotBound,
+    /// The driver rejected the device in `on_probe`.
     ProbeFailed,
+    /// The driver has been unregistered.
     DriverUnregistered,
+    /// An attribute callback failed.
     Attribute,
+    /// The device has no device number, so it has no `dev` attribute.
     NoDevNum,
+    /// Formatting an attribute value failed.
     Format,
+    /// The value written to an attribute is invalid.
     InvalidValue,
+    /// A resource (such as attribute IDs) is exhausted.
     ResourceUnavailable,
+    /// A memory budget (such as the uevent environment size) is exhausted.
     MemoryBudgetExhausted,
+    /// The kernel hook failed to create or delete a device node.
     Hook,
+    /// An error from the underlying `SysTree`.
     SysTree(aster_systree::Error),
 }
 

@@ -1,3 +1,5 @@
+//! The implementation of robust list is from occlum.
+
 use ostd::{mm::VmIo, task::Task};
 
 use crate::{
@@ -16,16 +18,30 @@ struct RobustList {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(crate) struct RobustListHead {
+    /// Linked list of lock entries
+    ///
+    /// If it points to the head of the list, then it is the end of the list.
+    /// If it is an invalid user space pointer or a null pointer, stop iterating
+    /// the list.
     list: RobustList,
+    /// Specifies the offset from the address of the lock entry to the address
+    /// of the futex.
     futex_offset: isize,
+    /// Contains transient copy of the address of the lock entry, during list
+    /// insertion and removal.
     list_op_pending: Vaddr,
 }
 
 impl RobustListHead {
+    /// Return an iterator for all futexes in the robust list.
+    ///
+    /// The futex referred to by `list_op_pending`, if any, will be returned as
+    /// the last item.
     pub(crate) fn futexes(&self) -> FutexIter<'_> {
         FutexIter::new(self)
     }
 
+    /// Return the pending futex address if exist
     fn pending_futex_addr(&self) -> Option<Vaddr> {
         if self.list_op_pending == 0 {
             None
@@ -34,6 +50,7 @@ impl RobustListHead {
         }
     }
 
+    /// Get the futex address
     fn futex_addr(&self, entry_ptr: Vaddr) -> Option<Vaddr> {
         self.futex_offset
             .checked_add(entry_ptr as isize)
@@ -107,6 +124,11 @@ const FUTEX_WAITERS: u32 = 0x8000_0000;
 const FUTEX_OWNER_DIED: u32 = 0x4000_0000;
 const FUTEX_TID_MASK: u32 = 0x3FFF_FFFF;
 
+/// Attempts to wake a robust futex owned by the given thread.
+///
+/// If the futex at `futex_addr` is still owned by `tid`, it is marked with
+/// `FUTEX_OWNER_DIED` and one waiter (if any) is woken.
+/// If the futex is owned by another thread, the operation is canceled.
 pub(crate) fn wake_robust_futex(futex_addr: Vaddr, tid: Tid) -> Result<()> {
     if !futex_addr.is_multiple_of(align_of::<u32>()) {
         return Err(errno!(

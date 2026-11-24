@@ -16,6 +16,12 @@ use crate::fs::{
     },
 };
 
+/// A file system that provides a user-space interface for configuring kernel objects.
+///
+/// `ConfigFs` is a RAM-based file system that allows user-space applications to create,
+/// configure, and manage kernel objects through a virtual file system interface.
+/// Unlike sysfs which is primarily read-only and represents existing kernel state,
+/// `ConfigFs` is designed for dynamic creation and configuration of kernel objects.
 pub(crate) struct ConfigFs {
     _anon_device_id: AnonDeviceId,
     sb: SuperBlock,
@@ -28,6 +34,7 @@ const BLOCK_SIZE: usize = 4096;
 const NAME_MAX: usize = 255;
 
 impl ConfigFs {
+    /// Returns the `CgroupFs` singleton.
     pub(super) fn singleton() -> &'static Arc<ConfigFs> {
         static SINGLETON: Once<Arc<ConfigFs>> = Once::new();
 

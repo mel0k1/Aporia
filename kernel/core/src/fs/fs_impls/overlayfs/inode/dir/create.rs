@@ -1,3 +1,12 @@
+//! The create-object recipe family.
+//!
+//! One dispatcher routes on the fresh layer lookup of the target name: an
+//! absent or opaque-hidden name creates directly in the upper parent, a
+//! whiteout-hidden name replaces the whiteout through a completely prepared
+//! private workdir temp, and a fresh positive target fails with `ESTALE`.
+//! All three VFS create-family entries flow through one [`CreateOp`], and
+//! `SymLink` can only enter through the atomic `create_symlink` entry.
+
 use crate::{
     fs::{
         file::InodeType,
@@ -18,6 +27,7 @@ use crate::{
 };
 
 impl OverlayInode {
+    /// Serves as the single create-family entry; `CreateOp` encodes the VFS entry that produced it.
     pub(in super::super) fn create_impl(
         &self,
         self_dentry: &Dentry,
@@ -25,6 +35,7 @@ impl OverlayInode {
         op: CreateOp<'_>,
     ) -> Result<Arc<dyn Inode>> {
         let fs = self.fs_arc();
+
         self.writable_real_object(self_dentry)?;
         let projected: Arc<dyn Inode> = self.create_object(&fs, name, op)?;
         Ok(projected)
@@ -40,10 +51,12 @@ impl OverlayInode {
         match fs.lookup(self, name)? {
             Lookup::Negative(NegativeLookup::Absent) => {
                 let upper = self.writable_upper();
+
                 let new_upper = op.create_child_in(upper.dentry(), name)?;
                 let inode = fs.project_inode(RealObjectStack::upper_only(
                     RealObject::new_upper(new_upper),
                 ))?;
+
                 *dir_guard = None;
                 Ok(inode)
             }
@@ -70,6 +83,7 @@ impl OverlayInode {
             None
         };
         let published = self.commit_create_over_whiteout(fs, temp, name)?;
+
         **dir_guard = None;
         if let Some(temp_name) = temp_name {
             upper_workdir
@@ -82,6 +96,7 @@ impl OverlayInode {
         )))
     }
 
+    /// Commits a whiteout-replacing temp into the upper parent.
     fn commit_create_over_whiteout(
         &self,
         fs: &OverlayFs,
@@ -90,6 +105,7 @@ impl OverlayInode {
     ) -> Result<Arc<Dentry>> {
         let upper_parent = self.writable_upper().dentry();
         let is_directory = temp.inode().type_() == InodeType::Dir;
+
         if is_directory {
             if !fs.policy().can_store_private_xattr() {
                 return Err(errno!(

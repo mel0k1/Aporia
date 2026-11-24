@@ -11,6 +11,13 @@ use crate::kms::{
     },
 };
 
+/// A display output endpoint in the DRM KMS topology.
+///
+/// A connector represents a physical or virtual sink such as HDMI, DisplayPort, or a writeback connector.
+///
+/// It records the encoders that can drive the sink, the currently selected encoder in `DrmConnectorState`, and display data discovered during probing in [`DrmConnectorProbeState`].
+///
+/// Each bit in `possible_encoders` corresponds to an index in the encoder registration order.
 #[derive(Debug)]
 pub struct DrmConnector {
     id: KmsObjectId,
@@ -79,10 +86,12 @@ impl DrmConnector {
     }
 }
 
+/// Immutable configuration of a DRM connector.
 #[derive(Debug)]
 pub(super) struct DrmConnectorConfig {
     pub type_: DrmConnectorType,
     pub type_index: u32,
+    /// Each bit represents an encoder's per-type registration index.
     pub possible_encoders: KmsObjectMask,
 }
 
@@ -101,6 +110,10 @@ impl DrmConnectorState {
     }
 }
 
+/// Probe-derived state of a connector.
+///
+/// This state records the connector's detected status, available display modes, and physical display information.
+/// It is refreshed by connector probing and kept separate from the userspace-configurable `DrmConnectorState`.
 #[derive(Clone, Debug)]
 pub struct DrmConnectorProbeState {
     status: DrmConnectorStatus,
@@ -144,6 +157,9 @@ impl Default for DrmConnectorProbeState {
     }
 }
 
+/// `DRM_MODE_CONNECTOR_X` macros in Linux.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm_mode.h#L403-L423>.
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum DrmConnectorType {
@@ -170,6 +186,9 @@ pub enum DrmConnectorType {
     Usb = 20,
 }
 
+/// `enum drm_connector_status` in Linux.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/drm/drm_connector.h#L61-L92>.
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DrmConnectorStatus {

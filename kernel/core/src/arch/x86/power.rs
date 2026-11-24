@@ -12,6 +12,7 @@ fn try_acpi_reset(_code: ExitCode) {
         port.write(*val);
     }
 }
+
 crate::register_restart_handler!(try_acpi_reset, crate::power::Priority::DEFAULT);
 
 crate::register_poweroff_handler!(

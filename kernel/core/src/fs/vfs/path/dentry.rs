@@ -21,6 +21,113 @@ use crate::{
     security::lsm::hooks as lsm_hooks,
 };
 
+/// A `Dentry` represents a cached filesystem node in the VFS tree.
+///
+/// # Dentry variants
+///
+/// Conceptually, there are four variants of dentries:
+///
+/// - **Root** — the root of a mounted filesystem;
+///   its name derives from the mountpoint.
+///   It has no in-tree parent.
+/// - **Named** — an ordinary entry under a parent directory
+///   with a real, mutable name.
+/// - **Anonymous** — a real filesystem inode that has no name yet:
+///   it keeps a real parent directory,
+///   but is deliberately kept out of the parent's children cache,
+///   so path lookup cannot reach it.
+///   This variant is reserved for temporary files created via `O_TMPFILE`;
+///   such a file can be promoted to a `Named` dentry
+///   by a later `linkat(2)` (future work).
+/// - **Pseudo** — an object with no position in any real filesystem tree
+///   (pipes, sockets, anon-inode fds, namespace/pidfd files, memfd).
+///   It has no parent,
+///   and its name is a synthesized display string
+///   used only for `/proc/<pid>/fd/<n>`.
+///
+/// Only `Root` and `Named` dentries are reachable by path lookup;
+/// `Anonymous` and `Pseudo` are not.
+///
+/// To understand their connections and differences,
+/// ask the following three questions (Q1 to Q3) in the diagram below:
+///
+/// ```text
+/// +-------------------------------------------+
+/// | Q1. In a *real* filesystem tree?          |
+/// +-------------------------------------------+
+///   |
+///   |-- no -->  +-----------------------------+
+///   |           |           Pseudo            |
+///   |           |  pipe, socket, anon_inode,  |
+///   |           |  memfd, ns/pidfd            |
+///   |           +-----------------------------+
+///   | yes
+///   v
+/// +-------------------------------------------+
+/// | Q2. Has a *parent*?                       |
+/// +-------------------------------------------+
+///   |
+///   |-- no -->  +-----------------------------+
+///   |           |            Root             |
+///   |           |  root of a mounted fs       |
+///   |           +-----------------------------+
+///   | yes
+///   v
+/// +-------------------------------------------+
+/// | Q3. Has a *name*?                         |
+/// +-------------------------------------------+
+///   |
+///   |-- no -->  +-----------------------------+
+///   |           |          Anonymous          |
+///   |           |  O_TMPFILE: a real inode    |
+///   |           |  under a real directory,    |
+///   |           |  not yet / never named      |
+///   |           +-----------------------------+
+///   | yes
+///   v
+/// +-----------------------------+
+/// |            Named            |
+/// |  ordinary file or directory |
+/// +-----------------------------+
+/// ```
+///
+/// # Dentries vs inodes
+///
+/// An [`Inode`] *is* the filesystem object:
+/// it owns the file's data and metadata
+/// (type, size, mode, owner, timestamps, link count)
+/// and is implemented per filesystem (e.g. ramfs, ext2).
+/// An inode has no inherent name and no location in the directory tree.
+///
+/// A `Dentry` is the VFS-level cache node that *names* an inode
+/// and places it in the path namespace.
+/// Every `Dentry` references exactly one inode (held as `Arc<dyn Inode>`),
+/// but the reverse is not one-to-one:
+///
+/// - **One inode, many dentries.**
+///   Hard links are several `Named` dentries referencing the same inode;
+///   the inode's link count tracks how many.
+/// - **One inode, no reachable dentry.**
+///   A file unlinked while still open,
+///   or an `Anonymous` (`O_TMPFILE`) inode,
+///   lives on with no `Named` dentry, so path lookup cannot reach it.
+/// - **Directories are one-to-one.**
+///   A directory inode cannot be hard-linked,
+///   so it has exactly one `Named` (or `Root`) dentry;
+///   only the `Dentry` layer holds the parent/child structure
+///   and the children cache that path lookup walks.
+///
+/// Rule of thumb:
+/// operations on *content and metadata*
+/// (`read`, `write`, `stat`, `chmod`)
+/// act on the [`Inode`];
+/// operations on *names and tree shape*
+/// (lookup, `link`, `unlink`, `rename`, mounting)
+/// act on the `Dentry`.
+/// A [`Path`](super::Path) goes one step further
+/// and pairs a `Dentry` with the `Mount` it was reached through,
+/// since mounts let a single `Dentry`
+/// appear at several locations in the namespace.
 pub(crate) struct Dentry {
     inode: Arc<dyn Inode>,
     type_: InodeType,
@@ -31,17 +138,29 @@ pub(crate) struct Dentry {
     this: Weak<Dentry>,
 }
 
+/// Per-directory cache state.
 struct DentryDirState {
     children: RwMutex<DentryChildren>,
     revalidation_policy: RevalidationPolicy,
 }
 
+/// The name and parent of a `Dentry`.
 enum NameAndParent {
+    /// A root or named `Dentry`:
+    /// `None` is the root (name `"/"`, no parent);
+    /// `Some` is a named child whose name and parent can change
+    /// (e.g. on `rename`).
     Real(Option<RwLock<(String, Arc<Dentry>)>>),
+    /// An anonymous child:
+    /// a real parent directory,
+    /// but a fixed `"/"` name and never present in the parent's children cache.
     Anonymous(Arc<Dentry>),
+    /// A pseudo `Dentry`;
+    /// the `fn` synthesizes its display name.
     Pseudo(fn(&dyn Inode) -> String),
 }
 
+/// An error returned by [`NameAndParent::set`].
 #[derive(Debug)]
 struct SetNameAndParentError;
 
@@ -65,6 +184,14 @@ impl NameAndParent {
         }
     }
 
+    /// Sets the name and parent of the `Dentry`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SetNameAndParentError`
+    /// if the `Dentry` is a root, anonymous, or pseudo `Dentry`.
+    /// (Promoting an anonymous `Dentry` to a named one,
+    /// e.g. for `linkat(2)` on an `O_TMPFILE` file, is future work.)
     fn set(&self, name: &str, parent: Arc<Dentry>) -> Result<(), SetNameAndParentError> {
         if let NameAndParent::Real(Some(name_and_parent)) = self {
             let mut name_and_parent = name_and_parent.write();
@@ -77,10 +204,16 @@ impl NameAndParent {
 }
 
 impl Dentry {
+    /// Creates a new root `Dentry` with the given inode.
+    ///
+    /// It is created during the construction of a mounted filesystem.
     pub(in crate::fs) fn new_root(inode: Arc<dyn Inode>) -> Arc<Self> {
         Self::new(inode, DentryOptions::Root)
     }
 
+    /// Creates a new anonymous `Dentry` with the given inode and parent.
+    ///
+    /// See the [`Dentry`] type-level documentation for what "anonymous" means.
     pub(super) fn new_anonymous(inode: Arc<dyn Inode>, parent: &DirDentry) -> Arc<Self> {
         Self::new(
             inode,
@@ -90,6 +223,7 @@ impl Dentry {
         )
     }
 
+    /// Creates a new pseudo `Dentry` with the given inode and name function.
     pub(super) fn new_pseudo(
         inode: Arc<dyn Inode>,
         name_fn: fn(&dyn Inode) -> String,
@@ -129,14 +263,21 @@ impl Dentry {
         matches!(self.name_and_parent, NameAndParent::Pseudo(_))
     }
 
+    /// Gets the type of the `Dentry`.
     pub(in crate::fs) fn type_(&self) -> InodeType {
         self.type_
     }
 
+    /// Gets the name of the `Dentry`.
+    ///
+    /// Returns "/" if it is a root `Dentry`.
     pub(in crate::fs) fn name(&self) -> String {
         self.name_and_parent.name(self.inode.as_ref())
     }
 
+    /// Gets the parent `Dentry`.
+    ///
+    /// Returns `None` if it is a root or pseudo `Dentry`.
     pub(in crate::fs) fn parent(&self) -> Option<Arc<Self>> {
         self.name_and_parent.parent()
     }
@@ -145,10 +286,12 @@ impl Dentry {
         self.this.upgrade().unwrap()
     }
 
+    /// Gets the corresponding unique `DentryKey`.
     pub(super) fn key(&self) -> DentryKey {
         DentryKey::new(self)
     }
 
+    /// Gets the inner inode.
     pub(in crate::fs) fn inode(&self) -> &Arc<dyn Inode> {
         &self.inode
     }
@@ -158,6 +301,8 @@ impl Dentry {
         DentryFlags::from_bits(flags).unwrap()
     }
 
+    /// Checks if this dentry is a descendant of or the same as the given
+    /// ancestor dentry.
     pub(in crate::fs) fn is_equal_or_descendant_of(&self, ancestor: &Arc<Self>) -> bool {
         let mut current = Some(self.this());
 
@@ -191,6 +336,7 @@ impl Dentry {
         }
     }
 
+    /// Gets the absolute path name of this `Dentry` within the filesystem.
     pub(in crate::fs) fn path_name(&self) -> String {
         let mut path_name = self.name().to_string();
         let mut current_dir = self.this();
@@ -229,6 +375,7 @@ impl Dentry {
     }
 }
 
+/// A `Dentry` wrapper that has been validated to represent a directory.
 pub(in crate::fs) struct DirDentry<'a> {
     inner: &'a Dentry,
     children: &'a RwMutex<DentryChildren>,
@@ -268,6 +415,7 @@ impl DirDentry<'_> {
         Ok(())
     }
 
+    /// Validates that `name` is absent and keeps that result stable for creation.
     fn validate_child_absent<'a>(
         &'a self,
         name: &str,
@@ -306,6 +454,7 @@ impl DirDentry<'_> {
         }
     }
 
+    /// Inserts a positive child dentry into the directory cache.
     fn insert_positive_child(
         &self,
         children: &mut DentryChildren,
@@ -322,6 +471,8 @@ impl DirDentry<'_> {
         Ok(self.inode.metadata()?.mode.has_sticky_bit())
     }
 
+    /// Checks whether the sticky-bit rule permits the current thread to remove
+    /// or rename the entry for `child_inode` in this directory.
     fn check_sticky_bit_permission(&self, child_inode: &Arc<dyn Inode>) -> Result<()> {
         let current_thread = current_thread!();
         let Some(posix_thread) = current_thread.as_posix_thread() else {
@@ -342,6 +493,10 @@ impl DirDentry<'_> {
         ))
     }
 
+    /// Resolves a child dentry for a rename operation.
+    ///
+    /// Probes the cache with revalidation and mountpoint checks, then falls
+    /// back to a filesystem lookup and caches the result.
     fn resolve_child_for_rename(
         &self,
         children: &mut DentryChildren,
@@ -371,6 +526,7 @@ impl DirDentry<'_> {
         })
     }
 
+    /// Periodically revalidates cached positive children in this directory.
     fn revalidate_positive_children_if_needed(&self, children: &mut DentryChildren) {
         const POSITIVE_CHILD_REVALIDATION_INTERVAL: usize = 1024;
         const POSITIVE_CHILD_REVALIDATION_CACHE_SIZE_THRESHOLD: usize = 1024;
@@ -394,6 +550,16 @@ impl DirDentry<'_> {
         children.revalidate_positive_entries(self);
     }
 
+    /// Looks up `name` relative to this dentry.
+    ///
+    /// On a cache miss, this method instantiates the child through the file
+    /// system and inserts it into the cache before returning the resulting
+    /// child dentry.
+    ///
+    /// This method does not interpret `"."` or `".."`, does not check search
+    /// permission, and does not resolve overmounted children. Callers that need
+    /// full path-component semantics should use
+    /// [`super::PathResolver::lookup_at_path`].
     pub(in crate::fs) fn lookup_child(&self, name: &str) -> Result<Arc<Dentry>> {
         debug_assert!(!is_dot_or_dotdot(name));
         self.validate_name_len(name)?;
@@ -433,6 +599,7 @@ impl DirDentry<'_> {
         Ok(self.insert_positive_child(&mut children, name, target))
     }
 
+    /// Creates a `Dentry` by making an inode of the `type_` with the `mode`.
     pub(in crate::fs) fn mknod(
         &self,
         name: &str,
@@ -468,6 +635,7 @@ impl DirDentry<'_> {
         ))
     }
 
+    /// Links a new `Dentry` by `link()` the old inode.
     pub(in crate::fs) fn link(&self, old_dentry: &Dentry, name: &str) -> Result<()> {
         let children = self.validate_child_absent(name)?;
         self.inode.link(self, old_dentry, name)?;
@@ -483,6 +651,7 @@ impl DirDentry<'_> {
         Ok(())
     }
 
+    /// Deletes a `Dentry` by `unlink()` the inner inode.
     pub(in crate::fs) fn unlink(&self, name: &str) -> Result<()> {
         if is_dot_or_dotdot(name) {
             return Err(errno!(EISDIR, "unlink on . or .."));
@@ -509,6 +678,7 @@ impl DirDentry<'_> {
         Ok(())
     }
 
+    /// Deletes a directory `Dentry` by `rmdir()` the inner inode.
     pub(in crate::fs) fn rmdir(&self, name: &str) -> Result<()> {
         if is_dot(name) {
             return Err(errno!(EINVAL, "rmdir on ."));
@@ -587,6 +757,8 @@ impl DirDentry<'_> {
         Ok(child_dentry)
     }
 
+    /// Renames the `old_name` entry in this directory to the `new_name` entry
+    /// in `new_dir`.
     pub(in crate::fs) fn rename(
         &self,
         old_name: &str,
@@ -776,6 +948,9 @@ impl DirDentry<'_> {
         }
     }
 
+    /// Revalidates a cached entry.
+    ///
+    /// Returns `true` if the cached entry is still valid, or `false` if it should be invalidated.
     fn revalidate_cached_entry(&self, name: &str, cached_entry: &CachedDentry) -> bool {
         let policy = self.revalidation_policy;
         if policy.is_empty() {
@@ -815,6 +990,17 @@ impl Debug for Dentry {
     }
 }
 
+/// `DentryKey` is the unique identifier for the corresponding `Dentry`.
+///
+/// - For named dentries, it uses self's name and parent's pointer to form the key.
+/// - For the root dentry, it uses "/" and self's pointer to form the key.
+/// - For pseudo dentries, it uses self's name and self's pointer to form the key.
+///
+/// Anonymous dentries have no meaningful `DentryKey`:
+/// they all share a fixed `"/"` name under a real parent,
+/// so their keys would not be unique.
+/// They are never cached by a parent or used as a mountpoint,
+/// so [`Dentry::key`] must not be called on them.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(super) struct DentryKey {
     name: String,
@@ -822,6 +1008,7 @@ pub(super) struct DentryKey {
 }
 
 impl DentryKey {
+    /// Forms a `DentryKey` from the corresponding `Dentry`.
     fn new(dentry: &Dentry) -> Self {
         debug_assert!(!matches!(
             dentry.name_and_parent,
@@ -845,13 +1032,26 @@ bitflags! {
     }
 }
 
+/// The shape of a [`Dentry`] to create.
+/// See [`Dentry`] for the taxonomy.
 enum DentryOptions {
+    /// Root of a mounted filesystem.
     Root,
+    /// A named entry under a parent directory.
     Named((String, Arc<Dentry>)),
+    /// A real inode parented to a directory
+    /// but kept out of the parent's children cache.
+    /// Reserved for `O_TMPFILE`.
     Anonymous { parent: Arc<Dentry> },
+    /// An object with no place in any real filesystem tree;
+    /// the `fn` synthesizes its display name for `/proc/<pid>/fd/<n>`.
     Pseudo(fn(&dyn Inode) -> String),
 }
 
+/// Manages child dentries in the per-directory cache.
+///
+/// A _negative_ dentry reflects a failed filename lookup, saving potential
+/// repeated and costly lookups in the future.
 #[derive(Debug)]
 struct DentryChildren {
     entries: HashMap<String, CachedDentry>,
@@ -899,6 +1099,7 @@ static NEGATIVE_ENTRY_COUNTER: core::sync::atomic::AtomicU64 =
     core::sync::atomic::AtomicU64::new(0);
 
 impl DentryChildren {
+    /// Creates an empty dentry cache.
     fn new() -> Self {
         Self {
             entries: HashMap::new(),
@@ -906,10 +1107,12 @@ impl DentryChildren {
         }
     }
 
+    /// Finds a cached dentry by name.
     fn find(&self, name: &str) -> Option<CachedDentry> {
         self.entries.get(name).cloned()
     }
 
+    /// Inserts a positive dentry.
     fn insert_positive(&mut self, name: String, dentry: Arc<Dentry>) {
         let _prev = self
             .entries
@@ -921,6 +1124,9 @@ impl DentryChildren {
         }
     }
 
+    /// Inserts a negative dentry.
+    ///
+    /// This operation should not overwrite an existing entry.
     fn insert_negative(&mut self, name: String) {
         let prev = self.entries.insert(name, CachedDentry::new_negative());
         debug_assert!(
@@ -937,6 +1143,7 @@ impl DentryChildren {
         }
     }
 
+    /// Deletes a positive dentry by name, turning it into a negative entry if exists.
     fn delete(&mut self, name: &str) {
         let Some((_, exist_entry)) = self.entries.get_key_value_mut(name) else {
             return;
@@ -953,6 +1160,7 @@ impl DentryChildren {
         }
     }
 
+    /// Removes a dentry by name without installing a negative cache entry.
     fn remove(&mut self, name: &str) -> Option<Arc<Dentry>> {
         let removed_entry = self.entries.remove(name);
         #[cfg(debug_assertions)]

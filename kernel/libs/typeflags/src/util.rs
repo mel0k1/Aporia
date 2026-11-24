@@ -32,6 +32,7 @@ pub(super) fn expand_type_flag(type_flags_def: &TypeFlagDef) -> TokenStream {
     all_tokens
 }
 
+/// import crate typeflags_util
 pub(super) fn import_util() -> TokenStream {
     quote!(
         #[macro_use]
@@ -39,6 +40,7 @@ pub(super) fn import_util() -> TokenStream {
     )
 }
 
+/// define the main trait and all items
 pub(super) fn trait_and_items_def(type_flags_def: &TypeFlagDef) -> TokenStream {
     let mut tokens = TokenStream::new();
     tokens.append_all(type_flags_def.trait_def_tokens());
@@ -48,6 +50,7 @@ pub(super) fn trait_and_items_def(type_flags_def: &TypeFlagDef) -> TokenStream {
     tokens
 }
 
+/// impl SameAs trait for each struct
 pub(super) fn impl_same_as(type_flags_def: &TypeFlagDef) -> TokenStream {
     let mut all_tokens = TokenStream::new();
     let items_num = type_flags_def.item_num();
@@ -119,6 +122,7 @@ fn extent_one_type<'a>(
     })
 }
 
+/// export the declarive macro
 pub(super) fn export_declarive_macro(
     type_flags_def: &TypeFlagDef,
     flag_sets: &[FlagSet],

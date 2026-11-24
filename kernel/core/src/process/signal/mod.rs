@@ -40,9 +40,11 @@ use crate::{
 };
 
 pub(crate) trait SignalContext {
+    /// Sets signal handler arguments.
     fn set_arguments(&mut self, sig_num: SigNum, siginfo_addr: usize, ucontext_addr: usize);
 }
 
+/// Handles a pending signal for the current process.
 pub(crate) fn handle_pending_signal(user_ctx: &mut UserContext, ctx: &Context) {
     let syscall_restart = if let Some(orig_syscall_ret) = ctx.thread_local.orig_syscall_ret()
         && user_ctx.syscall_ret() == -(Errno::ERESTARTSYS as i32) as usize
@@ -65,6 +67,7 @@ pub(crate) fn handle_pending_signal(user_ctx: &mut UserContext, ctx: &Context) {
         if restore_sig_mask.is_none() {
             return;
         }
+
         let _ = restore_sig_mask.take();
 
         if let Some(dequeued_signal) = dequeue_pending_signal(ctx) {
@@ -90,6 +93,7 @@ pub(crate) fn handle_pending_signal(user_ctx: &mut UserContext, ctx: &Context) {
                 Some((dequeued, action)) if dequeued.num() == SIGKILL => {
                     (dequeued.unwrap(), action)
                 }
+
                 _ => return,
             },
             PtraceStopResult::NotTraced(dequeued) => (dequeued.unwrap().unwrap(), sig_action),
@@ -144,6 +148,7 @@ pub(crate) fn handle_pending_signal(user_ctx: &mut UserContext, ctx: &Context) {
                 signal.to_info(),
             ) {
                 debug!("Failed to handle user signal: {:?}", e);
+
                 do_exit_group(TermStatus::Killed(SIGSEGV), ctx, user_ctx);
             }
         }
@@ -159,6 +164,7 @@ pub(crate) fn handle_pending_signal(user_ctx: &mut UserContext, ctx: &Context) {
                         ctx.process.pid(),
                         sig_num.sig_name()
                     );
+
                     do_exit_group(TermStatus::Killed(sig_num), ctx, user_ctx);
                 }
                 SigDefaultAction::Ign => {}
@@ -169,14 +175,17 @@ pub(crate) fn handle_pending_signal(user_ctx: &mut UserContext, ctx: &Context) {
     }
 }
 
+/// A guard that restores the signal mask on drop.
 struct RestoreSigMaskGuard<'a> {
     ctx: &'a Context<'a>,
     mask: SigMask,
 }
 
 impl RestoreSigMaskGuard<'_> {
+    /// Forgets the guard and returns the signal mask to restore.
     fn into_mask(self) -> SigMask {
         let mask = self.mask;
+
         let _ = self.mask;
 
         core::mem::forget(self);
@@ -219,6 +228,13 @@ fn dequeue_pending_signal(ctx: &Context) -> Option<(DequeuedSignal, SigAction)> 
     Some((signal, sig_action))
 }
 
+/// Re-queue the ptrace-captured signal.
+///
+/// This appends to the tail of the origin queue,
+/// which (a) loses same-number RT-signal send-order FIFO and
+/// (b) allows newer lower-numbered standard signals queued
+/// during the ptrace stop to preempt this signal.
+/// This is intentionally consistent with Linux's behaviors.
 fn requeue_signal(ctx: &Context, signal: DequeuedSignal) {
     match signal {
         DequeuedSignal::FromProcess(signal) => ctx.process.enqueue_signal(signal),
@@ -339,6 +355,7 @@ pub(crate) fn handle_user_signal(
                 size_of::<ucontext_t>() + fpu_context_bytes.len(),
                 align_of::<ucontext_t>(),
             );
+
             let fpu_context_addr = (ucontext_addr as usize) + size_of::<ucontext_t>();
         }
         _ => {
@@ -389,11 +406,13 @@ pub(crate) fn handle_user_signal(
 
     user_ctx.set_instruction_pointer(handler_addr as _);
     user_ctx.set_stack_pointer(stack_pointer as usize);
+
     if flags.contains(SigActionFlags::SA_SIGINFO) {
         user_ctx.set_arguments(sig_num, siginfo_addr as usize, ucontext_addr as usize);
     } else {
         user_ctx.set_arguments(sig_num, 0, 0);
     }
+
     cfg_select! {
         target_arch = "x86_64" => {
             const X86_RFLAGS_DF: usize = 1 << 10;
@@ -405,6 +424,11 @@ pub(crate) fn handle_user_signal(
     Ok(())
 }
 
+/// Uses the alternate signal stack configured via `sigaltstack`.
+///
+/// If the current stack pointer `sp` is already within the alternate signal stack
+/// or if the stack is disabled, this function returns `None`.
+/// Otherwise, it returns the starting stack pointer of the alternate signal stack.
 fn use_alternate_signal_stack(
     flags: SigActionFlags,
     thread_local: &ThreadLocal,
@@ -423,6 +447,7 @@ fn use_alternate_signal_stack(
     Some(sig_stack.base() + sig_stack.size())
 }
 
+/// Writes a `u64` integer to the user's stack.
 #[cfg(target_arch = "x86_64")]
 fn write_u64_to_user_stack(sp: u64, value: u64) -> Result<u64> {
     use crate::context::current_userspace;
@@ -432,6 +457,9 @@ fn write_u64_to_user_stack(sp: u64, value: u64) -> Result<u64> {
     Ok(sp)
 }
 
+/// Allocates `size` bytes on the user's stack.
+///
+/// The allocation will be aligned to `align`, which must be a power of two.
 fn alloc_aligned_in_user_stack(sp: u64, size: usize, align: usize) -> u64 {
     sp.wrapping_sub(size as u64).align_down(align as u64)
 }

@@ -6,15 +6,28 @@ use core::{
     str::Utf8Error,
 };
 
+/// An owned C-compatible string with a fixed capacity of `N`.
+///
+/// Although this is a POD type, it has a type invariant:
+/// a nul byte must be present, and all bytes after the first nul byte must also be nul bytes.
+/// Users must not arbitrarily mutate the content.
 #[repr(C)]
 #[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd, Pod)]
 pub struct FixedCStr<const N: usize>([u8; N]);
 
 impl<const N: usize> FixedCStr<N> {
+    /// The maximum byte length, excluding the trailing nul.
     pub const MAX_BYTES: usize = N - 1;
 
+    /// The storage byte length, including the trailing nul.
     pub const MAX_BYTES_WITH_NUL: usize = N;
 
+    /// Creates a `FixedCStr` from bytes, stopping at the first nul byte.
+    ///
+    /// If there is no nul byte within the first `N` bytes,
+    /// the input is truncated to `N` bytes.
+    /// The returned field is always nul-terminated,
+    /// and all bytes after the first nul byte are zeroed.
     pub fn from_bytes_until_nul(bytes: &[u8]) -> Self {
         const { assert!(N > 0) };
 
@@ -60,6 +73,7 @@ impl<const N: usize> FixedCStr<N> {
         &self.0[..=self.len()]
     }
 
+    /// Returns the full underlying byte array, including trailing nul bytes.
     pub fn as_array(&self) -> &[u8; N] {
         &self.0
     }
@@ -89,6 +103,16 @@ impl<const N: usize> Hash for FixedCStr<N> {
     }
 }
 
+/// An owned C-compatible string with a fixed capacity of `N`.
+///
+/// Unlike [`FixedCStr`], this type does not require a trailing nul byte.
+/// The first nul byte, if any, terminates the string.
+/// A string shorter than `N` bytes is padded with nul bytes.
+/// A string of exactly `N` bytes has no terminating nul byte.
+///
+/// Although this is a POD type, it has a type invariant:
+/// a nul byte need not be present, but all bytes after the first nul byte must also be nul bytes.
+/// Users must not arbitrarily mutate the content.
 #[repr(C)]
 #[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd, Pod)]
 pub struct FixedNonTerminatedCStr<const N: usize>([u8; N]);

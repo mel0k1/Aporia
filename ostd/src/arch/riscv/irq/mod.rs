@@ -1,3 +1,5 @@
+//! Interrupts.
+
 pub(super) mod chip;
 pub(super) mod ipi;
 mod ops;
@@ -15,6 +17,13 @@ use crate::arch::irq::chip::InterruptSourceOnChip;
 pub(crate) const IRQ_NUM_MIN: u8 = 0;
 pub(crate) const IRQ_NUM_MAX: u8 = 255;
 
+/// An IRQ line with additional information that helps acknowledge the interrupt
+/// on hardware.
+///
+/// On RISC-V, it's the software that routes the interrupt to the IRQ line.
+/// Therefore, the software needs to maintain interrupt source information that
+/// bridges between software abstraction (e.g., `IRQ_CHIP`) and hardware
+/// mechanism (e.g., PLIC).
 pub(crate) struct HwIrqLine {
     irq_num: u8,
     source: InterruptSource,

@@ -2,17 +2,22 @@ use alloc::sync::Arc;
 
 use crate::SystemTime;
 
+/// Generic interface for RTC drivers.
 pub(crate) trait Driver {
+    /// Creates a RTC driver.
+    /// Returns [`Some<Self>`] on success, [`None`] otherwise (e.g. platform unsupported).
     fn try_new() -> Option<Self>
     where
         Self: Sized;
 
+    /// Reads RTC.
     fn read_rtc(&self) -> SystemTime;
 }
 
 macro_rules! declare_rtc_drivers {
     ( $( #[cfg $cfg:tt ] $module:ident :: $name:ident),* $(,)? ) => {
         pub(super) fn init_rtc_driver() -> Arc<dyn Driver + Send + Sync> {
+
             $(
                 #[cfg $cfg]
                 if let Some(driver) = $module::$name::try_new() {
@@ -39,6 +44,8 @@ mod loongson;
 mod pl031;
 
 declare_rtc_drivers! {
+
+
     #[cfg(target_arch = "x86_64")] kvmclock::RtcKvmClock,
     #[cfg(target_arch = "x86_64")] cmos::RtcCmos,
     #[cfg(target_arch = "riscv64")] goldfish::RtcGoldfish,

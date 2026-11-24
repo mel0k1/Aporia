@@ -1,3 +1,6 @@
+//! This module defines the kernel socket,
+//! which is responsible for handling requests from user space.
+
 use core::marker::PhantomData;
 
 use super::message::{RtnlMessage, RtnlSegment};
@@ -84,6 +87,7 @@ impl NetlinkRouteKernelSocket {
     }
 }
 
+/// FIXME: NETLINK_ROUTE_KERNEL should be a per-network namespace socket
 static NETLINK_ROUTE_KERNEL: NetlinkRouteKernelSocket = NetlinkRouteKernelSocket::new();
 
 pub(super) fn get_netlink_route_kernel() -> &'static NetlinkRouteKernelSocket {

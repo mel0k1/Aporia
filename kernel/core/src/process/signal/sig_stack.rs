@@ -1,5 +1,12 @@
 use crate::{prelude::*, process::signal::c_types::stack_t};
 
+/// User-provided signal stack.
+///
+/// Signal stack is per-thread, and each thread can have at most one signal stack.
+/// If one signal handler specifying the `SA_ONSTACK` flag,
+/// the handler should be executed on the signal stack, instead of on the default stack.
+///
+/// Signal stack can be registered and unregistered by syscall `sigaltstack`.
 #[derive(Debug, Default)]
 pub(crate) struct SigStack {
     base: Vaddr,
@@ -9,8 +16,11 @@ pub(crate) struct SigStack {
 
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum SigStackStatus {
+    /// The stack is enabled but currently inactive.
     Inactive,
+    /// The stack is currently active.
     Active,
+    /// The stack is disabled.
     Disable,
 }
 
@@ -24,18 +34,23 @@ bitflags! {
 }
 
 impl SigStack {
+    /// Creates a new signal stack.
     pub(crate) fn new(base: Vaddr, flags: SigStackFlags, size: usize) -> Self {
         Self { base, flags, size }
     }
 
+    /// Returns the lowest address of the signal stack.
     pub(crate) fn base(&self) -> Vaddr {
         self.base
     }
 
+    /// Returns the signal stack flags as set by the user.
     pub(crate) fn flags(&self) -> SigStackFlags {
         self.flags
     }
 
+    /// Returns the current active status of the signal stack
+    /// based on the given stack pointer.
     pub(crate) fn active_status(&self, sp: usize) -> SigStackStatus {
         if self.size == 0 {
             return SigStackStatus::Disable;
@@ -48,10 +63,17 @@ impl SigStack {
         SigStackStatus::Inactive
     }
 
+    /// Returns the signal stack size.
     pub(crate) fn size(&self) -> usize {
         self.size
     }
 
+    /// Returns whether the given stack pointer is currently on the alternate signal stack.
+    ///
+    /// Note that if the `SS_AUTODISARM` flag is set,
+    /// the alternate signal stack is automatically disarmed after use.
+    /// In this case, even if `sp` lies within the stack range,
+    /// we consider that the signal stack is not active.
     pub(crate) fn contains(&self, sp: usize) -> bool {
         if self.flags().contains(SigStackFlags::SS_AUTODISARM) {
             return false;
@@ -60,6 +82,7 @@ impl SigStack {
         self.base < sp && sp <= self.base + self.size
     }
 
+    /// Resets the signal stack settings.
     pub(super) fn reset(&mut self) {
         self.base = 0;
         self.size = 0;

@@ -11,6 +11,7 @@ use crate::{
 pub(super) enum IoPrioWho {
     Thread(Arc<Thread>),
     ProcessGroup(Arc<ProcessGroup>),
+    /// The threads belong to the same user
     User(Vec<Arc<Thread>>),
 }
 

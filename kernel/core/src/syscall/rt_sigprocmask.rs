@@ -73,6 +73,8 @@ enum MaskOp {
     SetMask = 2,
 }
 
+/// A user-space pointer to a [`SigSet`] bound to a size policy,
+/// which governs how strict the `sigsetsize` argument must be.
 pub(super) struct UserSigSetPtr<'a, 'b, P> {
     user_space: &'a CurrentUserSpace<'b>,
     addr: Vaddr,
@@ -93,6 +95,10 @@ impl<'a, 'b, P> UserSigSetPtr<'a, 'b, P> {
     }
 }
 
+/// Size policy requiring the full size of [`SigSet`].
+///
+/// Used by syscalls whose Linux ABI demands that `sigsetsize`
+/// be exactly `size_of::<SigSet>()`.
 #[derive(Clone, Copy)]
 pub(super) struct RequireFullSize;
 
@@ -105,6 +111,10 @@ impl RequireFullSize {
     }
 }
 
+/// Size policy allowing a [`SigSet`] to be written in a truncated form.
+///
+/// Used by syscalls `rt_sigpending`, whose Linux ABI rejects only sizes
+/// greater than `size_of::<SigSet>()` and copies at most the requested number of bytes.
 #[derive(Clone, Copy)]
 pub(super) struct AllowTruncSize {
     requested_size: usize,

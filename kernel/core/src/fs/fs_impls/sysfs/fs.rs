@@ -14,6 +14,7 @@ use crate::{
     prelude::*,
 };
 
+/// A file system for exposing kernel information to the user space.
 #[derive(Debug)]
 pub(super) struct SysFs {
     _anon_device_id: AnonDeviceId,
@@ -27,6 +28,7 @@ const BLOCK_SIZE: usize = 4096;
 const NAME_MAX: usize = 255;
 
 impl SysFs {
+    /// Returns the `SysFs` singleton.
     pub(super) fn singleton() -> &'static Arc<SysFs> {
         static SINGLETON: Once<Arc<SysFs>> = Once::new();
 

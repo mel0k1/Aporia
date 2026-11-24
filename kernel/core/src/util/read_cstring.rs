@@ -3,12 +3,37 @@ use ostd::mm::Fallible;
 use super::VmReaderArray;
 use crate::prelude::*;
 
+/// A trait providing the ability to read a C string from the user space.
 pub(crate) trait ReadCString {
+    /// Reads bytes until the first nul byte and creates a C string.
+    ///
+    /// This method reads up to `max_len` bytes. The kernel must limit `max_len`
+    /// to prevent unbounded heap allocation (i.e. it cannot be a value
+    /// specified arbitrarily by the user space). If no nul terminator is found
+    /// after exhausting the reader or reading out `max_len` bytes, this method
+    /// will return `None`.
     fn read_cstring_until_nul(&mut self, max_len: usize) -> Result<Option<CString>>;
 
+    /// Reads bytes until the first nul byte or the reader end, and creates a
+    /// C string.
+    ///
+    /// This method reads up to `max_len` bytes. The kernel must limit `max_len`
+    /// to prevent unbounded heap allocation (i.e. it cannot be a value
+    /// specified arbitrarily by the user space). If no nul terminator is found
+    /// after exhausting the reader or reading `max_len` bytes, this method will
+    /// construct a C string with a nul byte appended.
+    ///
+    /// Depending on whether the nul byte is found in the reader, the number of
+    /// bytes read may equal the length of the C string or the length of the C
+    /// string plus one (i.e., the nul byte). To distinguish the two cases, this
+    /// method also returns an integer representing the number of bytes read.
     fn read_cstring_until_end(&mut self, max_len: usize) -> Result<(CString, usize)>;
 }
 
+/// The recommended size for initial allocation.
+///
+/// This is used to optimize the allocated space for the most common case, in
+/// which the user provides a short string.
 const INIT_ALLOC_SIZE: usize = 128;
 
 impl ReadCString for VmReader<'_, Fallible> {
@@ -63,6 +88,13 @@ impl ReadCString for VmReaderArray<'_> {
     }
 }
 
+/// Reads bytes from `reader` into `buffer` until a nul byte is found.
+///
+/// This method returns the following values:
+/// 1. `Ok(true)`: If a nul byte is found in the reader;
+/// 2. `Ok(false)`: If no nul byte is found and the `reader` is exhausted
+///    or the `max_len` is reached;
+/// 3. `Err(_)`: If an error occurs while reading from the `reader`.
 fn read_until_nul_byte(
     reader: &mut VmReader,
     buffer: &mut Vec<u8>,
@@ -110,6 +142,10 @@ fn read_until_nul_byte(
     Ok(false)
 }
 
+/// Determines whether the value contains a zero byte.
+///
+/// This magic algorithm is from the Linux `has_zero` function:
+/// <https://elixir.bootlin.com/linux/v6.0.9/source/include/asm-generic/word-at-a-time.h#L93>
 const fn has_zero(value: usize) -> bool {
     const ONE_BITS: usize = usize::from_le_bytes([0x01; size_of::<usize>()]);
     const HIGH_BITS: usize = usize::from_le_bytes([0x80; size_of::<usize>()]);
@@ -117,6 +153,7 @@ const fn has_zero(value: usize) -> bool {
     value.wrapping_sub(ONE_BITS) & !value & HIGH_BITS != 0
 }
 
+/// Checks if the given address is aligned.
 const fn is_addr_aligned(addr: usize) -> bool {
     (addr & (size_of::<usize>() - 1)) == 0
 }
@@ -164,7 +201,7 @@ mod test {
         let strs = {
             let str1 = CString::new("hello").unwrap();
             let str2 = CString::new("world!").unwrap();
-            let str3 = CString::new("aporia").unwrap();
+            let str3 = CString::new("asterinas").unwrap();
             vec![str1, str2, str3]
         };
 

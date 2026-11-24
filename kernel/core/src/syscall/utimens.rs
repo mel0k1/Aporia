@@ -15,6 +15,14 @@ use crate::{
     time::{clocks::RealTimeCoarseClock, timespec_t, timeval_t},
 };
 
+/// The `sys_utimensat` system call sets the access and modification times of a file.
+///
+/// The times are defined by an array of two `timespec` structures, where `times[0]` represents the
+/// access time and `times[1]` represents the modification time.
+///
+/// The `flags` argument is a bit mask that can include the following values:
+/// - `AT_SYMLINK_NOFOLLOW`: If set, the file is not dereferenced if it is a symbolic link.
+/// - `AT_EMPTY_PATH`: If set, an empty pathname means operating on `dirfd` directly.
 pub(super) fn sys_utimensat(
     dirfd: RawFileDesc,
     pathname_ptr: Vaddr,
@@ -40,6 +48,10 @@ pub(super) fn sys_utimensat(
     do_utimes(dirfd, pathname_ptr, times, flags, ctx)
 }
 
+/// The `sys_futimesat` system call sets the access and modification times of a file.
+///
+/// Unlike `sys_utimensat`, it receives time values in the form of `timeval` structures and it does
+/// not support the `flags` argument.
 pub(super) fn sys_futimesat(
     dirfd: RawFileDesc,
     pathname_ptr: Vaddr,
@@ -53,6 +65,10 @@ pub(super) fn sys_futimesat(
     do_futimesat(dirfd, pathname_ptr, timeval_ptr, ctx)
 }
 
+/// The `sys_utimes` system call sets the access and modification times of a file.
+///
+/// Unlike `sys_utimensat`, it receives time values in the form of `timeval` structures and it uses
+/// the current working directory as the base directory.
 pub(super) fn sys_utimes(
     pathname_ptr: Vaddr,
     timeval_ptr: Vaddr,
@@ -65,6 +81,8 @@ pub(super) fn sys_utimes(
     do_futimesat(AT_FDCWD, pathname_ptr, timeval_ptr, ctx)
 }
 
+/// Sets the access and modification times for a file, specified by a pathname relative to the
+/// directory file descriptor `dirfd`.
 fn do_futimesat(
     dirfd: RawFileDesc,
     pathname_ptr: Vaddr,
@@ -94,6 +112,10 @@ fn read_time_from_user<T: Pod>(time_ptr: Vaddr, ctx: &Context) -> Result<(T, T)>
     Ok((autime, mutime))
 }
 
+/// The `sys_utime` system call sets the access and modification times of a file.
+///
+/// The `sys_utime` system call is similar to the `sys_utimes` system call, but it uses the older
+/// `utimbuf` structure to specify times.
 pub(super) fn sys_utime(
     pathname_ptr: Vaddr,
     utimbuf_ptr: Vaddr,
@@ -123,6 +145,7 @@ pub(super) fn sys_utime(
     do_utimes(AT_FDCWD, pathname_ptr, times, 0, ctx)
 }
 
+/// This struct is corresponding to the `utimbuf` struct in Linux.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
 struct Utimbuf {
@@ -130,6 +153,7 @@ struct Utimbuf {
     modtime: i64,
 }
 
+/// A structure to hold access and modification times.
 #[derive(Debug)]
 struct TimeSpecPair {
     atime: TimeSpec,
@@ -142,6 +166,7 @@ impl TimeSpecPair {
     }
 }
 
+/// An enum to hold access or modification time.
 #[derive(Debug)]
 enum TimeSpec {
     Now,
@@ -154,6 +179,7 @@ impl TimeSpec {
         matches!(self, Self::Now)
     }
 
+    /// Converts to a duration, using `now` as [`Self::Now`].
     fn with_now(self, now: Duration) -> Option<Duration> {
         match self {
             Self::Now => Some(now),
@@ -188,6 +214,8 @@ impl TryFrom<timespec_t> for TimeSpec {
 const UTIME_NOW: i64 = (1i64 << 30) - 1i64;
 const UTIME_OMIT: i64 = (1i64 << 30) - 2i64;
 
+/// A common function for updating file times, supporting both file descriptor (fd) and path-based
+/// operations.
 fn do_utimes(
     dirfd: RawFileDesc,
     pathname_ptr: Vaddr,

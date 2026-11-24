@@ -53,15 +53,25 @@ bitflags! {
 }
 
 bitflags! {
+    /// The accessibility checks requested by the `access(2)` family.
+    ///
+    /// Do not confuse this type with [`crate::fs::file::AccessMode`],
+    /// which describes the read/write mode of an opened file.
     #[derive(Clone, Copy, Debug)]
     struct AccessMode: u32 {
         const R_OK = 0x4;
         const W_OK = 0x2;
         const X_OK = 0x1;
+
+
     }
 }
 
 impl AccessMode {
+    /// Returns the permissions that the access mode requires.
+    ///
+    /// `F_OK` is represented by `AccessMode::empty()`,
+    /// which requires no permissions.
     fn required_permission(&self) -> Permission {
         let mut permission = Permission::empty();
 

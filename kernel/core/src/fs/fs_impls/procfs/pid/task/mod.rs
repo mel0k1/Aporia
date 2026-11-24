@@ -46,6 +46,7 @@ pub(super) mod stat;
 mod status;
 mod uid_map;
 
+/// Represents the inode at `/proc/[pid]/task`.
 pub(super) struct TaskDirOps(Arc<PidEntry>);
 
 impl TaskDirOps {
@@ -58,6 +59,7 @@ impl TaskDirOps {
     }
 }
 
+/// Represents the inode at `/proc/[pid]/task/[tid]`.
 #[derive(Clone)]
 pub(in procfs) struct TidDirOps {
     pid_entry: Arc<PidEntry>,

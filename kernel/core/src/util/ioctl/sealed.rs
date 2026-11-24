@@ -1,8 +1,27 @@
 use int_to_c_enum::TryFromInt;
 
+/// An ioctl command that follows Linux-style encoding.
+///
+/// Layout (from LSB to MSB):
+/// - bits 0..=7   : command number (nr)
+/// - bits 8..=15  : type / magic
+/// - bits 16..=29 : size (in bytes)
+/// - bits 30..=31 : direction
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.18/source/include/uapi/asm-generic/ioctl.h#L69-L73>
 #[derive(Clone, Copy, Debug)]
 pub(super) struct IoctlCmd(u32);
 
+/// The direction of data transfer for an ioctl command.
+///
+/// The meaning is from the *user-space* perspective,
+/// following Linux's `_IOC_*` macros:
+///  - `None`  -> `_IOC_NONE`
+///  - `Write` -> `_IOC_WRITE` (user to kernel)
+///  - `Read`  -> `_IOC_READ`  (kernel to user)
+///  - `ReadWrite` -> `_IOC_READ | _IOC_WRITE`
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.18/source/include/uapi/asm-generic/ioctl.h#L49-L67>
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, TryFromInt)]
 pub enum IoctlDir {

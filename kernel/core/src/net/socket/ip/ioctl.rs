@@ -30,6 +30,7 @@ pub(super) fn ipv4_ioctl(raw_ioctl: RawIoctl) -> Result<i32> {
         cmd @ GetIfDstAddr => {
             let mut ifreq = cmd.read()?;
             let iface = ifreq.get_iface_by_name()?;
+
             let ipv4_addr = iface
                 .ipv4_cidr()
                 .ok_or_else(|| errno!(EADDRNOTAVAIL, "no IPv4 address found"))?

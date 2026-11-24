@@ -35,6 +35,7 @@ pub(super) fn sys_rt_sigtimedwait(
         let size_policy = RequireFullSize::new(sigset_size)?;
         UserSigSetPtr::new(&user_space, set_ptr, size_policy)
     };
+
     let mask = {
         let mut set = sigmask_ptr.read_val()?;
 
@@ -59,6 +60,7 @@ pub(super) fn sys_rt_sigtimedwait(
     );
 
     let block_list = ctx.posix_thread.sig_mask();
+
     if let Some(signal) = dequeue_signal_with_checking_ignore(ctx, mask, block_list) {
         if info_ptr != 0 {
             let siginfo = signal.to_info();
@@ -96,6 +98,10 @@ pub(super) fn sys_rt_sigtimedwait(
     )
 }
 
+/// Dequeue a signal from the thread's pending signal queue.
+///
+/// If the signal is ignored and not blocked, it will be dropped and
+/// the next signal will be checked.
 fn dequeue_signal_with_checking_ignore(
     ctx: &Context,
     mask: SigMask,
@@ -105,6 +111,7 @@ fn dequeue_signal_with_checking_ignore(
     let sig_disposition = sig_dispositions.lock();
     while let Some(dequeued) = ctx.posix_thread.dequeue_signal(&mask) {
         let signal = dequeued.unwrap();
+
         if !block_list.contains(signal.num()) && sig_disposition.will_ignore(signal.as_ref()) {
             continue;
         }

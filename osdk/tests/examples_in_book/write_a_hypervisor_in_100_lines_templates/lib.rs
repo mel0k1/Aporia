@@ -1,3 +1,5 @@
+
+
 #![no_std]
 #![deny(unsafe_code)]
 
@@ -13,6 +15,7 @@ use ostd::{
 
 #[ostd::main]
 fn main() {
+
     TaskOptions::new(|| {
         run_guest();
         poweroff(ExitCode::Success);
@@ -31,6 +34,7 @@ fn run_guest() {
         Err(err) => panic!("Failed to initialize VMX: {err:?}"),
     };
 
+
     let guest_mem = GuestPhysMemSpace::new().expect("EPT is required for guest memory");
     let frame = FrameAllocOptions::new().alloc_frame().unwrap();
     frame.write_bytes(0, GUEST_CODE).unwrap();
@@ -43,6 +47,7 @@ fn run_guest() {
         );
     }
 
+
     let mut context = GuestContext::new(
         VcpuRegs::new(),
         VcpuSregs::new_real_mode(),
@@ -51,6 +56,7 @@ fn run_guest() {
     .unwrap();
 
     loop {
+
         let exit = match guest_mode
             .execute(&mut context, &guest_mem, &DummyGuestHooks)
             .unwrap()
@@ -58,6 +64,7 @@ fn run_guest() {
             GuestReturnReason::VmExit(exit) => exit,
             GuestReturnReason::KernelEvent => continue,
         };
+
 
         match exit.exit_reason {
             reason
@@ -76,5 +83,6 @@ fn run_guest() {
 
     println!("Guest halted; returned to host.");
 }
+
 
 const GUEST_CODE: &[u8] = include_bytes!("../guest_hello");

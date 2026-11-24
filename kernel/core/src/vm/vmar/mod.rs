@@ -1,3 +1,5 @@
+//! User address space management.
+
 mod handle;
 mod interval_set;
 mod rmap;
@@ -23,10 +25,12 @@ pub use self::{vm_mapping::MapHandle, vmar_impls::map::FileMmapRequest};
 pub(crate) const VMAR_LOWEST_ADDR: Vaddr = 0x001_0000;
 pub(crate) const VMAR_CAP_ADDR: Vaddr = ostd::mm::MAX_USERSPACE_VADDR;
 
+/// Returns whether the input `vaddr` is a legal user space virtual address.
 pub(crate) fn is_userspace_vaddr(vaddr: Vaddr) -> bool {
     (VMAR_LOWEST_ADDR..VMAR_CAP_ADDR).contains(&vaddr)
 }
 
+/// Returns whether `vaddr` and `len` specify a legal user space virtual address range.
 fn is_userspace_vaddr_range(vaddr: Vaddr, len: usize) -> bool {
     vaddr >= VMAR_LOWEST_ADDR
         && VMAR_CAP_ADDR

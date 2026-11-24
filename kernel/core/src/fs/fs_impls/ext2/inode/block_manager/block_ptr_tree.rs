@@ -1,3 +1,5 @@
+//! Logical-to-physical block translation via the ext2 block-pointer tree.
+
 #![short_vis_path::add(inode)]
 
 use device_id::{decode_device_numbers, encode_device_numbers};
@@ -11,6 +13,22 @@ const PTRS_PER_BLOCK: usize = BLOCK_SIZE / size_of::<u32>();
 const SECTORS_PER_BLOCK: u32 = (BLOCK_SIZE / SECTOR_SIZE) as u32;
 const MAX_BLOCK_POINTER_LEVELS: usize = 4;
 
+/// An ext2 inode's block-pointer tree.
+///
+/// Each tree is rooted in the 15 raw block pointer slots stored in the inode.
+/// The first 12 slots address data blocks directly,
+/// while the remaining slots address progressively deeper indirect levels.
+///
+/// | Slot index | Region           | Addressable blocks (4 KiB blocks)     |
+/// |------------|------------------|---------------------------------------|
+/// | 0 – 11     | Direct           | 12 blocks                             |
+/// | 12         | Single-indirect  | 1 024 blocks                          |
+/// | 13         | Double-indirect  | 1 024² blocks                         |
+/// | 14         | Triple-indirect  | 1 024³ blocks                         |
+///
+/// A zero pointer at any level represents an unallocated sparse range.
+/// Non-zero pointers must refer either to data blocks at the leaf level
+/// or to indirect metadata blocks at the level selected by the slot.
 #[derive(Debug)]
 pub(in inode) struct BlockPtrTree {
     raw_block_ptrs: Dirty<RawBlockPtrs>,
@@ -18,6 +36,7 @@ pub(in inode) struct BlockPtrTree {
 }
 
 impl BlockPtrTree {
+    /// Creates a new block-pointer tree from the on-disk raw pointers.
     pub(in inode) fn new(raw_block_ptrs: RawBlockPtrs, fs: Weak<Ext2>) -> Self {
         Self {
             raw_block_ptrs: Dirty::new(raw_block_ptrs),
@@ -25,22 +44,27 @@ impl BlockPtrTree {
         }
     }
 
+    /// Returns a reference to the raw on-disk block pointer state.
     pub(in inode) fn raw_block_ptrs(&self) -> &RawBlockPtrs {
         &self.raw_block_ptrs
     }
 
+    /// Returns whether the `RawBlockPtrs` is dirty.
     pub(super) fn is_dirty(&self) -> bool {
         self.raw_block_ptrs.is_dirty()
     }
 
+    /// Clears the dirty flag for the raw on-disk block pointer state.
     pub(super) fn clear_dirty(&mut self) {
         self.raw_block_ptrs.clear_dirty();
     }
 
+    /// Flushes all dirty cached indirect blocks to the device.
     pub(in inode) fn sync_indirect_blocks(&self) -> Result<()> {
         self.indirect_blocks_manager.lock().sync()
     }
 
+    /// Resolves a logical block to a contiguous physical block range.
     pub(in inode) fn lookup_block_range(
         &self,
         iblock: Iblock,
@@ -54,6 +78,7 @@ impl BlockPtrTree {
         self.existing_contiguous_data_blocks(&walk, max_blocks)
     }
 
+    /// Resolves a logical block to physical block (read-only).
     pub(in inode) fn lookup_block(&self, iblock: Iblock) -> Result<Option<Ext2Bid>> {
         let range = self.lookup_block_range(iblock, 1)?;
         Ok(if range.is_empty() {
@@ -63,6 +88,19 @@ impl BlockPtrTree {
         })
     }
 
+    /// Resolves a logical block to a contiguous physical block range,
+    /// allocating new blocks if the mapping does not yet exist.
+    ///
+    /// The returned range starts at the physical block backing `iblock` and
+    /// extends for at most `max_blocks` contiguous physical blocks, but may
+    /// be shorter when the contiguous run ends or a leaf-pointer boundary is
+    /// reached.
+    ///
+    /// - `Existing`: `iblock` was already allocated; the range covers the
+    ///   contiguous prefix of physical blocks starting from that position.
+    /// - `NewlyAllocated`: `iblock` was a hole; new data blocks (and any
+    ///   required indirect metadata blocks) were allocated and linked into
+    ///   the tree. The range covers the freshly allocated data blocks.
     pub(in inode) fn resolve_block_range(
         &mut self,
         fs: &Ext2,
@@ -88,6 +126,12 @@ impl BlockPtrTree {
         ))
     }
 
+    /// Truncates blocks to the new byte length (best-effort).
+    ///
+    /// This is a best-effort operation. Errors are logged but not propagated.
+    /// Leaked blocks from partial failures are recoverable by e2fsck. Linux
+    /// also follows this practice (see
+    /// <https://elixir.bootlin.com/linux/v7.0/source/fs/ext2/inode.c#L1172>).
     pub(in inode) fn truncate_to_byte_len(&mut self, fs: &Ext2, new_size: usize) {
         let iblock = match Iblock::try_from(new_size.div_ceil(BLOCK_SIZE)) {
             Ok(ib) => ib,
@@ -116,6 +160,13 @@ impl BlockPtrTree {
         self.free_indirect_roots_after(fs, walk.root_slot() as usize);
     }
 
+    /// Returns a conservative hole run starting from `iblock`, capped at
+    /// `max_blocks`.
+    ///
+    /// The caller must have already verified that `iblock` is unallocated.
+    /// Returns `0` if the block is actually allocated. The result may stop
+    /// early at a direct/indirect region boundary, but it never overestimates:
+    /// every block in the returned interval is known to be unmapped.
     pub(in inode) fn approx_hole_blocks(&self, iblock: Iblock, max_blocks: u32) -> Result<u32> {
         if max_blocks == 0 {
             return Ok(0);
@@ -271,11 +322,13 @@ impl BlockPtrTree {
         detach_level: usize,
     ) -> Result<()> {
         let ptrs_per_block = PTRS_PER_BLOCK;
+
         for level in (1..=detach_level).rev() {
             let current_bid = trimmed.parent_bid_at(level);
 
             let start_idx = (walk.slot_at(level) as usize) + 1;
             let child_indirect_levels = walk.subtree_indirect_levels(level);
+
             let child_blocks = {
                 let mut indirect_blocks_manager = self.indirect_blocks_manager.lock();
                 let block = indirect_blocks_manager.find_mut(current_bid)?;
@@ -321,11 +374,18 @@ impl BlockPtrTree {
         }
     }
 
+    /// Translates a logical block number into a block-pointer path and walks
+    /// the on-disk chain to resolve physical block addresses.
+    ///
+    /// After skipping the 12 direct blocks, the remaining block number is
+    /// converted to base-1024 digits — each digit becomes a slot at one
+    /// level of the indirect block tree.
     fn walk_at(&self, iblock: Iblock) -> Result<BlockPointerWalk> {
         let path = BlockPointerPath::new(iblock)?;
         self.walk_path(path)
     }
 
+    /// Computes a `BlockPointerWalk` by walking the on-disk pointer chain.
     fn walk_path(&self, path: BlockPointerPath) -> Result<BlockPointerWalk> {
         let top_bid = self.raw_block_ptrs.block_ptrs[path.slots[0] as usize];
         let num_levels = path.num_levels;
@@ -371,9 +431,11 @@ impl BlockPtrTree {
         if max_blocks == 0 {
             return Err(errno!(EINVAL, "zero block range requested"));
         }
+
         if !walk.is_complete() {
             return Ok(0..0);
         }
+
         let first_bid = walk.bid_at(walk.leaf_level());
         if first_bid == 0 {
             return Ok(0..0);
@@ -411,6 +473,12 @@ impl BlockPtrTree {
         Ok(first_bid..first_bid.saturating_add(count))
     }
 
+    /// Returns how many indirect metadata blocks and data blocks are needed.
+    ///
+    /// The returned tuple is `(indirect_blks, data_blks)`. `indirect_blks`
+    /// covers the missing metadata levels below the first hole in `walk`,
+    /// while `data_blks` is the contiguous data range that can be placed in the
+    /// current leaf without crossing its block-pointer boundary.
     fn planned_allocation(&self, walk: &BlockPointerWalk, max_blocks: u32) -> Result<(u32, u32)> {
         if max_blocks == 0 {
             return Err(errno!(EINVAL, "zero block allocation requested"));
@@ -451,6 +519,7 @@ impl BlockPtrTree {
         Ok((0, count))
     }
 
+    /// Frees all blocks in a pointer subtree.
     fn free_block_subtree(&mut self, fs: &Ext2, block_bid: Ext2Bid, indirect_levels: u32) {
         if block_bid == 0 {
             return;
@@ -505,6 +574,12 @@ impl BlockPtrTree {
             .saturating_sub(SECTORS_PER_BLOCK);
     }
 
+    /// Allocates indirect metadata blocks and data blocks for a missing path.
+    ///
+    /// Indirect blocks are allocated first so the eventual data range can be
+    /// placed near the newly allocated metadata when possible. The returned
+    /// guard frees all allocated blocks on drop unless `commit` is called after
+    /// the blocks have been spliced into the tree.
     fn allocate_blocks<'a>(
         &self,
         fs: &'a Ext2,
@@ -543,6 +618,7 @@ impl BlockPtrTree {
         Ok(guard)
     }
 
+    /// Zeroes newly allocated data blocks before exposing them via mapped reads.
     fn zero_new_blocks(fs: &Ext2, block_range: &Range<Ext2Bid>) -> Result<()> {
         let mut io_batch = IoBatch::with_capacity(1);
 
@@ -555,6 +631,12 @@ impl BlockPtrTree {
         Ok(())
     }
 
+    /// Splices allocated blocks into the block-pointer tree.
+    ///
+    /// If no indirect metadata blocks were allocated, this only fills data bids
+    /// into existing leaf slots. Otherwise it builds the missing indirect chain,
+    /// links the chain root into the first hole, and updates the inode sector
+    /// count for both metadata and data blocks.
     fn link_allocated_blocks(
         &mut self,
         guard: &BlockAllocGuard,
@@ -581,6 +663,7 @@ impl BlockPtrTree {
         Ok(())
     }
 
+    /// Fills data pointers into existing slots when no new indirect blocks are needed.
     fn fill_existing_leaf_slots(
         &mut self,
         walk: &BlockPointerWalk,
@@ -601,6 +684,7 @@ impl BlockPtrTree {
         Ok(())
     }
 
+    /// Builds a new indirect-block chain and links it into the tree.
     fn link_new_indirect_chain(
         &mut self,
         walk: &BlockPointerWalk,
@@ -661,6 +745,11 @@ impl BlockPtrTree {
         Ok(())
     }
 
+    /// Writes a contiguous range of allocated data block IDs into direct
+    /// `i_block[]` slots.
+    ///
+    /// Callers guarantee that the target slots are zero because `walk_path`
+    /// confirmed the hole and the inode lock is held throughout.
     fn write_data_range_to_direct_slots(
         &mut self,
         start_slot: usize,
@@ -676,6 +765,11 @@ impl BlockPtrTree {
         Ok(())
     }
 
+    /// Writes a contiguous range of allocated data block IDs into an indirect
+    /// block.
+    ///
+    /// The caller guarantees that every target slot is zero; the debug
+    /// assertion keeps that invariant explicit during development.
     fn write_data_range_to_indirect_block(
         block: &mut IndirectBlock,
         start_slot: usize,
@@ -691,6 +785,17 @@ impl BlockPtrTree {
     }
 }
 
+/// On-disk block pointer state mirrored from `RawInode`.
+///
+/// The mirrored fields are `i_blocks` (sector count) and the 15-entry
+/// `i_block[]` array.
+///
+/// This copy exists to break a locking cycle between `Inode` and
+/// `PageCacheBackend`. Both need to look up or allocate blocks, but `Inode`
+/// also drives `PageCacheBackend` operations. Giving both sides access to this
+/// struct instead of routing everything through the `InodeInner` lock avoids a
+/// deadlock. The struct is the authoritative in-memory state and is written
+/// back to the inode on sync.
 #[derive(Clone, Copy, Debug)]
 pub(in inode) struct RawBlockPtrs {
     pub sector_count: u32,
@@ -698,6 +803,7 @@ pub(in inode) struct RawBlockPtrs {
 }
 
 impl RawBlockPtrs {
+    /// Creates a `RawBlockPtrs` from the given sector count and pointer array.
     pub(in inode) fn new(sector_count: u32, block_ptrs: [u32; RAW_BLOCK_PTRS_LEN]) -> Self {
         Self {
             sector_count,
@@ -705,15 +811,18 @@ impl RawBlockPtrs {
         }
     }
 
+    /// Reads the ext2 special-file device encoding stored in `i_block`.
     pub(in inode) fn read_device_id(&self) -> u64 {
         let (major, minor) = if self.block_ptrs[0] != 0 {
             let old_encoded_device = self.block_ptrs[0];
+
             (
                 ((old_encoded_device >> 8) & 0xFF),
                 (old_encoded_device & 0xFF),
             )
         } else {
             let encoded_device = self.block_ptrs[1];
+
             (
                 ((encoded_device & 0xFFF00) >> 8),
                 ((encoded_device & 0xFF) | ((encoded_device >> 12) & 0xFFF00)),
@@ -723,6 +832,7 @@ impl RawBlockPtrs {
         encode_device_numbers(major, minor)
     }
 
+    /// Writes a device ID into the ext2 special-file `i_block` layout.
     pub(in inode) fn write_device_id(&mut self, device_id: u64) {
         let (major, minor) = decode_device_numbers(device_id);
 
@@ -737,12 +847,20 @@ impl RawBlockPtrs {
     }
 }
 
+/// Result of resolving a physical block range from a logical block position.
 #[derive(Debug)]
 pub(in inode) enum ResolvedBlockRange {
+    /// The physical range already exists on device.
     Existing(Range<Ext2Bid>),
+    /// The physical range was freshly allocated on device.
     NewlyAllocated(Range<Ext2Bid>),
 }
 
+/// Full block-pointer path from `i_block[]` to a logical data block.
+///
+/// `slots[0]` is always the slot in the inode's `i_block[]` array.
+/// `slots[1..num_levels]` are the successive slots inside indirect
+/// blocks, from outermost to innermost.
 #[derive(Clone, Copy, Debug)]
 struct BlockPointerPath {
     slots: [u32; MAX_BLOCK_POINTER_LEVELS],
@@ -750,6 +868,7 @@ struct BlockPointerPath {
 }
 
 impl BlockPointerPath {
+    /// Creates a block-pointer path for a logical block index.
     fn new(iblock: Iblock) -> Result<Self> {
         let ptrs = PTRS_PER_BLOCK as u32;
         let ptr_shift = ptrs.trailing_zeros();
@@ -795,40 +914,82 @@ impl BlockPointerPath {
     }
 }
 
+/// Traversal state from an inode's `i_block[]` array to a logical data block.
+///
+/// The state combines the slot path selected by the logical block index with
+/// the block IDs observed in the on-disk pointer chain.
+///
+/// For a 4 KiB block size (1024 pointers per indirect block):
+///
+/// ```text
+///   Logical block 0..11 (direct):
+///     levels=1:  i_block[0..12]  →  data block
+///
+///   Logical block 12..1035 (single indirect):
+///     levels=2:  i_block[12]  →  indirect[slot]  →  data block
+///
+///   Logical block 1036..1049611 (double indirect):
+///     levels=3:  i_block[13]  →  L1[a]  →  L2[b]  →  data block
+///
+///   Logical block 1049612..1074791435 (triple indirect):
+///     levels=4:  i_block[14]  →  L1[a]  →  L2[b]  →  L3[c]  →  data block
+/// ```
+///
+/// `level` is a 0-based index into this chain: level 0 is always the inode
+/// `i_block[]` slot, and levels 1.. are successive indirect-block slots.
 #[derive(Debug)]
 struct BlockPointerWalk {
+    /// Slot path from inode `i_block[]` to the target logical block.
+    ///
+    /// This is pure addressing metadata; physical block numbers read while
+    /// following the path are recorded in `visited_entries`.
     path: BlockPointerPath,
+    /// Whether every pointer in the path was non-zero.
     is_complete: bool,
+    /// Non-zero entries visited so far, one per completed level.
+    ///
+    /// If the walk is incomplete, the first hole is at
+    /// `visited_entries.len()`.
     visited_entries: SmallVec<[Ext2Bid; MAX_BLOCK_POINTER_LEVELS]>,
 }
 
 impl BlockPointerWalk {
+    /// Returns the root slot in inode `i_block[]`.
     fn root_slot(&self) -> u32 {
         self.path.slots[0]
     }
 
+    /// Returns whether this walk names an inline direct data-block slot.
     fn is_direct_data_block(&self) -> bool {
         self.root_slot() < 12
     }
 
+    /// Returns the total number of levels in the pointer chain.
     #[cfg(ktest)]
     fn num_levels(&self) -> usize {
         self.path.num_levels
     }
 
+    /// Returns the slot at the given level of the block pointer tree.
     fn slot_at(&self, level: usize) -> u32 {
         debug_assert!(level < self.path.num_levels);
         self.path.slots[level]
     }
 
+    /// Returns the slot at the deepest (leaf) level.
     fn leaf_slot(&self) -> u32 {
         self.slot_at(self.leaf_level())
     }
 
+    /// Returns the index (0-based) of the deepest (leaf) level in the pointer chain.
     fn leaf_level(&self) -> usize {
         self.path.num_levels - 1
     }
 
+    /// Trims trailing zero slots from the innermost levels.
+    ///
+    /// Used by `truncate_to_byte_len` to raise the shared path level when the
+    /// truncation point sits at the start of an indirect block.
     fn trim_trailing_zero_slots(&self) -> BlockPointerPath {
         let mut num_levels = self.path.num_levels;
         while num_levels > 1 && self.path.slots[num_levels - 1] == 0 {
@@ -838,16 +999,24 @@ impl BlockPointerWalk {
         BlockPointerPath::from_slots(self.path.slots, num_levels)
     }
 
+    /// Returns the indirect-block levels in the subtree rooted at `root_level`.
+    ///
+    /// Equals `leaf_level() - root_level`: the number of indirect blocks that
+    /// must still be traversed from the node at `root_level` down to data
+    /// blocks.
+    /// Pass this directly as the `indirect_levels` argument to `free_block_subtree`.
     fn subtree_indirect_levels(&self, root_level: usize) -> u32 {
         debug_assert!(root_level <= self.leaf_level());
         (self.leaf_level() - root_level) as u32
     }
 
+    /// Returns the child levels below `level`, from outermost to innermost.
     fn child_levels(&self, level: usize) -> impl Iterator<Item = usize> {
         debug_assert!(level <= self.leaf_level());
         (level + 1)..=self.leaf_level()
     }
 
+    /// Returns the maximum block count before crossing this walk's leaf boundary.
     fn max_blocks_in_leaf(&self, max_blocks: u32) -> u32 {
         let boundary = if self.is_direct_data_block() {
             11 - self.leaf_slot()
@@ -877,6 +1046,7 @@ impl BlockPointerWalk {
     }
 }
 
+/// Rollback guard for metadata and data blocks allocated through the block-pointer tree.
 #[derive(Debug)]
 struct BlockAllocGuard<'a> {
     fs: &'a Ext2,

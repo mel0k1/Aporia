@@ -1,3 +1,41 @@
+//! Chunk-based storage management.
+//!
+//! A chunk is a group of consecutive blocks.
+//! As the size of a chunk is much greater than that of a block,
+//! the number of chunks is naturally far smaller than that of blocks.
+//! This makes it possible to keep all metadata for chunks in memory.
+//! Thus, managing chunks is more efficient than managing blocks.
+//!
+//! The primary API provided by this module is chunk allocators,
+//! `ChunkAlloc`, which tracks whether chunks are free or not.
+//!
+//! # Examples
+//!
+//! Chunk allocators are used within transactions.
+//!
+//! ```
+//! fn alloc_chunks(chunk_alloc: &ChunkAlloc, num_chunks: usize) -> Option<Vec<ChunkId>> {
+//!     let mut tx = chunk_alloc.new_tx();
+//!     let res: Option<Vec<ChunkId>> = tx.context(|| {
+//!         let mut chunk_ids = Vec::new();
+//!         for _ in 0..num_chunks {
+//!             chunk_ids.push(chunk_alloc.alloc()?);
+//!         }
+//!         Some(chunk_ids)
+//!     });
+//!     if res.is_some() {
+//!         tx.commit().ok()?;
+//!     } else {
+//!         tx.abort();
+//!     }
+//!     res
+//! }
+//! ```
+//!
+//! This above example showcases the power of transaction atomicity:
+//! if anything goes wrong (e.g., allocation failures) during the transaction,
+//! then the transaction can be aborted and all changes made to `chuck_alloc`
+//! during the transaction will be rolled back automatically.
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -8,11 +46,15 @@ use crate::{
     util::BitMap,
 };
 
+/// The ID of a chunk.
 pub(super) type ChunkId = usize;
 
+/// Number of blocks of a chunk.
 pub(super) const CHUNK_NBLOCKS: usize = 1024;
+/// The chunk size is a multiple of the block size.
 pub(super) const CHUNK_SIZE: usize = CHUNK_NBLOCKS * BLOCK_SIZE;
 
+/// A chunk allocator tracks which chunks are free.
 #[derive(Clone)]
 pub(super) struct ChunkAlloc {
     state: Arc<Mutex<ChunkAllocState>>,
@@ -20,11 +62,14 @@ pub(super) struct ChunkAlloc {
 }
 
 impl ChunkAlloc {
+    /// Creates a chunk allocator that manages a specified number of
+    /// chunks (`capacity`). Initially, all chunks are free.
     pub(super) fn new(capacity: usize, tx_provider: Arc<TxProvider>) -> Self {
         let state = ChunkAllocState::new(capacity);
         Self::from_parts(state, tx_provider)
     }
 
+    /// Constructs a `ChunkAlloc` from its parts.
     pub(super) fn from_parts(mut state: ChunkAllocState, tx_provider: Arc<TxProvider>) -> Self {
         state.in_journal = false;
         let new_self = Self {
@@ -67,10 +112,12 @@ impl ChunkAlloc {
         new_self
     }
 
+    /// Creates a new transaction for the chunk allocator.
     pub(super) fn new_tx(&self) -> CurrentTx<'_> {
         self.tx_provider.new_tx()
     }
 
+    /// Allocates a chunk, returning its ID.
     pub(super) fn alloc(&self) -> Option<ChunkId> {
         let chunk_id = {
             let mut state = self.state.lock();
@@ -85,6 +132,8 @@ impl ChunkAlloc {
         Some(chunk_id)
     }
 
+    /// Allocates `count` number of chunks. Returns IDs of newly-allocated
+    /// chunks, returns `None` if any allocation fails.
     pub(super) fn alloc_batch(&self, count: usize) -> Option<Vec<ChunkId>> {
         let chunk_ids = {
             let mut ids = Vec::with_capacity(count);
@@ -112,6 +161,11 @@ impl ChunkAlloc {
         Some(chunk_ids)
     }
 
+    /// Deallocates the chunk of a given ID.
+    ///
+    /// # Panic
+    ///
+    /// Deallocating a free chunk causes panic.
     pub(super) fn dealloc(&self, chunk_id: ChunkId) {
         let mut current_tx = self.tx_provider.current();
         current_tx.data_mut_with(|edit: &mut ChunkAllocEdit| {
@@ -124,6 +178,11 @@ impl ChunkAlloc {
         });
     }
 
+    /// Deallocates the set of chunks of given IDs.
+    ///
+    /// # Panic
+    ///
+    /// Deallocating a free chunk causes panic.
     pub(super) fn dealloc_batch<I>(&self, chunk_ids: I)
     where
         I: Iterator<Item = ChunkId>,
@@ -141,10 +200,12 @@ impl ChunkAlloc {
         });
     }
 
+    /// Returns the capacity of the allocator, which is the number of chunks.
     pub(super) fn capacity(&self) -> usize {
         self.state.lock().capacity()
     }
 
+    /// Returns the number of free chunks.
     pub(super) fn free_count(&self) -> usize {
         self.state.lock().free_count()
     }
@@ -160,15 +221,21 @@ impl Debug for ChunkAlloc {
     }
 }
 
+/// The persistent state of a chunk allocator.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(super) struct ChunkAllocState {
     alloc_map: BitMap,
+
     free_count: usize,
+
     next_free: usize,
+    /// Whether the state is in the journal or not.
     in_journal: bool,
 }
 
 impl ChunkAllocState {
+    /// Creates a persistent state for managing chunks of the specified number.
+    /// Initially, all chunks are free.
     pub(super) fn new(capacity: usize) -> Self {
         Self {
             alloc_map: BitMap::repeat(false, capacity),
@@ -178,6 +245,9 @@ impl ChunkAllocState {
         }
     }
 
+    /// Creates a persistent state in the journal. The state in the journal and
+    /// the state that `RawLogStore` manages act differently on allocation and
+    /// edits' appliance.
     pub(super) fn new_in_journal(capacity: usize) -> Self {
         Self {
             alloc_map: BitMap::repeat(false, capacity),
@@ -187,6 +257,7 @@ impl ChunkAllocState {
         }
     }
 
+    /// Allocates a chunk, returning its ID.
     pub(super) fn alloc(&mut self) -> Option<ChunkId> {
         let mut next_free = self.next_free;
         if next_free == self.alloc_map.len() {
@@ -210,30 +281,42 @@ impl ChunkAllocState {
         Some(free_chunk_id)
     }
 
+    /// Deallocates the chunk of a given ID.
+    ///
+    /// # Panic
+    ///
+    /// Deallocating a free chunk causes panic.
     pub(super) fn dealloc(&mut self, chunk_id: ChunkId) {
         debug_assert!(self.alloc_map[chunk_id]);
         self.alloc_map.set(chunk_id, false);
         self.free_count += 1;
     }
 
+    /// Returns the total number of chunks.
     pub(super) fn capacity(&self) -> usize {
         self.alloc_map.len()
     }
 
+    /// Returns the number of free chunks.
     pub(super) fn free_count(&self) -> usize {
         self.free_count
     }
 
+    /// Returns whether a specific chunk is allocated.
     pub(super) fn is_chunk_allocated(&self, chunk_id: ChunkId) -> bool {
         self.alloc_map[chunk_id]
     }
 }
 
+/// A persistent edit to the state of a chunk allocator.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(super) struct ChunkAllocEdit {
     edit_table: HashMap<ChunkId, ChunkEdit>,
 }
 
+/// The smallest unit of a persistent edit to the
+/// state of a chunk allocator, which is
+/// a chunk being either allocated or deallocated.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 enum ChunkEdit {
     Alloc,
@@ -241,18 +324,25 @@ enum ChunkEdit {
 }
 
 impl ChunkAllocEdit {
+    /// Creates a new empty edit table.
     pub(super) fn new() -> Self {
         Self {
             edit_table: HashMap::new(),
         }
     }
 
+    /// Records a chunk allocation in the edit.
     pub(super) fn alloc(&mut self, chunk_id: ChunkId) {
         let old_edit = self.edit_table.insert(chunk_id, ChunkEdit::Alloc);
 
         assert!(old_edit.is_none());
     }
 
+    /// Records a chunk deallocation in the edit.
+    ///
+    /// The return value indicates whether the chunk being deallocated
+    /// is previously recorded in the edit as being allocated.
+    /// If so, the chunk can be deallocated in the `ChunkAllocState`.
     pub(super) fn dealloc(&mut self, chunk_id: ChunkId) -> bool {
         match self.edit_table.get(&chunk_id) {
             None => {
@@ -269,6 +359,7 @@ impl ChunkAllocEdit {
         }
     }
 
+    /// Returns an iterator over all allocated chunks.
     pub(super) fn iter_allocated_chunks(&self) -> impl Iterator<Item = ChunkId> + '_ {
         self.edit_table.iter().filter_map(|(id, edit)| {
             if *edit == ChunkEdit::Alloc {

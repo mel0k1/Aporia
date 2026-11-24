@@ -102,6 +102,7 @@ pub(super) fn sys_futex(
             ) else {
                 return Err(errno!(EINVAL, "the count of waiters is negative"));
             };
+
             futex_requeue(
                 futex_addr as _,
                 max_nwakes,

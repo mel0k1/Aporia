@@ -1,4 +1,9 @@
+//! Power management.
+
 mod qemu_isa_debug {
+    //! The isa-debug-exit device in QEMU.
+    //!
+    //! Reference: <https://elixir.bootlin.com/qemu/v10.1.2/source/hw/misc/debugexit.c>
 
     use spin::Once;
 
@@ -41,8 +46,15 @@ pub(super) fn init() {
     qemu_isa_debug::init();
 }
 
+/// Attempts to power off the system using an architecture-specific mechanism.
+///
+/// On x86, this function attempts to power off the system through QEMU's ISA debug-exit device if
+/// QEMU was detected during initialization. Otherwise, it does nothing and returns.
 pub fn try_poweroff(code: crate::power::ExitCode) {
     qemu_isa_debug::try_exit_qemu(code);
 }
 
+/// Attempts to restart the system using an architecture-specific mechanism.
+///
+/// On x86, this function currently does nothing and returns.
 pub fn try_restart(_code: crate::power::ExitCode) {}

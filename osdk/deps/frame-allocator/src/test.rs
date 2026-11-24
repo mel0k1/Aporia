@@ -1,3 +1,5 @@
+//! Providing test utilities and high-level test cases for the frame allocator.
+
 use core::alloc::Layout;
 
 use ostd::{
@@ -68,12 +70,18 @@ fn split_allocations() {
     instance.dealloc(allocated + PAGE_SIZE * 15, PAGE_SIZE);
 }
 
+/// A mocked memory region for testing.
+///
+/// All the frames in the returned memory region will be marked as used.
+/// When the region is dropped, all the frames will be returned to the global
+/// frame allocator. If any frame is not unused by that time, the drop will panic.
 pub(crate) struct MockMemoryRegion {
     addr: Paddr,
     size: usize,
 }
 
 impl MockMemoryRegion {
+    /// Gets a memory region for testing.
     pub(crate) fn alloc(size: usize) -> Self {
         let seg = FrameAllocOptions::new()
             .alloc_segment(size / PAGE_SIZE)
@@ -85,6 +93,7 @@ impl MockMemoryRegion {
         Self { addr, size }
     }
 
+    /// Gets the start address of the memory region.
     pub(crate) fn paddr(&self) -> Paddr {
         self.addr
     }

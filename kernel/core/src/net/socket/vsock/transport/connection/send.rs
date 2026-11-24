@@ -22,6 +22,10 @@ use crate::{
 };
 
 impl Connection {
+    /// Copies data from `reader` into TX packets and queues them for transmission.
+    ///
+    /// The method respects both peer receive credit and the connection's pending-byte budget. It
+    /// may return `EAGAIN` when either resource is exhausted.
     pub(in vsock) fn try_send(
         &mut self,
         reader: &mut dyn MultiRead,

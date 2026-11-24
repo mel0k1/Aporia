@@ -20,6 +20,7 @@ use crate::{
     util::ioctl::RawIoctl,
 };
 
+/// Open file counter of a VT.
 pub(super) struct VtOpenFileCounter(AtomicUsize);
 
 impl VtOpenFileCounter {
@@ -27,6 +28,12 @@ impl VtOpenFileCounter {
         Self(AtomicUsize::new(0))
     }
 
+    /// Increments the open-file counter.
+    ///
+    /// The `_guard` argument makes holding the VT manager lock a type-level
+    /// requirement for increments. Since `has_open_files` also requires the
+    /// same lock, a `false` result from `has_open_files` is stable against
+    /// concurrent opens while the guard is held.
     fn acquire_one(&self, _guard: &VtManagerGuard<'_>) {
         self.0.fetch_add(1, Ordering::Relaxed);
     }
@@ -36,11 +43,20 @@ impl VtOpenFileCounter {
         debug_assert!(old_count > 0, "releasing more files than acquired");
     }
 
+    /// Returns whether this VT currently has open files.
+    ///
+    /// The `_guard` argument makes this observation happen under the VT
+    /// manager lock. If this returns `false`, the caller can rely on the VT
+    /// having no open files while holding the guard, because new opens must
+    /// acquire the same lock before incrementing the counter. A `true` result
+    /// is only a snapshot: files may be closed concurrently, so the counter
+    /// may become zero immediately after this method returns.
     pub(super) fn has_open_files(&self, _guard: &VtManagerGuard<'_>) -> bool {
         self.0.load(Ordering::Relaxed) > 0
     }
 }
 
+/// The file representation of a virtual terminal (VT) device.
 pub(super) struct VtFile(Arc<Tty<VtDriver>>);
 
 impl VtFile {

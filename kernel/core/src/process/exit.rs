@@ -6,6 +6,13 @@ use crate::{
     process::signal::signals::kernel::KernelSignal,
 };
 
+/// Exits the current POSIX process.
+///
+/// This is for internal use. Do NOT call this directly. When the last thread in the process exits,
+/// [`do_exit`] or [`do_exit_group`] will invoke this method automatically.
+///
+/// [`do_exit`]: crate::process::posix_thread::do_exit
+/// [`do_exit_group`]: crate::process::posix_thread::do_exit_group
 pub(super) fn exit_process(current_process: &Process) {
     current_process.status().set_vfork_child(false);
 
@@ -26,6 +33,15 @@ pub(super) fn exit_process(current_process: &Process) {
     drop(cgroup_guard);
 }
 
+/// Drops a value after releasing the lock or borrow guard.
+///
+/// For example, [`ThreadLocal::vmar`] needs to be borrowed during a context switch. This means that
+/// the kernel may panic if we borrow it as mutable and tries to acquire a mutex while dropping the
+/// last [`VmarHandle`]. This utility macro ensures that the value is dropped only after the borrow
+/// guard has been released, preventing all these issues.
+///
+/// [`ThreadLocal::vmar`]: super::posix_thread::ThreadLocal::vmar
+/// [`VmarHandle`]: crate::vm::vmar::VmarHandle
 macro_rules! drop_after {
     ($expr:expr) => {
         let val = $expr;
@@ -35,6 +51,11 @@ macro_rules! drop_after {
 
 pub(super) use drop_after;
 
+/// Moves the children to a reaper process.
+///
+/// Returns the moved children. Note that no new processes can become this process's children after
+/// this point, so the returned children reliably represent the set of children at the time the
+/// process exits.
 fn move_children_to_reaper_process(current_process: &Process) -> BTreeMap<Pid, Arc<Process>> {
     if current_process.is_init_process() {
         return BTreeMap::new();
@@ -56,6 +77,9 @@ fn move_children_to_reaper_process(current_process: &Process) -> BTreeMap<Pid, A
     children
 }
 
+/// Finds a reaper process for `current_process`.
+///
+/// If there is no reaper process for `current_process`, returns `None`.
 fn find_reaper_process(current_process: &Process) -> Option<Arc<Process>> {
     let mut parent = current_process.parent().lock().process().upgrade().unwrap();
 
@@ -83,6 +107,10 @@ fn find_reaper_process(current_process: &Process) -> Option<Arc<Process>> {
     }
 }
 
+/// Moves the children of `current_process` to be the children of `reaper_process`.
+///
+/// Returns the moved children on success. Otherwise, if the `reaper_process` is zombie, returns
+/// `Err(())`.
 fn move_process_children(
     current_process: &Process,
     reaper_process: &Arc<Process>,
@@ -104,6 +132,7 @@ fn move_process_children(
     Ok(children)
 }
 
+/// Sends parent-death signals to the children.
 fn send_parent_death_signal(children: &BTreeMap<Pid, Arc<Process>>) {
     for child in children.values() {
         let Some(signum) = child.parent_death_signal() else {
@@ -115,6 +144,7 @@ fn send_parent_death_signal(children: &BTreeMap<Pid, Arc<Process>>) {
     }
 }
 
+/// Sends a child-death signal to the parent.
 fn send_child_death_signal(current_process: &Process) {
     let Some(parent) = current_process.parent().lock().process().upgrade() else {
         return;

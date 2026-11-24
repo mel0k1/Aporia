@@ -1,3 +1,5 @@
+//! Utilities for VM I/O types defined in the parent module.
+
 use inherit_methods_macro::inherit_methods;
 use ostd_pod::Pod;
 
@@ -7,21 +9,37 @@ use super::{
 };
 use crate::{Error, prelude::*};
 
+/// A helper trait that denotes types that can provide [`VmReader`]s and [`VmWriter`]s.
+///
+/// Having the reader and writer means that the type is capable of performing a range of VM
+/// operations. Thus, several traits will be automatically and efficiently implemented, such as
+/// [`VmIo`], [`VmIoFill`], and [`VmIoOnce`].
 pub trait HasVmReaderWriter {
+    /// A marker type that denotes the return types of [`Self::reader`] and [`Self::writer`].
+    ///
+    /// This can be either [`VmReaderWriterIdentity`] or [`VmReaderWriterResult`].
     type Types: VmReaderWriterTypes;
 
+    /// Returns a reader to read data from it.
     fn reader(&self) -> <Self::Types as VmReaderWriterTypes>::Reader<'_>;
+    /// Returns a writer to write data to it.
     fn writer(&self) -> <Self::Types as VmReaderWriterTypes>::Writer<'_>;
 }
 
+/// A marker trait that denotes the return types for [`HasVmReaderWriter`].
 pub trait VmReaderWriterTypes {
+    /// The return type of [`HasVmReaderWriter::reader`].
     type Reader<'a>;
+    /// The return type of [`HasVmReaderWriter::writer`].
     type Writer<'a>;
 
+    /// Converts [`Self::Reader`] to [`Result<VmReader<Infallible>>`].
     fn to_reader_result(reader: Self::Reader<'_>) -> Result<VmReader<'_, Infallible>>;
+    /// Converts [`Self::Writer`] to [`Result<VmWriter<Infallible>>`].
     fn to_writer_result(writer: Self::Writer<'_>) -> Result<VmWriter<'_, Infallible>>;
 }
 
+/// A marker type that denotes reader and writer identities as [`HasVmReaderWriter`] return types.
 pub enum VmReaderWriterIdentity {}
 impl VmReaderWriterTypes for VmReaderWriterIdentity {
     type Reader<'a> = VmReader<'a, Infallible>;
@@ -34,6 +52,7 @@ impl VmReaderWriterTypes for VmReaderWriterIdentity {
     }
 }
 
+/// A marker type that denotes reader and writer results as [`HasVmReaderWriter`] return types.
 pub enum VmReaderWriterResult {}
 impl VmReaderWriterTypes for VmReaderWriterResult {
     type Reader<'a> = Result<VmReader<'a, Infallible>>;

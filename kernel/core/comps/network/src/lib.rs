@@ -35,6 +35,10 @@ pub fn get_device(str: &str) -> Option<Arc<SpinLock<dyn AnyNetworkDevice, Bottom
     Some(callbacks.device.clone())
 }
 
+/// Registers callback which will be called when receiving message.
+///
+/// Since the callback will be called in softirq context,
+/// the callback function should _not_ sleep.
 pub fn register_recv_callback(name: &str, callback: impl NetDeviceCallback) {
     let device_table = COMPONENT.get().unwrap().network_device_table.lock();
     let Some(callbacks) = device_table.get(name) else {
@@ -43,6 +47,14 @@ pub fn register_recv_callback(name: &str, callback: impl NetDeviceCallback) {
     callbacks.recv_callbacks.lock().push(Arc::new(callback));
 }
 
+/// Registers a callback that will be invoked
+/// when the device has completed sending a packet.
+///
+/// Since this callback is executed in a softirq context,
+/// the callback function should _not_ block or sleep.
+///
+/// Please note that the callback may not be called every time a packet is sent.
+/// The driver may skip certain callbacks for performance optimization.
 pub fn register_send_callback(name: &str, callback: impl NetDeviceCallback) {
     let device_table = COMPONENT.get().unwrap().network_device_table.lock();
     let Some(callbacks) = device_table.get(name) else {
@@ -53,6 +65,7 @@ pub fn register_send_callback(name: &str, callback: impl NetDeviceCallback) {
 
 fn handle_rx_softirq() {
     let device_table = COMPONENT.get().unwrap().network_device_table.lock();
+
     for callback_set in device_table.values() {
         let recv_callbacks = callback_set.recv_callbacks.lock();
         for callback in recv_callbacks.iter() {
@@ -63,6 +76,7 @@ fn handle_rx_softirq() {
 
 fn handle_tx_softirq() {
     let device_table = COMPONENT.get().unwrap().network_device_table.lock();
+
     for callback_set in device_table.values() {
         let can_send = {
             let mut device = callback_set.device.lock();
@@ -81,10 +95,12 @@ fn handle_tx_softirq() {
     }
 }
 
+/// Raises softirq for handling transmission events
 pub fn raise_send_softirq() {
     SoftIrqLine::get(NETWORK_TX_SOFTIRQ_ID).raise();
 }
 
+/// Raises softirq for handling reception events
 pub fn raise_receive_softirq() {
     SoftIrqLine::get(NETWORK_RX_SOFTIRQ_ID).raise();
 }
@@ -114,10 +130,12 @@ type NetDeviceCallbackListRef = Arc<SpinLock<Vec<Arc<dyn NetDeviceCallback>>, Bo
 type NetworkDeviceRef = Arc<SpinLock<dyn AnyNetworkDevice, BottomHalfDisabled>>;
 
 struct Component {
+    /// Device list, the key is device name, value is (callbacks, device);
     network_device_table:
         SpinLock<BTreeMap<String, NetworkDeviceIrqCallbackSet>, BottomHalfDisabled>,
 }
 
+/// The send callbacks and recv callbacks for a network device
 struct NetworkDeviceIrqCallbackSet {
     device: NetworkDeviceRef,
     recv_callbacks: NetDeviceCallbackListRef,

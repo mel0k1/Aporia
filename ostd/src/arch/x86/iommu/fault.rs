@@ -16,6 +16,7 @@ use crate::{
 #[derive(Debug)]
 struct FaultEventRegisters {
     status: VolatileRef<'static, u32, ReadWrite>,
+    /// bit31: Interrupt Mask; bit30: Interrupt Pending.
     _control: VolatileRef<'static, u32, ReadWrite>,
     _data: VolatileRef<'static, u32, ReadWrite>,
     _address: VolatileRef<'static, u32, ReadWrite>,
@@ -30,6 +31,12 @@ impl FaultEventRegisters {
         FaultStatus::from_bits_truncate(self.status.as_ptr().read())
     }
 
+    /// Creates an instance from the IOMMU base address.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the base address is a valid IOMMU base address and that it has
+    /// exclusive ownership of the IOMMU fault event registers.
     unsafe fn new(base_register_vaddr: NonNull<u8>) -> Self {
         let (capability, status, mut control, mut data, mut address, upper_address) = unsafe {
             let base = base_register_vaddr;
@@ -111,6 +118,17 @@ impl FaultRecording {
         ((self.0 & 0xFFFF_0000_0000_0000_0000) >> 64) as u16
     }
 
+    /// Returns the fault information, the meaning of which depends on the fault reason.
+    ///
+    /// If the fault reason is one of the address translation fault conditions, this field contains
+    /// bits 63:12 of the page address of the fault request.
+    ///
+    /// If the fault reason is one of the interrupt-remapping fault conditions other than fault
+    /// reason 0x25, bits 63:48 indicate the interrupt index of the fault request and bits 47:12
+    /// are cleared.
+    ///
+    /// If the fault reason is the interrupt-remapping fault condition caused by a blocked
+    /// Compatibility format interrupt (fault reason 0x25), this field is undefined.
     fn fault_info(&self) -> u64 {
         ((self.0 & 0xFFFF_FFFF_FFFF_F000) >> 12) as u64
     }
@@ -175,17 +193,30 @@ enum FaultAddressType {
 bitflags! {
     #[derive(Clone, Copy, Debug)]
     pub struct FaultStatus: u32 {
+        /// Primary Fault Overflow, indicates overflow of the fault recording registers.
         const PFO = 1 << 0;
+        /// Primary Pending Fault, indicates there are one or more pending faults logged in the fault recording registers.
         const PPF = 1 << 1;
+        /// Invalidation Queue Error.
         const IQE = 1 << 4;
+        /// Invalidation Completion Error. Hardware received an unexpected or invalid Device-TLB invalidation completion.
         const ICE = 1 << 5;
+        /// Invalidation Time-out Error. Hardware detected a Device-TLB invalidation completion time-out.
         const ITE = 1 << 6;
+        /// Fault Record Index, valid only when PPF field is set. This field indicates the index (from base) of the fault recording register
+        /// to which the first pending fault was recorded when the PPF field was Set by hardware.
         const FRI = (0xFF) << 8;
     }
 }
 
 static FAULT_EVENT_REGS: Once<SpinLock<FaultEventRegisters, LocalIrqDisabled>> = Once::new();
 
+/// Initializes the fault reporting function.
+///
+/// # Safety
+///
+/// The caller must ensure that the base address is a valid IOMMU base address and that it has
+/// exclusive ownership of the IOMMU fault event registers.
 pub(super) unsafe fn init(base_register_vaddr: NonNull<u8>) {
     FAULT_EVENT_REGS
         .call_once(|| SpinLock::new(unsafe { FaultEventRegisters::new(base_register_vaddr) }));

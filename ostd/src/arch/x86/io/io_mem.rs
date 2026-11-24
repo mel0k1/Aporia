@@ -1,3 +1,5 @@
+//! I/O memory utilities.
+
 use core::arch::asm;
 
 use super::cvm;
@@ -6,6 +8,23 @@ use crate::{
     mm::PodOnce,
 };
 
+/// Reads from a pointer with a non-tearing memory load.
+///
+/// This function is semantically equivalent to `core::ptr::read_volatile`
+/// but is manually implemented with a single memory load instruction.
+///
+/// # Safety
+///
+/// Same as the safety requirement of `core::ptr::read_volatile`.
+///
+/// # Guarantee
+///
+/// The single-memory-load-instruction guarantee is particularly useful for
+/// Confidential VMs (CVMs) such as Intel TDX and AMD SEV,
+/// where memory loads may cause CPU exceptions (#VE and #VC, respectively)
+/// and the kernel has to handle such exceptions
+/// by decoding the faulting CPU instruction.
+/// As such, the kernel must be compiled to emit simple load/store CPU instructions.
 pub(crate) unsafe fn read_once<T: PodOnce>(ptr: *const T) -> T {
     debug_assert!(ptr.is_aligned());
     let mut val: u64 = 0;
@@ -26,10 +45,20 @@ pub(crate) unsafe fn read_once<T: PodOnce>(ptr: *const T) -> T {
             }
             _ => core::hint::unreachable_unchecked(),
         }
+
         core::ptr::read((&val as *const u64).cast::<T>())
     }
 }
 
+/// Writes to a pointer with a non-tearing memory store.
+///
+/// # Safety
+///
+/// Same as the safety requirement of `core::ptr::write_volatile`.
+///
+/// # Guarantee
+///
+/// Refer to the "Guarantee" section of [`read_once`].
 pub(crate) unsafe fn write_once<T: PodOnce>(ptr: *mut T, val: T) {
     debug_assert!(ptr.is_aligned());
     let mut tmp: u64 = 0;
@@ -59,6 +88,7 @@ macro_rules! do_copy_mmio_impl {
     (dst: $dst:ident, src: $src:ident, count: $count:ident) => {{
         if $count == 0 { return; }
 
+
         unsafe {
             asm!(
                 "rep movsb",
@@ -75,6 +105,7 @@ macro_rules! do_memset_mmio_impl {
     (dst: $dst:ident, value: $value:ident, count: $count:ident) => {{
         if $count == 0 { return; }
 
+
         unsafe {
             asm!(
                 "rep stosb",
@@ -87,6 +118,12 @@ macro_rules! do_memset_mmio_impl {
     }};
 }
 
+/// Copies from MMIO to regular memory.
+///
+/// # Safety
+///
+/// - `dst_ptr` must be valid for writes of `count` bytes.
+/// - `src_io_ptr` must be valid for MMIO reads of `count` bytes.
 pub(crate) unsafe fn copy_from_mmio(dst_ptr: *mut u8, src_io_ptr: *const u8, count: usize) {
     if_tdx_enabled!({
         return unsafe { cvm::copy_from_mmio(dst_ptr, src_io_ptr, count) };
@@ -95,6 +132,12 @@ pub(crate) unsafe fn copy_from_mmio(dst_ptr: *mut u8, src_io_ptr: *const u8, cou
     do_copy_mmio_impl!(dst: dst_ptr, src: src_io_ptr, count: count);
 }
 
+/// Copies from regular memory to MMIO.
+///
+/// # Safety
+///
+/// - `src_ptr` must be valid for reads of `count` bytes.
+/// - `dst_io_ptr` must be valid for MMIO writes of `count` bytes.
 pub(crate) unsafe fn copy_to_mmio(src_ptr: *const u8, dst_io_ptr: *mut u8, count: usize) {
     if_tdx_enabled!({
         return unsafe { cvm::copy_to_mmio(src_ptr, dst_io_ptr, count) };
@@ -103,6 +146,12 @@ pub(crate) unsafe fn copy_to_mmio(src_ptr: *const u8, dst_io_ptr: *mut u8, count
     do_copy_mmio_impl!(dst: dst_io_ptr, src: src_ptr, count: count);
 }
 
+/// Copies from MMIO to fallible memory and returns bytes copied.
+///
+/// # Safety
+///
+/// - `dst_ptr` must be valid or in user space for writes of `count` bytes.
+/// - `src_io_ptr` must be valid for MMIO reads of `count` bytes.
 pub(crate) unsafe fn copy_from_mmio_fallible(
     dst_ptr: *mut u8,
     src_io_ptr: *const u8,
@@ -116,6 +165,12 @@ pub(crate) unsafe fn copy_from_mmio_fallible(
     count - failed_bytes
 }
 
+/// Copies from fallible memory to MMIO and returns bytes copied.
+///
+/// # Safety
+///
+/// - `src_ptr` must be valid or in user space for reads of `count` bytes.
+/// - `dst_io_ptr` must be valid for MMIO writes of `count` bytes.
 pub(crate) unsafe fn copy_to_mmio_fallible(
     src_ptr: *const u8,
     dst_io_ptr: *mut u8,
@@ -129,6 +184,11 @@ pub(crate) unsafe fn copy_to_mmio_fallible(
     count - failed_bytes
 }
 
+/// Fills MMIO with `value` for `count` bytes.
+///
+/// # Safety
+///
+/// - `dst_io_ptr` must be valid for MMIO writes of `count` bytes.
 pub(crate) unsafe fn memset_mmio(dst_io_ptr: *mut u8, value: u8, count: usize) {
     if_tdx_enabled!({
         return unsafe { cvm::memset_mmio(dst_io_ptr, value, count) };

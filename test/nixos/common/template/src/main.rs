@@ -1,3 +1,10 @@
+
+
+//! The test suite for <TargetAppName> on Asterinas NixOS.
+//!
+//! See `test/nixos/README.md#documentation-maintenance` for sync requirements
+//! between this test suite and the corresponding "Verified Usage" book section.
+
 use nixos_test_framework::*;
 
 nixos_test_main!();

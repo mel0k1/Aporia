@@ -26,9 +26,10 @@ extern "cdecl" fn main_legacy32(boot_params_ptr: *mut BootParams) -> ! {
     crate::loader::load_elf(crate::x86::payload());
 
     crate::println!(
-        "[setup] Entering the Aporia entry point at {:p}",
+        "[setup] Entering the Asterinas entry point at {:p}",
         ASTER_ENTRY_POINT,
     );
+
     unsafe { call_aster_entrypoint(ASTER_ENTRY_POINT, boot_params_ptr) };
 }
 

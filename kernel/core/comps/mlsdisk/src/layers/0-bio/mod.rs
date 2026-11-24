@@ -1,3 +1,5 @@
+//! The layer of untrusted block I/O.
+
 mod block_buf;
 mod block_log;
 mod block_ring;

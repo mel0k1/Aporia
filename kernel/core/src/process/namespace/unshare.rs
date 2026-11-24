@@ -1,9 +1,14 @@
 use crate::{fs::file::file_table::FileTable, prelude::*, process::CloneFlags};
 
+/// Provides administrative APIs for disassociating execution contexts.
 pub(crate) trait ContextUnshareAdminApi {
+    /// Unshares the file table.
     fn unshare_files(&self);
+    /// Unshares filesystem attributes.
     fn unshare_fs(&self);
+    /// Unshares System V semaphore.
     fn unshare_sysvsem(&self);
+    /// Creates and enters new namespaces as specified by the `flags` argument.
     fn unshare_namespaces(&self, flags: CloneFlags) -> Result<()>;
 }
 

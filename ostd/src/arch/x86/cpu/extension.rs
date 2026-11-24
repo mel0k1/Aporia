@@ -1,3 +1,5 @@
+//! x86 ISA extensions.
+
 use core::arch::x86_64::CpuidResult;
 
 use bitflags::bitflags;
@@ -5,6 +7,7 @@ use spin::Once;
 
 use super::cpuid::cpuid;
 
+/// Detects available x86 ISA extensions.
 pub(in crate::arch) fn init() {
     let mut global_isa_extensions = IsaExtensions::empty();
 
@@ -30,6 +33,7 @@ pub(in crate::arch) fn init() {
     GLOBAL_ISA_EXTENSIONS.call_once(|| global_isa_extensions);
 }
 
+/// Checks if the specified set of ISA extensions are available.
 pub fn has_extensions(required: IsaExtensions) -> bool {
     GLOBAL_ISA_EXTENSIONS.get().unwrap().contains(required)
 }
@@ -63,6 +67,7 @@ macro_rules! define_isa_extensions {
 macro_rules! define_isa_extension_type {
     { $($name:ident, $doc:literal;)* } => {
         bitflags! {
+            /// x86 ISA extensions.
             #[derive(Clone, Copy, Debug)]
             pub struct IsaExtensions: u128 {
                 $(
@@ -74,12 +79,14 @@ macro_rules! define_isa_extension_type {
     };
 }
 
+/// Extensions that describe in a CPUID leaf.
 struct ExtensionLeaf {
     leaf: u32,
     subleaf: u32,
     data: &'static [ExtensionData],
 }
 
+/// An extension and its position (i.e., the register and the bit) in the CPUID result.
 struct ExtensionData {
     reg: Reg,
     bit: u32,

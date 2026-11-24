@@ -3,22 +3,43 @@ use ostd::{
     mm::{HasPaddr, PAGE_SIZE, Paddr, UniqueFrame, frame::linked_list::Link},
 };
 
+/// The order of a buddy chunk.
+///
+/// The size of a buddy chunk is `(1 << order) * PAGE_SIZE`.
 pub(crate) type BuddyOrder = usize;
 
+/// Returns the size of a buddy chunk of the given order.
 pub(crate) const fn size_of_order(order: BuddyOrder) -> usize {
     (1 << order) * PAGE_SIZE
 }
 
+/// Returns an order that covers at least the given size.
+///
+/// The size must be larger than 0.
 pub(crate) fn greater_order_of(size: usize) -> BuddyOrder {
     let size = size / PAGE_SIZE;
     size.next_power_of_two().trailing_zeros() as BuddyOrder
 }
 
+/// Returns a order that covers at most the given size.
+///
+/// The size must be larger than 0.
 pub(crate) fn lesser_order_of(size: usize) -> BuddyOrder {
     let size = size / PAGE_SIZE;
     (usize::BITS - size.leading_zeros() - 1) as BuddyOrder
 }
 
+/// Splits a range into chunks.
+///
+/// A chunk must have a `1 << order` size and alignment, so a random page-
+/// aligned range might not be a chunk.
+///
+/// This function returns an iterator that yields the set of chunks whose union
+/// is the range, and the number of the chunks is the smallest.
+///
+/// # Panics
+///
+/// It panics if the address is not page-aligned.
 pub(crate) fn split_to_chunks(
     addr: Paddr,
     size: usize,
@@ -53,10 +74,25 @@ pub(crate) fn split_to_chunks(
     SplitChunks { addr, size }
 }
 
+/// Returns the maximum order starting from the address.
+///
+/// If the start address is not aligned to the order, the address/order pair
+/// cannot form a buddy chunk.
+///
+/// # Panics
+///
+/// Panics if the address is not page-aligned in debug mode.
 pub(crate) fn max_order_from(addr: Paddr) -> BuddyOrder {
     (addr.trailing_zeros() - PAGE_SIZE.trailing_zeros()) as BuddyOrder
 }
 
+/// Splits a large buddy chunk into two smaller buddies of order `split_order`.
+///
+/// Returns the addresses of each buddy.
+///
+/// # Panics
+///
+/// Panics if the address is not aligned to the `order`.
 pub(crate) fn split_to_order(
     addr: Paddr,
     order: BuddyOrder,
@@ -69,29 +105,49 @@ pub(crate) fn split_to_order(
     (0..split_count).map(move |i| addr + split_size * i)
 }
 
+/// The metadata of the head frame in a free buddy chunk.
 #[derive(Debug)]
 pub(crate) struct FreeHeadMeta {
+    /// The order of the buddy chunk.
     order: BuddyOrder,
 }
 
 impl_frame_meta_for!(FreeHeadMeta);
 
 impl FreeHeadMeta {
+    /// Returns the order of the buddy chunk.
     pub(crate) fn order(&self) -> BuddyOrder {
         self.order
     }
 }
 
+/// A free buddy chunk.
 #[derive(Debug)]
 pub(crate) struct FreeChunk {
     head: UniqueFrame<Link<FreeHeadMeta>>,
 }
 
 impl FreeChunk {
+    /// Gets a buddy chunk from the head frame.
+    ///
+    /// The caller must ensure that the head frame should be uniquely free.
+    /// Otherwise it waits indefinitely.
+    ///
+    /// We need a unique ownership of this chunk. Other threads may be
+    /// deallocating it's buddy and inspecting this chunk (see
+    /// [`Self::buddy`]). So we may spuriously fail to acquire it. But
+    /// they will soon release it so we can acquire it ultimately.
     pub(crate) fn from_free_head(head: UniqueFrame<Link<FreeHeadMeta>>) -> FreeChunk {
         FreeChunk { head }
     }
 
+    /// Gets a buddy chunk from unused frames.
+    ///
+    /// # Panics
+    ///
+    /// Panics if:
+    ///  - the range is not actually unused;
+    ///  - the address is not aligned to the order.
     pub(crate) fn from_unused(addr: Paddr, order: BuddyOrder) -> FreeChunk {
         assert_eq!(addr % size_of_order(order), 0);
 
@@ -117,24 +173,33 @@ impl FreeChunk {
         FreeChunk { head }
     }
 
+    /// Turns the free chunk into a pointer to the head frame.
     pub(crate) fn into_unique_head(self) -> UniqueFrame<Link<FreeHeadMeta>> {
         self.head
     }
 
+    /// Returns the order of the buddy chunk.
     pub(crate) fn order(&self) -> BuddyOrder {
         self.head.meta().order()
     }
 
+    /// Returns the address of the buddy chunk.
     pub(crate) fn addr(&self) -> Paddr {
         self.head.paddr()
     }
 
+    /// Gets the address of the buddy of this chunk.
     pub(crate) fn buddy(&self) -> Paddr {
         let addr = self.addr();
         let order = self.order();
         addr ^ size_of_order(order)
     }
 
+    /// Splits the buddy chunk into two smaller buddies.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the buddy chunk is not uniquely free.
     pub(crate) fn split_free(self) -> (FreeChunk, FreeChunk) {
         let order = self.order();
         let addr = self.addr();
@@ -157,6 +222,11 @@ impl FreeChunk {
         (left_child, right_child)
     }
 
+    /// Merges the buddy chunk with the sibling buddy.
+    ///
+    /// # Panics
+    ///
+    /// Panics if either the buddy chunks are not free or not buddies.
     pub(crate) fn merge_free(mut self, mut buddy: FreeChunk) -> FreeChunk {
         if self.addr() > buddy.addr() {
             core::mem::swap(&mut self, &mut buddy);
@@ -180,10 +250,9 @@ impl FreeChunk {
 
 #[cfg(ktest)]
 mod test {
-    use ostd::prelude::ktest;
-
     use super::*;
     use crate::test::MockMemoryRegion;
+    use ostd::prelude::ktest;
 
     #[ktest]
     fn greater_order_of_works() {

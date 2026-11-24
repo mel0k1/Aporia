@@ -21,27 +21,49 @@ const MAX_RETRIES: usize = 1_000_000;
 
 const NANOS_PER_SECOND: u32 = 1_000_000_000;
 
+/// Returns a consistent snapshot read from the KVM pvclock page.
 pub fn read_pvclock_time_snapshot() -> Option<PvclockTimeSnapshot> {
     PvclockPage::setup()?.read_time_snapshot()
 }
 
+/// Returns the wall-clock epoch recorded in the KVM wall-clock page.
+///
+/// The returned duration is always less than `u32::MAX` seconds, because the
+/// page stores whole seconds as a `u32`.
 pub fn read_wall_clock_epoch() -> Option<Duration> {
     WallClockPage::setup()?.read_epoch()
 }
 
+/// Determines the TSC frequency from KVM's paravirtual clock.
 pub(super) fn determine_tsc_freq() -> Option<u64> {
     let pvclock_page = PvclockPage::setup()?;
     let time_snapshot = pvclock_page.read_time_snapshot()?;
     time_snapshot.tsc_freq_hz()
 }
 
+/// Returns whether the current environment supports the KVM clocksource v2.
 fn has_kvm_clocksource2() -> bool {
     cpuid::query_if_running_under_kvm() && cpuid::query_kvm_feature(KVM_FEATURE_CLOCKSOURCE2)
 }
 
+/// Shared version-based protocol for reading KVM pvclock data consistently.
+///
+/// An odd `version` means the host is still writing the pvclock fields.
+/// A read is consistent only when the version observed before and after
+/// reading the fields is the same even value.
+/// Reference: <https://elixir.bootlin.com/linux/v7.0/source/Documentation/virt/kvm/x86/msr.rst#L86-L90>.
+///
+/// FIXME: All synchronization in this protocol is based on the assumption that
+/// we are performing atomic operations under the same memory model as the KVM
+/// side. However:
+/// 1. The Linux memory model is incompatible with Rust's.
+/// 2. We use non-atomic volatile operations to safely communicate with
+///    untrusted parties. But these operations cannot establish synchronization.
 trait PvclockVersion {
+    /// Returns the current pvclock `version` value.
     fn read_version(&self) -> u32;
 
+    /// Begins a consistent read and returns the version to compare against.
     fn read_begin(&self) -> u32 {
         let version = self.read_version() & !1;
 
@@ -49,15 +71,18 @@ trait PvclockVersion {
         version
     }
 
+    /// Returns whether the pvclock `version` changed since the read was begun.
     fn is_version_changed(&self, version: u32) -> bool {
         fence(Ordering::Acquire);
         self.read_version() != version
     }
 }
 
+/// A handle to the KVM pvclock page shared with the hypervisor.
 struct PvclockPage(Frame<PvclockPageMeta>);
 
 impl PvclockPage {
+    /// Sets up the KVM pvclock page and returns a handle to it.
     fn setup() -> Option<&'static Self> {
         static PVCLOCK_PAGE: Once<PvclockPage> = Once::new();
 
@@ -83,6 +108,7 @@ impl PvclockPage {
         }))
     }
 
+    /// Returns a consistent snapshot read from the KVM pvclock page.
     fn read_time_snapshot(&self) -> Option<PvclockTimeSnapshot> {
         for _ in 0..MAX_RETRIES {
             let version = self.read_begin();
@@ -123,6 +149,7 @@ impl PvclockPage {
         unsafe { read_once(core::ptr::addr_of!((*self.as_ptr()).tsc_shift)) }
     }
 
+    /// Returns a pointer that points to the pvclock page.
     fn as_ptr(&self) -> *const PvclockVcpuTimeInfo {
         mm::paddr_to_vaddr(self.0.paddr()) as *const PvclockVcpuTimeInfo
     }
@@ -134,15 +161,21 @@ impl PvclockVersion for PvclockPage {
     }
 }
 
+/// A consistent snapshot read from the KVM pvclock page.
 #[derive(Clone, Copy, Debug)]
 pub struct PvclockTimeSnapshot {
+    /// The TSC value at the time the snapshot was taken.
     pub tsc_timestamp: u64,
+    /// The system time in nanoseconds at `tsc_timestamp`.
     pub system_time: u64,
+    /// The multiplier for converting TSC ticks to system time.
     pub tsc_to_system_mul: u32,
+    /// The shift for converting TSC ticks to system time.
     pub tsc_shift: i8,
 }
 
 impl PvclockTimeSnapshot {
+    /// Returns the TSC frequency in Hz derived from this snapshot.
     fn tsc_freq_hz(&self) -> Option<u64> {
         let base_khz = (1_000_000u64 << 32).checked_div(u64::from(self.tsc_to_system_mul))?;
 
@@ -157,9 +190,11 @@ impl PvclockTimeSnapshot {
     }
 }
 
+/// A handle to the KVM wall clock page shared with the hypervisor.
 struct WallClockPage(Frame<WallClockPageMeta>);
 
 impl WallClockPage {
+    /// Sets up the KVM wall clock page and returns a handle to it.
     fn setup() -> Option<&'static Self> {
         static WALL_CLOCK_PAGE: Once<WallClockPage> = Once::new();
 
@@ -180,6 +215,8 @@ impl WallClockPage {
         }))
     }
 
+    /// Returns the wall-clock epoch recorded in this page, as a duration since
+    /// the Unix epoch.
     fn read_epoch(&self) -> Option<Duration> {
         for _ in 0..MAX_RETRIES {
             let version = self.read_begin();
@@ -208,6 +245,7 @@ impl WallClockPage {
         unsafe { read_once(core::ptr::addr_of!((*self.as_ptr()).nsec)) }
     }
 
+    /// Returns a pointer that points to the wall clock page.
     fn as_ptr(&self) -> *const PvclockWallClock {
         mm::paddr_to_vaddr(self.0.paddr()) as *const PvclockWallClock
     }
@@ -219,6 +257,9 @@ impl PvclockVersion for WallClockPage {
     }
 }
 
+/// Guest-visible layout of the KVM pvclock page (`struct pvclock_vcpu_time_info` in Linux).
+///
+/// Reference: <https://elixir.bootlin.com/linux/v7.0/source/arch/x86/include/asm/pvclock-abi.h#L26>.
 #[repr(C, packed)]
 struct PvclockVcpuTimeInfo {
     version: u32,
@@ -231,6 +272,9 @@ struct PvclockVcpuTimeInfo {
     _pad: [u8; 2],
 }
 
+/// Guest-visible layout of the KVM wall clock page (`struct pvclock_wall_clock` in Linux).
+///
+/// Reference: <https://elixir.bootlin.com/linux/v7.0/source/arch/x86/include/asm/pvclock-abi.h#L37>.
 #[repr(C, packed)]
 struct PvclockWallClock {
     version: u32,
@@ -238,8 +282,24 @@ struct PvclockWallClock {
     nsec: u32,
 }
 
+/// Metadata for the KVM pvclock frame.
+///
+/// The frame is written by the hypervisor and read by the guest clock code,
+/// so it is kept typed to prevent OSTD users from reading or writing it as
+/// untyped memory via [`VmReader`] and [`VmWriter`].
+///
+/// [`VmReader`]: crate::mm::VmReader
+/// [`VmWriter`]: crate::mm::VmWriter
 struct PvclockPageMeta;
 impl_frame_meta_for!(PvclockPageMeta);
 
+/// Metadata for the KVM wall clock frame.
+///
+/// The frame is written by the hypervisor and read by the guest clock code,
+/// so it is kept typed to prevent OSTD users from reading or writing it as
+/// untyped memory via [`VmReader`] and [`VmWriter`].
+///
+/// [`VmReader`]: crate::mm::VmReader
+/// [`VmWriter`]: crate::mm::VmWriter
 struct WallClockPageMeta;
 impl_frame_meta_for!(WallClockPageMeta);

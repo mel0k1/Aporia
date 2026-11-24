@@ -6,18 +6,28 @@ use bitflags::bitflags;
 bitflags! {
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub struct StatusFlags: u32 {
+        /// append on each write
         const O_APPEND   = 1 << 10;
+        /// non block
         const O_NONBLOCK = 1 << 11;
+        /// synchronized I/O, data
         const O_DSYNC    = 1 << 12;
+        /// signal-driven I/O
         const O_ASYNC    = 1 << 13;
+        /// direct I/O
         const O_DIRECT   = 1 << 14;
+        /// on x86_64, O_LARGEFILE is 0
+        /// not update st_atime
         const O_NOATIME  = 1 << 18;
+        /// synchronized I/O, data and metadata
         const O_SYNC     = 1 << 20;
+        /// equivalent of POSIX.1's O_EXEC
         const O_PATH     = 1 << 21;
     }
 }
 
 impl StatusFlags {
+    /// Status flags that can be changed by `F_SETFL`.
     pub(crate) const SETFL_MASK: Self = Self::O_APPEND
         .union(Self::O_ASYNC)
         .union(Self::O_DIRECT)
@@ -25,10 +35,15 @@ impl StatusFlags {
         .union(Self::O_NONBLOCK);
 }
 
+/// Status flags that a file supports changing after it is opened.
+///
+/// Every value contains `O_APPEND`, `O_NOATIME`, and `O_NONBLOCK`. Files may additionally support
+/// changing `O_ASYNC` and `O_DIRECT`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SettableStatusFlags(StatusFlags);
 
 impl SettableStatusFlags {
+    /// Creates the minimal set of status flags supported by all files.
     pub const fn minimal() -> Self {
         Self(
             StatusFlags::O_APPEND
@@ -37,10 +52,12 @@ impl SettableStatusFlags {
         )
     }
 
+    /// Adds support for changing `O_ASYNC`.
     pub const fn with_o_async(self) -> Self {
         Self(self.0.union(StatusFlags::O_ASYNC))
     }
 
+    /// Adds support for changing `O_DIRECT`.
     pub const fn with_o_direct(self) -> Self {
         Self(self.0.union(StatusFlags::O_DIRECT))
     }
@@ -63,6 +80,7 @@ impl From<StatusFlags> for u32 {
 }
 
 define_atomic_version_of_integer_like_type!(StatusFlags, {
+    /// An atomic version of `StatusFlags`.
     #[derive(Debug)]
     pub(crate) struct AtomicStatusFlags(AtomicU32);
 });

@@ -1,3 +1,8 @@
+
+
+
+//! This test checks that visiting controlled resources in whitelist is allowed.
+
 mod test_utils;
 
 #[test]

@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use clap::{Args, Parser, ValueEnum, crate_version};
-use linux_bzimage_builder::PayloadEncoding;
 
 use crate::{
     arch::Arch,
@@ -15,6 +14,8 @@ use crate::{
         scheme::{BootMethod, BootProtocol},
     },
 };
+
+use linux_bzimage_builder::PayloadEncoding;
 
 pub fn main() {
     let load_config = |common_args: &CommonArgs| {
@@ -67,6 +68,7 @@ pub fn main() {
 
 #[derive(Debug, Parser)]
 #[clap(display_name = "cargo", bin_name = "cargo")]
+/// Project Manager for the crates developed based on frame kernel
 pub struct Cli {
     #[clap(subcommand)]
     cargo_subcommand: CargoSubcommand,
@@ -245,8 +247,12 @@ pub struct ProfileArgs {
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
 pub enum ProfileFormat {
+    /// The raw stack trace log parsed from GDB in JSON
     Json,
+    /// The folded stack trace for generating a flame graph later using
+    /// [the original tool](https://github.com/brendangregg/FlameGraph)
     Folded,
+    /// A SVG flame graph
     FlameGraph,
 }
 
@@ -279,6 +285,11 @@ pub struct DebugProfileOutArgs {
 }
 
 impl DebugProfileOutArgs {
+    /// Get the output format for the profile data.
+    ///
+    /// If the user does not specify the format, it will be inferred from the
+    /// output file extension. If the output file does not have an extension,
+    /// the default format is flame graph.
     pub fn format(&self) -> ProfileFormat {
         self.format.unwrap_or_else(|| {
             if let Some(output) = &self.output {
@@ -294,6 +305,11 @@ impl DebugProfileOutArgs {
         })
     }
 
+    /// Get the output path for the profile data.
+    ///
+    /// If the user does not specify the output path, it will be generated from
+    /// the current time stamp and the format. The caller can provide a hint
+    /// output path to the file to override the file name.
     pub fn output_path(&self, hint: Option<&PathBuf>) -> PathBuf {
         self.output.clone().unwrap_or_else(|| {
             use chrono::{DateTime, offset::Local};
@@ -375,6 +391,7 @@ impl CargoArgs {
 }
 
 #[derive(Args, Debug)]
+/// Common args used for build, run, test and debug subcommand
 pub struct CommonArgs {
     #[command(flatten)]
     pub build_args: CargoArgs,

@@ -58,6 +58,7 @@ pub(super) fn do_sys_poll(
             read_addr += size_of::<c_pollfd>();
 
             let poll_fd = PollFd::from(c_poll_fd);
+
             poll_fd.revents().set(IoEvents::empty());
             poll_fds.push(poll_fd);
         }
@@ -106,6 +107,7 @@ pub(super) fn do_poll(
     loop {
         match poller.wait() {
             Ok(()) => (),
+
             Err(err) if err.error() == Errno::ETIME => return Ok(0),
             Err(err) => return Err(err),
         };
@@ -128,6 +130,7 @@ enum CowFiles<'a> {
 }
 
 impl<'a> PollFiles<'a> {
+    /// Creates `PollFiles` by holding the file table reference.
     fn new_borrowed(poll_fds: &'a [PollFd], file_table: &'a FileTable) -> Self {
         Self {
             poll_fds,
@@ -135,6 +138,7 @@ impl<'a> PollFiles<'a> {
         }
     }
 
+    /// Creates `PollFiles` by cloning all files that we're going to poll.
     fn new_owned(poll_fds: &'a [PollFd], file_table: &FileTable) -> Self {
         let files = poll_fds
             .iter()
@@ -157,6 +161,7 @@ enum PollerResult {
 }
 
 impl PollFiles<'_> {
+    /// Registers the files with a poller, or exits early if some events are detected.
     fn register_poller(&self, timeout: Option<&Duration>) -> PollerResult {
         let mut poller = Poller::new(timeout);
 
@@ -178,10 +183,12 @@ impl PollFiles<'_> {
         PollerResult::Registered(poller)
     }
 
+    /// Counts the number of the ready files.
     fn count_events(&self) -> usize {
         self.count_events_from(0)
     }
 
+    /// Counts the number of the ready files from the given index.
     fn count_events_from(&self, start: usize) -> usize {
         let mut counter = 0;
 
@@ -253,6 +260,7 @@ impl PollFd {
         &self.revents
     }
 
+    /// Returns the desired `revents` value if the file does not exist.
     pub(self) fn revents_for_missing_file(&self) -> IoEvents {
         if self.fd.is_some() {
             IoEvents::NVAL

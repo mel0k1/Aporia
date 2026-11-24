@@ -10,12 +10,22 @@ use acpi::{
 
 use super::remapping::{Andd, Atsr, Drhd, Rhsa, Rmrr, Satc, Sidp};
 
+/// DMA Remapping structure.
+///
+/// When IOMMU is enabled, the structure should be present in the ACPI table, and the user can use
+/// the DRHD table in this structure to obtain the register base addresses used to configure
+/// functions such IOMMU.
 #[derive(Debug)]
 pub(in crate::arch) struct Dmar {
     header: DmarHeader,
+
     remapping_structures: Vec<Remapping>,
 }
 
+/// Remapping Structures.
+///
+/// A DMAR structure contains serval remapping structures. Among these structures,
+/// one DRHD must exist, the others must not exist at all.
 #[derive(Debug)]
 pub(in crate::arch) enum Remapping {
     Drhd(Drhd),
@@ -57,12 +67,14 @@ unsafe impl AcpiTable for DmarHeader {
 }
 
 impl Dmar {
+    /// Creates a instance from ACPI table.
     pub(in crate::arch) fn new() -> Option<Self> {
         let acpi_table = super::get_acpi_tables()?;
 
         let dmar_mapping = acpi_table.find_table::<DmarHeader>().ok()?;
 
         let header = *dmar_mapping;
+
         let slice = unsafe {
             core::slice::from_raw_parts(
                 dmar_mapping

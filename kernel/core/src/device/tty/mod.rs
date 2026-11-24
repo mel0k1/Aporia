@@ -44,6 +44,26 @@ pub(super) fn init_in_first_process() -> Result<()> {
 
 const IO_CAPACITY: usize = 4096;
 
+/// A teletyper (TTY).
+///
+/// This abstracts the general functionality of a TTY in a way that
+///  - Any input device driver can use [`Tty::push_input`] to push input characters, and users can
+///    [`Tty::read`] from the TTY;
+///  - Users can also [`Tty::write`] output characters to the TTY and the output device driver will
+///    receive the characters from [`TtyDriver::push_output`] where the generic parameter `D` is
+///    the [`TtyDriver`].
+///
+/// ```text
+/// +------------+     +-------------+
+/// |input device|     |output device|
+/// |   driver   |     |   driver    |
+/// +-----+------+     +------^------+
+///       |                   |
+///       |     +-------+     |
+///       +----->  TTY  +-----+
+///             +-------+
+/// Tty::push_input   D::push_output
+/// ```
 pub(crate) struct Tty<D> {
     index: u32,
     driver: D,
@@ -75,24 +95,37 @@ impl<D> Tty<D> {
         &self.driver
     }
 
+    /// Returns whether new characters can be pushed into the input buffer.
+    ///
+    /// This method should return `false` if the input buffer is full.
     pub(super) fn can_push(&self) -> bool {
         !self.ldisc.lock().is_full()
     }
 
+    /// Notifies that the output buffer now has room for new characters.
+    ///
+    /// This method should be called when the state of [`TtyDriver::can_push`] changes from `false`
+    /// to `true`.
     pub(super) fn notify_output(&self) {
         self.pollee.notify(IoEvents::OUT);
     }
 
+    /// Notifies that the other end has been closed.
     pub(super) fn notify_hup(&self) {
         self.pollee.notify(IoEvents::ERR | IoEvents::HUP);
     }
 
+    /// Returns the TTY flags.
     pub(super) fn tty_flags(&self) -> &TtyFlags {
         &self.tty_flags
     }
 }
 
 impl<D: TtyDriver> Tty<D> {
+    /// Pushes characters into the output buffer.
+    ///
+    /// This method returns the number of bytes pushed or fails with an error if no bytes can be
+    /// pushed because the buffer is full.
     pub(crate) fn push_input(&self, chs: &[u8]) -> Result<usize> {
         let mut ldisc = self.ldisc.lock();
         let mut echo = self.driver.echo_callback();

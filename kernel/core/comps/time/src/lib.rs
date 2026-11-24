@@ -1,3 +1,5 @@
+//! The system time of Asterinas.
+
 #![no_std]
 #![deny(unsafe_code)]
 
@@ -38,19 +40,23 @@ fn time_init() -> Result<(), ComponentInitError> {
 
 static START_TIME: Once<SystemTime> = Once::new();
 
+/// Returns the start time, which is the system time when calibrating.
 pub fn read_start_time() -> SystemTime {
     *START_TIME.get().unwrap()
 }
 
+/// Returns the monotonic time from the TSC clocksource.
 pub fn read_monotonic_time() -> Duration {
     let instant = tsc::read_instant();
     Duration::new(instant.secs(), instant.nanos())
 }
 
+/// Returns the current system time.
 pub fn read_system_time() -> SystemTime {
     read_start_time() + read_monotonic_time()
 }
 
+/// Returns the default (TSC) clocksource.
 pub fn default_clocksource() -> Arc<ClockSource> {
     tsc::CLOCK.get().unwrap().clone()
 }

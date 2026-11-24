@@ -1,4 +1,6 @@
-use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
+
+
+use std::sync::atomic::{Ordering::Relaxed, AtomicBool};
 
 use component::init_component;
 

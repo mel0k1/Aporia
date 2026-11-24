@@ -25,8 +25,11 @@ pub fn execute_new_command(args: &NewArgs) {
     add_rust_toolchain(&cargo_metadata);
 }
 
+/// OSDK assumes that the toolchain used by the kernel should be same same as the toolchain
+/// specified in the asterinas workspace.
 fn aster_rust_toolchain() -> String {
     let template = include_str!("./rust-toolchain.toml.template");
+
     template.lines().skip(2).collect::<Vec<_>>().join("\n")
 }
 
@@ -121,6 +124,7 @@ fn create_osdk_manifest(cargo_metadata: &serde_json::Value, type_: &ProjectType)
     fs::write(osdk_manifest_path, contents).unwrap();
 }
 
+/// Write the default content of `src/lib.rs`, with contents in provided template.
 fn write_src_template(cargo_metadata: &serde_json::Value, crate_name: &str, type_: &ProjectType) {
     let src_path = get_src_path(cargo_metadata, crate_name);
     let contents = match type_ {
@@ -137,6 +141,7 @@ fn write_src_template(cargo_metadata: &serde_json::Value, crate_name: &str, type
     fs::write(src_path, contents).unwrap();
 }
 
+/// Add the rust-toolchain.toml file in workspace root
 fn add_rust_toolchain(cargo_metadata: &serde_json::Value) {
     let workspace_root = get_workspace_root(cargo_metadata);
 

@@ -1,3 +1,11 @@
+//! Open admission for overlay inodes and the per-open directory handle.
+//!
+//! A directory open answers with a per-open handle that owns this open file's frozen snapshot and
+//! the `..` identity captured here; a writable open of a file runs the writable take point — the
+//! read-only gate plus the copy-up promotion — instead. This module is a sibling of
+//! [`super::readdir`], so a snapshot's fields stay invisible to the handle: it can read them only
+//! through their accessors.
+
 use super::{OverlayInode, readdir::ReaddirCache};
 use crate::{
     events::IoEvents,
@@ -47,9 +55,13 @@ impl OverlayInode {
     }
 }
 
+/// Holds one open file's own view of an overlay directory: the snapshot it emits from and the `..`
+/// it publishes.
 struct OverlayDirOpenHandle {
     inode: Arc<OverlayInode>,
+    /// Holds this open file's frozen snapshot; `None` until one is taken.
     readdir_cache_snapshot: Mutex<Option<Arc<ReaddirCache>>>,
+    /// Holds the `..` inode number captured at open.
     parent_ino: u64,
 }
 
@@ -57,6 +69,7 @@ impl OverlayDirOpenHandle {
     pub(super) fn new(inode: Arc<OverlayInode>, self_dentry: &Dentry) -> Self {
         let parent_ino = match self_dentry.parent() {
             Some(parent) => parent.inode().ino(),
+
             None => inode.ino(),
         };
         Self {
@@ -66,6 +79,7 @@ impl OverlayDirOpenHandle {
         }
     }
 
+    /// Emits this open file's entries from `offset`, resolving the payload it iterates here.
     fn emit_entries(&self, offset: usize, visitor: &mut dyn DirentVisitor) -> Result<usize> {
         let mut slot = self.readdir_cache_snapshot.lock();
         let payload = if offset != 0
@@ -80,6 +94,7 @@ impl OverlayDirOpenHandle {
         let mut last_cookie: Option<usize> = None;
         let mut emitted_any = false;
         let mut refusal: Option<Error> = None;
+
         let mut emit_item = |name: &str, ino: Option<u64>, type_: InodeType, cookie: usize| {
             if refusal.is_some() {
                 return false;
@@ -114,6 +129,7 @@ impl OverlayDirOpenHandle {
             } else if entry.overlay_ino() == 0 {
                 match self.inode.lookup(entry.name()) {
                     Ok(child) => Some(child.ino()),
+
                     Err(err) if err.error() == Errno::ENOENT => None,
                     Err(err) => return Err(err),
                 }

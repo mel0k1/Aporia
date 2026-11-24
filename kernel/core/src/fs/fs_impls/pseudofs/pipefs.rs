@@ -24,18 +24,21 @@ pub(in crate::fs) struct PipeFs {
 }
 
 impl PipeFs {
+    /// Returns the singleton instance of the anonymous pipe file system.
     pub(in crate::fs) fn singleton() -> &'static Arc<NaivePseudoFs> {
         static PIPEFS: Once<Arc<NaivePseudoFs>> = Once::new();
 
         NaivePseudoFs::singleton(&PIPEFS, "pipefs", PIPEFS_MAGIC)
     }
 
+    /// Creates a pseudo `Path` for an anonymous pipe.
     pub(in crate::fs) fn new_path(pipe_inode: Arc<AnonPipeInode>) -> Path {
         Path::new_pseudo(Self::mount_node().clone(), pipe_inode, |inode| {
             format!("pipe:[{}]", inode.ino())
         })
     }
 
+    /// Returns the pseudo mount node of the pipe file system.
     fn mount_node() -> &'static Arc<Mount> {
         static PIPEFS_MOUNT: Once<Arc<Mount>> = Once::new();
 

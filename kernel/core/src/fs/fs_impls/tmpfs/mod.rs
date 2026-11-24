@@ -1,3 +1,5 @@
+//! Temporary file system (tmpfs) based on ramfs.
+
 pub(super) use fs::TmpFs;
 use fs::TmpFsType;
 

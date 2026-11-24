@@ -60,6 +60,60 @@ pub(crate) const fn nice_to_weight(nice: Nice) -> u64 {
     NICE_TO_WEIGHT[(nice.value().get() + 20) as usize]
 }
 
+/// The scheduling entity for the FAIR scheduling class.
+///
+/// The structure contains a significant indicator: `vruntime`.
+///
+/// # `vruntime`
+///
+/// The vruntime (virtual runtime) is calculated by the formula:
+///
+///     vruntime += runtime_delta * WEIGHT_0 / weight
+///
+/// and a thread with a lower vruntime gains a greater privilege to be
+/// scheduled, making the whole run queue balanced on vruntime (thus FAIR).
+///
+/// # Scheduling periods
+///
+/// Scheduling periods are designed to calculate the time slice for each threads.
+///
+/// The time slice for each threads is calculated by the formula:
+///
+///     time_slice = period * weight / total_weight
+///
+/// where `total_weight` is the sum of all weights in the run queue including
+/// the current thread and [`period`](FairClassRq::period) is calculated
+/// regarding the number of running threads.
+///
+/// When a thread meets the condition below, it will be preempted to the
+/// run queue. See [`FairClassRq::update_current`] for more details.
+///
+///     period_delta > time_slice
+///         || vruntime > rq_min_vruntime + normalized_time_slice
+///
+/// # The weight update process
+///
+/// The weight of a thread can be updated by the `sched_setattr` syscall series in
+/// any thread. This makes it difficult to re-evaluate the data of its run queue
+/// instantly after the update without a direct backward reference (which is
+/// impossible to be represented in safe Rust).
+///
+/// To handle this problem, we use a `pending_weight` field to store the new weight.
+/// When the thread is scheduled within the run queue, we will check if the weight
+/// needs to be updated since both the old and new weights are needed for re-evaluation.
+///
+/// To indicate whether the weight needs to be updated, we pack the `weight` field
+/// with a bit flag `HAS_PENDING`. When accessing the `weight` field:
+///
+/// - If the weight does not need to be updated (i.e., `weight & HAS_PENDING == 0`),
+///   we simply return the weight.
+/// - If the weight needs to be updated (i.e., `weight & HAS_PENDING != 0`), we try to
+///   store the new weight into the `weight` field, which shouldn't take too much time
+///   since the update frequency is usually relatively low.
+/// - After a successful update, we re-evaluate the data of the run queue.
+///
+/// Most of the time, this mechanism allows the access to the weight lock-free and
+/// ensures that only one load is needed.
 #[derive(Debug)]
 pub(crate) struct FairAttr {
     weight: AtomicU64,
@@ -108,6 +162,10 @@ impl FairAttr {
     }
 }
 
+/// The wrapper for threads in the FAIR run queue.
+///
+/// This structure is used to provide the capability for keying in the
+/// run queue implemented by `BTreeSet` in the `FairClassRq`.
 struct FairQueueItem(Arc<Task>, u64);
 
 impl core::fmt::Debug for FairQueueItem {
@@ -142,11 +200,20 @@ impl Ord for FairQueueItem {
     }
 }
 
+/// The per-cpu run queue for the FAIR scheduling class.
+///
+/// See [`FairAttr`] for the explanation of vruntimes and scheduling periods.
+///
+/// The structure contains a `BTreeSet` to store the threads in the run queue to
+/// ensure the efficiency for finding next-to-run threads.
 #[derive(Debug)]
 pub(super) struct FairClassRq {
     #[expect(unused)]
     cpu: CpuId,
+    /// The ready-to-run threads.
     entities: BinaryHeap<Reverse<FairQueueItem>>,
+    /// The minimum of vruntime in the run queue. Serves as the initial
+    /// value of newly-enqueued threads.
     min_vruntime: u64,
     total_weight: u64,
 }
@@ -161,6 +228,19 @@ impl FairClassRq {
         }
     }
 
+    /// The scheduling period is calculated as the maximum of the following two values:
+    ///
+    /// 1. The minimum period value, defined by [`min_period_clocks`].
+    /// 2. `period = min_granularity * n` where
+    ///    `min_granularity = log2(1 + num_cpus) * base_slice_clocks`, and `n` is the number of
+    ///    runnable threads (including the current running thread).
+    ///
+    /// The formula is chosen by 3 principles:
+    ///
+    /// 1. The scheduling period should reflect the running threads and CPUs;
+    /// 2. The scheduling period should not be too low to limit the overhead of context switching;
+    /// 3. The scheduling period should not be too high to ensure the scheduling latency
+    ///    & responsiveness.
     fn period(&self) -> u64 {
         let base_slice_clks = base_slice_clocks();
         let min_period_clks = min_period_clocks();
@@ -170,10 +250,12 @@ impl FairClassRq {
         period_single_cpu * u64::from((1 + num_cpus()).ilog2())
     }
 
+    /// The virtual time slice for each thread in the run queue, measured in vruntime clocks.
     fn vtime_slice(&self) -> u64 {
         self.period() / (self.entities.len() + 1) as u64
     }
 
+    /// The time slice for each thread in the run queue, measured in sched clocks.
     fn time_slice(&self, cur_weight: u64) -> u64 {
         self.period() * cur_weight / (self.total_weight + cur_weight)
     }
@@ -210,6 +292,7 @@ impl SchedClassRq for FairClassRq {
 
         let sched_attr = entity.as_thread().unwrap().sched_attr();
         let (old_weight, _weight) = sched_attr.fair.fetch_weight();
+
         self.total_weight -= old_weight;
 
         Some(entity)

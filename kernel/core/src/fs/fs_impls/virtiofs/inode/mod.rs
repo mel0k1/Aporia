@@ -1,3 +1,5 @@
+//! Inode implementation for `virtiofs`.
+
 mod cache;
 mod metadata;
 mod ops;
@@ -51,12 +53,29 @@ use crate::{
     vm::page_cache::{PageCache, Vmo},
 };
 
+/// Represents a cached virtio-fs inode and its kernel-side state.
 pub(super) struct VirtioFsInode {
     nodeid: FuseNodeId,
     generation: FuseGeneration,
     type_: InodeType,
     lookup_count: LookupCount,
+    /// The size of this inode.
+    ///
+    /// This field is intentionally kept outside `inner` to avoid deadlocks.
+    /// Since `VirtioFsInode` serves as its own page cache backend, page cache
+    /// operations may call back into this inode through the backend interface
+    /// to query the EOF position (i.e., the inode size). If the size were stored
+    /// inside `inner`, acquiring the `inner` lock would be required, which could
+    /// lead to a deadlock given that the `inner` lock may already be held by the
+    /// caller of the page cache operation.
     size: AtomicUsize,
+    /// The metadata lock also serializes file data I/O for this inode.
+    ///
+    /// Lock order: `self.entry_valid_until` -> `self.inner`
+    ///                 -> `open_handles.handles`
+    ///
+    /// `lookup_count` is not protected by any lock mentioned above and may be
+    /// touched at any time.
     inner: RwMutex<InodeInner>,
     entry_valid_until: Mutex<Duration>,
     open_handles: OpenHandles,
@@ -66,6 +85,7 @@ pub(super) struct VirtioFsInode {
 }
 
 impl VirtioFsInode {
+    /// Creates the root inode.
     pub(super) fn new_root(
         root_entry: EntryReply,
         fs: Weak<VirtioFs>,
@@ -83,6 +103,7 @@ impl VirtioFsInode {
         )
     }
 
+    /// Creates an inode from a fresh FUSE entry reply.
     pub(super) fn new_from_entry_reply(entry_reply: EntryReply, fs: &Arc<VirtioFs>) -> Arc<Self> {
         Self::new(
             entry_reply.nodeid(),
@@ -142,6 +163,12 @@ impl VirtioFsInode {
         self.size.load(Ordering::Acquire)
     }
 
+    /// Updates a cached inode with a fresh FUSE entry reply.
+    ///
+    /// A successful entry reply gives the client one additional lookup
+    /// reference and a refreshed directory-entry TTL. Even though the inode
+    /// object already exists, the cached lookup count and metadata still need
+    /// to observe the reply before the inode is returned to VFS.
     pub(super) fn update_from_entry_reply(
         &self,
         entry_reply: &EntryReply,
@@ -162,15 +189,22 @@ impl VirtioFsInode {
     }
 }
 
+/// An inode timestamp field updated through `SETATTR`.
 pub(super) enum TimeField {
+    /// The last access timestamp.
     Access,
+    /// The last metadata change timestamp.
     Change,
+    /// The last content modification timestamp.
     Modify,
 }
 
+/// A write offset resolved while holding the inode inner lock.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum WriteOffset {
+    /// Writes at the caller-provided absolute offset.
     Absolute(usize),
+    /// Writes at the current end of file.
     Append,
 }
 
@@ -182,6 +216,7 @@ struct InodeInner {
 }
 
 impl InodeInner {
+    /// Invalidates the whole page cache, if any.
     fn invalidate_page_cache(&self) -> Result<()> {
         let Some(page_cache) = &self.page_cache else {
             return Ok(());
@@ -195,10 +230,12 @@ impl InodeInner {
         Ok(())
     }
 
+    /// Returns whether cached attributes are still inside the server TTL.
     fn is_attr_valid(&self, now: Duration) -> bool {
         now < self.attr_valid_until
     }
 
+    /// Returns whether an incoming attribute reply can replace cached metadata.
     fn accepts_attr_version(&self, incoming: AttrVersion) -> bool {
         incoming >= self.attr_version
     }
@@ -312,6 +349,7 @@ impl Inode for VirtioFsInode {
         match self.type_ {
             InodeType::File => Some(self.open_file(access_mode, status_flags)),
             InodeType::Dir => Some(self.open_directory(access_mode, status_flags)),
+
             _ => Some(Err(errno!(
                 EOPNOTSUPP,
                 "opening this virtiofs inode type is not supported",

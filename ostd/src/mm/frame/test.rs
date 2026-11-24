@@ -5,12 +5,14 @@ use crate::{
     prelude::*,
 };
 
+/// Typed mock metadata struct for testing
 #[derive(Debug, Default)]
 struct MockFrameMeta {
     value: u32,
 }
 impl_frame_meta_for!(MockFrameMeta);
 
+/// Untyped mock metadata struct for testing
 #[derive(Debug, Default)]
 struct MockUFrameMeta {
     value: u32,
@@ -105,25 +107,34 @@ mod linked_list {
         let mut list = LinkedList::new();
         assert!(list.is_empty());
         list.push_front(frame1.try_into().unwrap());
+
         list.push_front(frame2.try_into().unwrap());
+
         list.push_back(frame3.try_into().unwrap());
+
         assert_eq!(list.size(), 3);
 
         let mut cursor = list.cursor_front_mut();
+
         assert_eq!(cursor.current_meta().unwrap().value, 2);
         cursor.move_next();
+
         assert_eq!(cursor.current_meta().unwrap().value, 1);
         cursor.move_next();
+
         assert_eq!(cursor.current_meta().unwrap().value, 3);
         cursor.move_next();
+
         assert!(cursor.current_meta().is_none());
 
         assert_eq!(cursor.as_list().size(), 3);
 
         assert_eq!(list.pop_front().unwrap().meta().value, 2);
         assert_eq!(list.size(), 2);
+
         assert_eq!(list.pop_back().unwrap().meta().value, 3);
         assert_eq!(list.size(), 1);
+
         assert_eq!(list.pop_front().unwrap().meta().value, 1);
         assert_eq!(list.size(), 0);
     }
@@ -190,20 +201,28 @@ mod linked_list {
         let mut list = LinkedList::new();
         assert!(list.is_empty());
         list.push_front(frame1.try_into().unwrap());
+
         list.push_front(frame2.try_into().unwrap());
+
         assert_eq!(list.size(), 2);
 
         let mut cursor = list.cursor_front_mut();
+
         assert_eq!(cursor.current_meta().unwrap().value, 2);
         cursor.move_next();
+
         assert_eq!(cursor.current_meta().unwrap().value, 1);
         cursor.insert_before(frame3.try_into().unwrap());
+
         assert_eq!(cursor.current_meta().unwrap().value, 1);
         cursor.insert_before(frame4.try_into().unwrap());
+
         assert_eq!(cursor.current_meta().unwrap().value, 1);
         cursor.move_next();
+
         assert!(cursor.current_meta().is_none());
         cursor.insert_before(frame5.try_into().unwrap());
+
         assert!(cursor.current_meta().is_none());
 
         assert_eq!(cursor.as_list().size(), 5);
@@ -222,31 +241,43 @@ mod linked_list {
         assert!(cursor.current_meta().is_none());
 
         cursor.move_prev();
+
         assert_eq!(cursor.current_meta().unwrap().value, 5);
         cursor.move_prev();
+
         assert_eq!(cursor.current_meta().unwrap().value, 1);
 
         let frame1 = cursor.take_current().unwrap();
+
         assert_eq!(frame1.meta().value, 1);
         assert_eq!(cursor.current_meta().unwrap().value, 5);
         cursor.move_next();
+
         assert!(cursor.current_meta().is_none());
         cursor.move_prev();
+
         assert_eq!(cursor.current_meta().unwrap().value, 5);
         cursor.move_prev();
+
         assert_eq!(cursor.current_meta().unwrap().value, 4);
         cursor.move_prev();
+
         assert_eq!(cursor.current_meta().unwrap().value, 3);
         cursor.move_prev();
+
         assert_eq!(cursor.current_meta().unwrap().value, 2);
 
         let frame2 = cursor.take_current().unwrap();
+
         assert_eq!(frame2.meta().value, 2);
         assert_eq!(cursor.current_meta().unwrap().value, 3);
         cursor.move_next();
+
         assert_eq!(cursor.current_meta().unwrap().value, 4);
         cursor.move_next();
+
         assert_eq!(cursor.current_meta().unwrap().value, 5);
+
         let frame5 = cursor.take_current().unwrap();
         assert_eq!(frame5.meta().value, 5);
         assert!(cursor.current_meta().is_none());
@@ -340,6 +371,7 @@ mod segment {
         let segment = FrameAllocOptions::new()
             .alloc_segment(total_frames)
             .expect("Failed to allocate segment");
+
         segment.split(0);
     }
 
@@ -351,6 +383,7 @@ mod segment {
             .alloc_segment(total_frames)
             .expect("Failed to allocate segment");
         let huge_page_aligned_offset = usize::MAX - (PAGE_SIZE - 1);
+
         segment.slice(&(huge_page_aligned_offset..huge_page_aligned_offset));
     }
 
@@ -360,6 +393,7 @@ mod segment {
         let segment = FrameAllocOptions::new()
             .alloc_segment(1)
             .expect("Failed to allocate segment");
+
         segment.slice(&(0..0));
     }
 

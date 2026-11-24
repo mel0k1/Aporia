@@ -1,3 +1,8 @@
+
+
+
+
+
 #![feature(rustc_private)]
 
 extern crate rustc_driver_impl;
@@ -13,6 +18,8 @@ use rustc_interface::interface;
 use rustc_session::Session;
 use rustc_span::symbol::Symbol;
 
+/// If a command-line option matches `find_arg`, then apply the predicate `pred` on its value. If
+/// true, then return it. The parameter is assumed to be either `--arg=value` or `--arg value`.
 fn arg_value<'a, T: Deref<Target = str>>(
     args: &'a [T],
     find_arg: &str,
@@ -33,16 +40,23 @@ fn arg_value<'a, T: Deref<Target = str>>(
     None
 }
 
+/// Track files that may be accessed at runtime in `file_depinfo` so that cargo will re-run component-driver
+/// when any of them are modified
 fn track_files(sess: &Session, conf_path_string: Option<String>) {
     let mut file_depinfo = sess.file_depinfo.borrow_mut();
+
+
 
     if Path::new("Cargo.toml").exists() {
         file_depinfo.insert(Symbol::intern("Cargo.toml"));
     }
 
+
     if let Some(path) = conf_path_string {
         file_depinfo.insert(Symbol::intern(&path));
     }
+
+
 
     if cfg!(debug_assertions) {
         if let Ok(current_exe) = env::current_exe() {
@@ -58,6 +72,7 @@ impl rustc_driver_impl::Callbacks for DefaultCallbacks {}
 
 struct ComponentCallbacks;
 impl rustc_driver_impl::Callbacks for ComponentCallbacks {
+
     #[expect(rustc::bad_opt_access)]
     fn config(&mut self, config: &mut interface::Config) {
         let conf_path = analysis::lookup_conf_file();
@@ -76,6 +91,7 @@ impl rustc_driver_impl::Callbacks for ComponentCallbacks {
         config.track_state = Some(Box::new(move |sess| {
             track_files(sess, conf_path_string);
         }));
+
         config.opts.unstable_opts.mir_opt_level = Some(0);
     }
 
@@ -119,6 +135,9 @@ pub fn main() -> ExitCode {
             };
         };
 
+
+
+
         if let Some(pos) = orig_args.iter().position(|arg| arg == "--rustc") {
             orig_args.remove(pos);
             orig_args[0] = "rustc".to_string();
@@ -136,10 +155,13 @@ pub fn main() -> ExitCode {
             return;
         }
 
+
+
         let wrapper_mode =
             orig_args.get(1).map(Path::new).and_then(Path::file_stem) == Some("rustc".as_ref());
 
         if wrapper_mode {
+
             orig_args.remove(1);
         }
 

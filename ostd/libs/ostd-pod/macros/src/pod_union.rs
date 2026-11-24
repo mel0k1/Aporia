@@ -8,6 +8,7 @@ use syn::{
 const DERIVE_IDENT: &str = "derive";
 const REPR_IDENT: &str = "repr";
 
+/// Splits attributes into non-derive attributes and derive paths
 fn split_attrs(attrs: Vec<Attribute>) -> (Vec<Attribute>, Vec<Path>) {
     let mut other_attrs = Vec::new();
     let mut derive_paths = Vec::new();
@@ -26,6 +27,7 @@ fn split_attrs(attrs: Vec<Attribute>) -> (Vec<Attribute>, Vec<Path>) {
     (other_attrs, derive_paths)
 }
 
+/// Checks if the attributes contain `#[repr(C)]`
 fn has_repr_c(attrs: &[Attribute]) -> bool {
     attrs.iter().any(|attr| {
         if attr.path().is_ident("repr") {
@@ -44,6 +46,7 @@ fn has_repr_c(attrs: &[Attribute]) -> bool {
     })
 }
 
+/// Inserts a path into the vector if it's not already present
 fn insert_if_absent(paths: &mut Vec<Path>, new_path: Path) {
     let new_repr = new_path.to_token_stream().to_string();
     if !paths

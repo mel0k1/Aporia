@@ -1,3 +1,5 @@
+//! Form file paths within and across FSes with dentries and mount points.
+
 use core::time::Duration;
 
 pub(crate) use dentry::Dentry;
@@ -42,6 +44,10 @@ mod mount_namespace;
 mod mount_propagation;
 mod resolver;
 
+/// A `Path` is used to represent an exact location in the VFS tree.
+///
+/// Each `Path` corresponds to a node in the VFS tree, and a single node
+/// may have multiple `Path` instances referencing it due to mount operations.
 #[derive(Clone, Debug)]
 pub struct Path {
     mount: Arc<Mount>,
@@ -57,11 +63,17 @@ impl PartialEq for Path {
 impl Eq for Path {}
 
 impl Path {
+    /// Creates a new `Path` to represent the root directory of a file system.
     pub(crate) fn new_root(mount: Arc<Mount>) -> Self {
         let inner = mount.root_dentry().clone();
         Self::new(mount, inner)
     }
 
+    /// Creates a new child `Path` in a file system.
+    ///
+    /// This API is for non-symbolic-link children.
+    /// Use [`Self::new_symlink_child`] to create a symbolic link, because a
+    /// symbolic link should be created atomically with its target.
     pub(crate) fn new_child(&self, name: &str, type_: InodeType, mode: InodeMode) -> Result<Self> {
         debug_assert_ne!(type_, InodeType::SymLink);
 
@@ -73,6 +85,10 @@ impl Path {
         Ok(Self::new(self.mount.clone(), new_child_dentry))
     }
 
+    /// Creates a new symbolic-link child `Path` in a file system.
+    ///
+    /// Use this API instead of [`Self::new_child`] when creating symbolic
+    /// links so the link target is supplied at creation time.
     pub(crate) fn new_symlink_child(
         &self,
         name: &str,
@@ -89,12 +105,20 @@ impl Path {
         Ok(Self::new(self.mount.clone(), new_child_dentry))
     }
 
+    /// Looks up a direct child within the current mount.
+    ///
+    /// This does not interpret special names, check search permissions, or traverse mount points.
     pub(crate) fn lookup_child(&self, name: &str) -> Result<Self> {
         let dir_dentry = self.dentry.as_dir_dentry_or_err()?;
         let child_dentry = dir_dentry.lookup_child(name)?;
         Ok(Self::new(self.mount.clone(), child_dentry))
     }
 
+    /// Creates a new `Path` to represent an unnamed temporary file.
+    ///
+    /// The returned inode has no directory entry and is invisible to `readdir`.
+    /// If created hard-linkable, it may later be given a name via a link
+    /// operation; otherwise it can never be linked.
     pub(crate) fn create_tmpfile(
         &self,
         mode: InodeMode,
@@ -109,6 +133,7 @@ impl Path {
         Ok(Self::new(self.mount.clone(), tmp_dentry))
     }
 
+    /// Creates a new pseudo `Path`.
     pub(in crate::fs) fn new_pseudo(
         mount: Arc<Mount>,
         inode: Arc<dyn Inode>,
@@ -122,18 +147,24 @@ impl Path {
         Self { mount, dentry }
     }
 
+    /// Gets the mount node of current `Path`.
     pub(crate) fn mount_node(&self) -> &Arc<Mount> {
         &self.mount
     }
 
+    /// Gets the dentry of current `Path`.
     pub(in crate::fs) fn dentry(&self) -> &Arc<Dentry> {
         &self.dentry
     }
 
+    /// Returns true if the current `Path` is the root of its mount.
     pub(crate) fn is_mount_root(&self) -> bool {
         Arc::ptr_eq(&self.dentry, self.mount.root_dentry())
     }
 
+    /// Opens the `Path` with the given `OpenArgs`.
+    ///
+    /// Returns an `InodeHandle` on success.
     pub(crate) fn open(&self, open_args: OpenArgs) -> Result<InodeHandle> {
         let inode = self.inode().as_ref();
         let inode_type = inode.type_();
@@ -179,6 +210,7 @@ impl Path {
         InodeHandle::new(self.clone(), open_args.access_mode, *status_flags)
     }
 
+    /// Changes the mode after checking mount writability and the caller's permissions.
     pub(crate) fn chmod(&self, mut mode: InodeMode, ctx: &Context) -> Result<()> {
         self.check_mount_writable()?;
 
@@ -211,6 +243,14 @@ impl Path {
         Ok(())
     }
 
+    /// Changes the owner and/or group after checking mount writability and permissions.
+    ///
+    /// An ID of `None` leaves that ID unchanged.
+    /// A successful call on a non-directory clears the set-user-ID bit, even if
+    /// neither ID changes.
+    /// The set-group-ID bit is preserved only if the file is not group-executable
+    /// and the caller belongs to its group or has `CAP_FSETID`.
+    /// Clearing these bits requires the caller to own the file or have `CAP_FOWNER`.
     pub(crate) fn chown(&self, uid: Option<Uid>, gid: Option<Gid>, ctx: &Context) -> Result<()> {
         self.check_mount_writable()?;
 
@@ -273,6 +313,12 @@ impl Path {
         Ok(())
     }
 
+    /// Updates inode timestamps after checking mount and caller permissions.
+    ///
+    /// A touch request sets both atime and mtime to the current time. Linux
+    /// permits it for the inode owner, a caller with `CAP_FOWNER`, or a caller
+    /// with write permission. Any other timestamp update requires ownership or
+    /// `CAP_FOWNER`.
     pub(crate) fn update_times(&self, update: TimestampUpdate, ctx: &Context) -> Result<()> {
         self.check_mount_writable()?;
 
@@ -312,11 +358,25 @@ impl Path {
         Ok(())
     }
 
+    /// Gets the parent `Path` within the same mount.
+    ///
+    /// This method returns the parent path within the same filesystem/mount.
+    /// It does NOT cross mount boundaries. If the current path is the root of a mount,
+    /// it will return `None`.
+    ///
+    /// For cross-filesystem parent lookup, use `effective_parent()` instead.
     pub(super) fn parent_within_mount(&self) -> Option<Self> {
         let parent = self.dentry.parent()?;
         Some(Self::new(self.mount.clone(), parent))
     }
 
+    /// Gets the top `Path` of the current.
+    ///
+    /// Used when different file systems are mounted on the same mount point.
+    ///
+    /// For example, first `mount /dev/sda1 /mnt` and then `mount /dev/sda2 /mnt`.
+    /// After the second mount is completed, the content of the first mount will be overridden.
+    /// We need to recursively obtain the top `Path`.
     pub(crate) fn get_top_path(mut self) -> Self {
         while self.dentry.is_mountpoint() {
             if let Some(child_mount) = self.mount.get(&self.dentry) {
@@ -330,6 +390,7 @@ impl Path {
         self
     }
 
+    /// Finds the corresponding `Path` in the given mount namespace.
     fn find_corresponding_mount(
         &self,
         mnt_ns: &Arc<MountNamespace>,
@@ -341,6 +402,12 @@ impl Path {
         Some(corresponding_path)
     }
 
+    /// Checks if this path is reachable from the given `root` path.
+    ///
+    /// A path is considered reachable if it is the same as or a descendant
+    /// of the `root` path. The check traverses upwards from the current path,
+    /// crossing mount point boundaries as necessary, until it either finds
+    /// the `root` path or reaches the global root.
     fn is_reachable_from(&self, root: &Path, _topology: &MountTopology) -> bool {
         let mut owned;
         let mut current = self;
@@ -367,6 +434,7 @@ impl Path {
         }
     }
 
+    /// Returns true if the `Path` represents a pseudo file.
     fn is_pseudo(&self) -> bool {
         self.dentry.is_pseudo()
     }
@@ -375,6 +443,7 @@ impl Path {
         self.clone()
     }
 
+    /// Checks whether this path is a searchable directory.
     fn check_dir_search_permission(&self) -> Result<()> {
         if self.type_() != InodeType::Dir {
             return Err(errno!(ENOTDIR, "only directories are searchable"));
@@ -384,6 +453,7 @@ impl Path {
             .check_permission(Permission::MAY_EXEC | Permission::MAY_CHDIR)
     }
 
+    /// Checks whether the path is on a writable mount and filesystem.
     fn check_mount_writable(&self) -> Result<()> {
         if self.mount.flags().contains(PerMountFlags::RDONLY)
             || self.fs().flags().contains(FsFlags::RDONLY)
@@ -394,12 +464,14 @@ impl Path {
         Ok(())
     }
 
+    /// Checks whether a directory entry may be modified in this directory.
     fn check_dir_entry_mutation(&self) -> Result<()> {
         self.check_mount_writable()?;
         self.inode()
             .check_permission(Permission::MAY_WRITE | Permission::MAY_EXEC)
     }
 
+    /// Checks whether an inode may be used as the source of a hard link.
     fn check_hardlink_source(&self) -> Result<()> {
         let current_thread = current_thread!();
         let Some(posix_thread) = current_thread.as_posix_thread() else {
@@ -450,8 +522,11 @@ impl Path {
     }
 }
 
+/// A timestamp update and its associated permission policy.
 pub(crate) enum TimestampUpdate {
+    /// Set both timestamps to the current time.
     Touch(Duration),
+    /// Set supplied timestamps, leaving omitted fields unchanged.
     Explicit {
         atime: Option<Duration>,
         mtime: Option<Duration>,
@@ -467,6 +542,19 @@ fn try_get_mnt_ns_inode(dentry: &Dentry) -> Option<&NsInode<MountNamespace>> {
 }
 
 impl Path {
+    /// Mounts a filesystem at the current path.
+    ///
+    /// This method attaches a given filesystem to the VFS tree at the location
+    /// represented by `self`. The current path becomes the mountpoint for the new
+    /// filesystem.
+    ///
+    /// Returns the newly created child mount on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ENOTDIR` if the path is not a directory.
+    /// Returns `EINVAL` if attempting to mount on root or if the path is not
+    /// in the current mount namespace.
     pub(crate) fn mount(
         &self,
         fs_and_root: FsAndRoot,
@@ -501,6 +589,16 @@ impl Path {
         )
     }
 
+    /// Unmounts the filesystem mounted at the current path.
+    ///
+    /// Returns the unmounted child mount on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns `EINVAL` in the following cases:
+    /// - The current path is not a mount root.
+    /// - The mount of the current path is the root mount.
+    /// - The current path is not in the current mount namespace.
     pub(crate) fn unmount(&self, ctx: &Context) -> Result<Arc<Mount>> {
         if !self.is_mount_root() {
             return Err(errno!(EINVAL, "the path is not a mount root"));
@@ -528,6 +626,16 @@ impl Path {
         Ok(child_mount)
     }
 
+    /// Remounts the filesystem with new `PerMountFlags` and optionally new `FsFlags`.
+    ///
+    /// If `fs_flags` is provided, it will update the flags of the mounted filesystem,
+    /// otherwise, only the flags of the current mount will be updated.
+    ///
+    /// # Errors
+    ///
+    /// Returns `EINVAL` in the following cases:
+    /// - The current path is not a mount root.
+    /// - The current path is not in the current mount namespace.
     pub(crate) fn remount(
         &self,
         mount_flags: PerMountFlags,
@@ -550,6 +658,24 @@ impl Path {
             .remount(mount_flags, fs_flags, data, ctx, &mut topology_guard)
     }
 
+    /// Creates a bind mount from the current path to the destination path.
+    ///
+    /// Creates a new mount tree that mirrors either the root mount (non-recursive)
+    /// or the entire mount subtree (recursive), and attaches it to the destination path.
+    ///
+    /// A recursive bind omits unbindable subtrees.
+    /// If the destination parent is shared,
+    /// the new tree is also attached below its propagation receivers.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ENOTDIR` if one of the source and destination is a directory
+    /// and the other is not.
+    ///
+    /// Returns `EINVAL` if any of the following holds:
+    /// - The destination path is not in the current mount namespace.
+    /// - The source path is a mount namespace file that would create a namespace loop.
+    /// - The source mount is unbindable.
     pub(crate) fn bind_mount_to(
         &self,
         dst_path: Self,
@@ -601,6 +727,27 @@ impl Path {
         Ok(())
     }
 
+    /// Moves a mount tree from the current path to the destination path.
+    ///
+    /// If the destination parent is shared,
+    /// corresponding clones are also attached below its propagation receivers.
+    ///
+    /// # Errors
+    ///
+    /// Returns `EINVAL` in the following cases:
+    /// - The current path is not a mount root.
+    /// - The mount of the current path is the root mount.
+    /// - The source is a non-root mount in a detached mount tree.
+    /// - The destination is in a detached mount tree while the source is not.
+    /// - The source and destination are in the same detached mount tree.
+    /// - One of the source and destination is a directory and the other is not.
+    /// - The source mount's current parent is shared.
+    /// - The destination mount is shared and the source tree contains an
+    ///   unbindable mount.
+    ///
+    /// Returns `ELOOP` in the following cases:
+    /// - The destination path is inside the subtree being moved.
+    /// - The mount tree contains a mount namespace file that would create a namespace loop.
     pub(crate) fn move_mount_to(&self, dst_path: Self, ctx: &Context) -> Result<()> {
         if !self.is_mount_root() {
             return Err(errno!(EINVAL, "the path is not a mount root"));
@@ -700,6 +847,18 @@ impl Path {
         Ok(())
     }
 
+    /// Sets the propagation policy of this path's mount.
+    ///
+    /// If `recursive` is `true`,
+    /// the same requested transition is applied independently
+    /// to every mount in the subtree.
+    ///
+    /// # Errors
+    ///
+    /// Returns `EINVAL` if this path is not a mount root
+    /// or its mount does not belong to the current mount namespace.
+    /// Returns `ENOMEM` if the transition requires a new peer group
+    /// and the peer-group ID pool is exhausted.
     pub(crate) fn set_propagation(
         &self,
         prop: MountPropType,
@@ -744,6 +903,7 @@ impl Path {
     pub(crate) fn type_(&self) -> InodeType;
     pub(crate) fn name(&self) -> String;
 
+    /// Creates a `Path` by making an inode of the `type_` with the `mode`.
     pub(crate) fn mknod(&self, name: &str, mode: InodeMode, type_: MknodType) -> Result<Self> {
         let dir_dentry = self.dentry.as_dir_dentry_or_err()?;
         self.check_dir_entry_mutation()?;
@@ -751,6 +911,7 @@ impl Path {
         Ok(Self::new(self.mount.clone(), inner))
     }
 
+    /// Links a new name for the `Path`.
     pub(crate) fn link(&self, old: &Self, name: &str) -> Result<()> {
         if !Arc::ptr_eq(&old.mount, &self.mount) {
             return Err(errno!(EXDEV, "the operation cannot cross mounts"));
@@ -762,18 +923,21 @@ impl Path {
         dir_dentry.link(&old.dentry, name)
     }
 
+    /// Unlinks a name from the `Path`.
     pub(crate) fn unlink(&self, name: &str) -> Result<()> {
         let dir_dentry = self.dentry.as_dir_dentry_or_err()?;
         self.check_dir_entry_mutation()?;
         dir_dentry.unlink(name)
     }
 
+    /// Removes a directory by `rmdir()` the inner inode.
     pub(crate) fn rmdir(&self, name: &str) -> Result<()> {
         let dir_dentry = self.dentry.as_dir_dentry_or_err()?;
         self.check_dir_entry_mutation()?;
         dir_dentry.rmdir(name)
     }
 
+    /// Renames a `Path` to the new `Path` by `rename()` the inner inode.
     pub(crate) fn rename(
         &self,
         old_name: &str,
@@ -815,35 +979,55 @@ impl Path {
         list_writer: &mut VmWriter,
     ) -> Result<usize>;
 
+    /// Sets the file's mode.
+    ///
+    /// Use [`Self::chmod`] instead, which will perform permission checks.
     fn set_mode(&self, mode: InodeMode) -> Result<()> {
         self.inode().set_mode(&self.dentry, mode)
     }
 
+    /// Sets the file's owner.
+    ///
+    /// Use [`Self::chown`] instead, which will perform permission checks.
     fn set_owner(&self, uid: Uid) -> Result<()> {
         self.inode().set_owner(&self.dentry, uid)
     }
 
+    /// Sets the file's group.
+    ///
+    /// Use [`Self::chown`] instead, which will perform permission checks.
     fn set_group(&self, gid: Gid) -> Result<()> {
         self.inode().set_group(&self.dentry, gid)
     }
 
+    /// Sets the file's access time.
+    ///
+    /// Use [`Self::update_times`] instead, which will perform permission checks.
     fn set_atime(&self, time: Duration) {
         self.inode().set_atime(&self.dentry, time)
     }
 
+    /// Sets the file's modification time.
+    ///
+    /// Use [`Self::update_times`] instead, which will perform permission checks.
     fn set_mtime(&self, time: Duration) {
         self.inode().set_mtime(&self.dentry, time)
     }
 
+    /// Sets the file's change time.
+    ///
+    /// Use [`Self::update_times`] instead, which will perform permission checks.
     fn set_ctime(&self, time: Duration) {
         self.inode().set_ctime(&self.dentry, time)
     }
 
+    /// Resizes the file.
     pub(crate) fn resize(&self, size: usize) -> Result<()> {
         self.inode().check_permission(Permission::MAY_WRITE)?;
         self.resize_unchecked_access(size)
     }
 
+    /// Resizes the file without inode access checks, but requires a writable mount.
     pub(in crate::fs) fn resize_unchecked_access(&self, size: usize) -> Result<()> {
         self.check_mount_writable()?;
 
@@ -852,6 +1036,7 @@ impl Path {
         inode.resize(&self.dentry, size)
     }
 
+    /// Sets an xattr of the file.
     pub(crate) fn set_xattr(
         &self,
         name: XattrName,
@@ -870,12 +1055,14 @@ impl Path {
         inode.set_xattr(&self.dentry, name, value_reader, flags)
     }
 
+    /// Gets an xattr of the file.
     pub(crate) fn get_xattr(&self, name: XattrName, value_writer: &mut VmWriter) -> Result<usize> {
         let inode = self.inode();
         inode.check_permission(Permission::MAY_READ)?;
         inode.get_xattr(name, value_writer)
     }
 
+    /// Removes an xattr of the file.
     pub(crate) fn remove_xattr(&self, name: XattrName, ctx: &Context) -> Result<()> {
         self.check_mount_writable()?;
 
@@ -907,16 +1094,19 @@ fn capable_modify_file_cap(inode: &dyn Inode, ctx: &Context) -> Result<()> {
     Ok(())
 }
 
+/// Checks if the file name is ".", indicating it's the current directory.
 pub(crate) const fn is_dot(filename: &str) -> bool {
     let name_bytes = filename.as_bytes();
     name_bytes.len() == 1 && name_bytes[0] == DOT_BYTE
 }
 
+/// Checks if the file name is "..", indicating it's the parent directory.
 pub(crate) const fn is_dotdot(filename: &str) -> bool {
     let name_bytes = filename.as_bytes();
     name_bytes.len() == 2 && name_bytes[0] == DOT_BYTE && name_bytes[1] == DOT_BYTE
 }
 
+/// Checks if the file name is "." or "..", indicating it's the current or parent directory.
 pub(crate) const fn is_dot_or_dotdot(filename: &str) -> bool {
     let name_bytes = filename.as_bytes();
     let name_len = name_bytes.len();

@@ -1,3 +1,22 @@
+//! The x86 boot module defines the entrypoints of Asterinas and
+//! the corresponding headers for different x86 boot protocols.
+//!
+//! We directly support
+//!
+//!  - Multiboot
+//!  - Multiboot2
+//!  - Linux x86 Boot Protocol
+//!  - PVH
+//!
+//! without any additional configurations.
+//!
+//! Asterinas differentiates the boot protocol by the entry point
+//! chosen by the boot loader. In each entry point function,
+//! the universal callback registration method from
+//! `crate::boot` will be called. Thus the initialization of
+//! boot information is transparent for the upper level kernel.
+//!
+
 mod linux_boot;
 mod multiboot;
 mod multiboot2;
@@ -25,17 +44,25 @@ global_asm!(
 );
 global_asm!(include_str!("ap_boot.S"));
 
+/// A bootloader-provided structure that can be converted into [`EarlyBootInfo`].
 trait ToEarlyBootInfo {
+    /// Returns the name of the bootloader.
     fn bootloader_name(&self) -> &'static str;
 
+    /// Returns the kernel command line, if provided.
     fn kernel_commandline(&self) -> Option<&'static str>;
 
+    /// Returns the initramfs bytes, if provided.
     fn initramfs(&self) -> Option<&'static [u8]>;
 
+    /// Returns the ACPI information provided by the bootloader.
     fn acpi_arg(&self) -> BootloaderAcpiArg;
 
+    /// Returns the framebuffer information, if provided.
     fn framebuffer_arg(&self) -> Option<BootloaderFramebufferArg>;
 
+    /// Builds the bootloader-specific memory regions, appends the common
+    /// regions, and resolves the overlaps.
     fn memory_regions(
         &self,
         initramfs: Option<&'static [u8]>,
@@ -43,6 +70,7 @@ trait ToEarlyBootInfo {
         framebuffer_arg: Option<BootloaderFramebufferArg>,
     ) -> MemoryRegionArray;
 
+    /// Converts the bootloader-provided information into [`EarlyBootInfo`].
     fn to_early_boot_info(&self) -> EarlyBootInfo {
         let kernel_cmdline = self.kernel_commandline();
         let initramfs = self.initramfs();
@@ -59,6 +87,8 @@ trait ToEarlyBootInfo {
     }
 }
 
+/// Appends the memory regions common to all boot protocols and resolves the
+/// overlapping regions.
 fn finish_memory_regions(
     mut regions: MemoryRegionArray,
     framebuffer_arg: Option<BootloaderFramebufferArg>,
@@ -86,6 +116,7 @@ fn finish_memory_regions(
     regions.into_non_overlapping()
 }
 
+/// Finds the physical address of the ACPI root table.
 fn find_acpi_root_table_address() -> Option<NonZeroUsize> {
     let Ok(rsdp) = (unsafe { Rsdp::search_for_on_bios(AcpiMemoryHandler {}) }) else {
         return None;
@@ -98,6 +129,7 @@ fn find_acpi_root_table_address() -> Option<NonZeroUsize> {
     }
 }
 
+/// Promotes a reserved region containing the ACPI root table to `Reclaimable`.
 fn effective_region_type(
     typ: MemoryRegionType,
     base: usize,

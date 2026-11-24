@@ -3,6 +3,9 @@ use int_to_c_enum::TryFromInt;
 
 use crate::utils::DrmSize;
 
+/// Runtime information about the display sink attached to a connector.
+///
+/// This information is normally obtained while probing the connector and describes physical characteristics of the sink.
 #[derive(Clone, Copy, Debug)]
 pub struct DrmDisplayInfo {
     mm_width: u32,
@@ -57,6 +60,13 @@ impl Default for DrmDisplayInfo {
     }
 }
 
+/// The physical subpixel arrangement of a display panel.
+///
+/// Although Linux defines this as a kernel-side enum,
+/// its discriminant is exposed through `drm_mode_get_connector::subpixel`.
+/// The numeric values are therefore part of the DRM userspace ABI and must remain Linux-compatible.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/drm/drm_connector.h#L141-L149>.
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, TryFromInt)]
 pub enum SubpixelOrder {

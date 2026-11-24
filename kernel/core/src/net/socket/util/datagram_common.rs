@@ -152,6 +152,19 @@ where
     }
 }
 
+/// Selects the remote endpoint and binds if the socket is not bound.
+///
+/// The remote endpoint specified in the system call (e.g., `sendto`) argument is preferred,
+/// otherwise the connected endpoint of the socket is used. If there are no remote endpoints
+/// available, this method will fail with [`EDESTADDRREQ`].
+///
+/// If the remote endpoint is specified but the socket is not bound, this method will try to
+/// bind the socket to an ephemeral endpoint.
+///
+/// If the above steps succeed, `op` will be called with the bound socket and the selected
+/// remote endpoint.
+///
+/// [`EDESTADDRREQ`]: crate::error::Errno::EDESTADDRREQ
 pub(crate) fn select_remote_and_bind<UnboundSocket, BoundSocket, B, F, R>(
     inner_mutex: &RwMutex<Inner<UnboundSocket, BoundSocket>>,
     remote: Option<&UnboundSocket::Endpoint>,

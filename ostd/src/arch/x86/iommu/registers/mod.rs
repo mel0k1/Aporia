@@ -1,3 +1,5 @@
+//! Registers and their definition used by IOMMU.
+
 mod capability;
 mod command;
 mod extended_cap;
@@ -47,17 +49,20 @@ pub(super) struct IommuVersion {
 }
 
 impl IommuVersion {
+    /// Major version number
     #[expect(dead_code)]
     pub(super) fn major(&self) -> u8 {
         self.major
     }
 
+    /// Minor version number
     #[expect(dead_code)]
     pub(super) fn minor(&self) -> u8 {
         self.minor
     }
 }
 
+/// Important registers used by IOMMU.
 #[derive(Debug)]
 pub(super) struct IommuRegisters {
     version: VolatileRef<'static, u32, ReadOnly>,
@@ -74,6 +79,7 @@ pub(super) struct IommuRegisters {
 }
 
 impl IommuRegisters {
+    /// Reads the version of IOMMU
     #[expect(dead_code)]
     pub(super) fn read_version(&self) -> IommuVersion {
         let version = self.version.as_ptr().read();
@@ -83,18 +89,22 @@ impl IommuRegisters {
         }
     }
 
+    /// Reads the capability of IOMMU
     pub(super) fn read_capability(&self) -> Capability {
         Capability::new(self.capability.as_ptr().read())
     }
 
+    /// Reads the extended Capability of IOMMU
     pub(super) fn read_extended_capability(&self) -> ExtendedCapability {
         ExtendedCapability::new(self.extended_capability.as_ptr().read())
     }
 
+    /// Reads the global Status of IOMMU
     pub(super) fn read_global_status(&self) -> GlobalStatus {
         GlobalStatus::from_bits_truncate(self.global_status.as_ptr().read())
     }
 
+    /// Enables DMA remapping with static RootTable
     pub(super) fn enable_dma_remapping(
         &mut self,
         root_table: &'static SpinLock<RootTable, LocalIrqDisabled>,
@@ -109,12 +119,14 @@ impl IommuRegisters {
         while !self.read_global_status().contains(GlobalStatus::TES) {}
     }
 
+    /// Enables Interrupt Remapping with IntRemappingTable
     pub(super) fn enable_interrupt_remapping(&mut self, table: &'static IntRemappingTable) {
         assert!(
             self.read_extended_capability()
                 .flags()
                 .contains(ExtendedCapabilityFlags::IR)
         );
+
         self.interrupt_remapping_table_addr
             .as_mut_ptr()
             .write(table.encode());
@@ -139,6 +151,7 @@ impl IommuRegisters {
         self.invalidate.queue_tail.as_mut_ptr().write(0);
 
         let mut write_value = queue.base_paddr() as u64;
+
         let descriptor_width = 0b0;
         write_value |= descriptor_width << 11;
 
@@ -181,6 +194,7 @@ impl IommuRegisters {
         let mut queue = QUEUE.get().unwrap().lock();
 
         queue.append_descriptor(InterruptEntryCache::global_invalidation().0);
+
         queue.append_descriptor(InvalidationWait::with_interrupt_flag().0);
 
         let tail = queue.tail();
@@ -190,6 +204,7 @@ impl IommuRegisters {
             .write((tail << 4) as u64);
 
         while self.invalidate.completion_status.as_ptr().read() == 0 {}
+
         self.invalidate.completion_status.as_mut_ptr().write(1);
     }
 
@@ -209,6 +224,8 @@ impl IommuRegisters {
             .write(0x9000_0000_0000_0000);
     }
 
+    /// Writes value to the global command register. This function will not wait until the command
+    /// is serviced. User need to check the global status register.
     fn write_global_command(&mut self, command: GlobalCommand, enable: bool) {
         const ONE_SHOT_STATUS_MASK: u32 = 0x96FF_FFFF;
         let status = self.global_status.as_ptr().read() & ONE_SHOT_STATUS_MASK;
@@ -223,6 +240,7 @@ impl IommuRegisters {
         }
     }
 
+    /// Creates an instance from base address
     fn new(io_mem_builder: &IoMemAllocatorBuilder) -> Option<Self> {
         let dmar = Dmar::new()?;
         debug!("DMAR: {:#x?}", dmar);

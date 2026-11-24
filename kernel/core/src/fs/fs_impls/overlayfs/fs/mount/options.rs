@@ -1,3 +1,17 @@
+//! Mount option parsing for overlayfs.
+//!
+//! This module validates the mount option string into a
+//! [`MountOptions`] construction input. The recognized keys are the path
+//! keys `lowerdir`, `lowerdir+`, `upperdir`, and `workdir`, the mode keys
+//! `uuid` and `xino`, the raw-intent keys `redirect_dir`, `index`,
+//! `nfs_export`, `metacopy`, `verity`, and `fsync`, and the valueless keys
+//! `default_permissions`, `userxattr`, `volatile`, and `nooverride_creds`.
+//!
+//! Unknown keys fail with `EINVAL` before any layer state is created. A
+//! raw-intent key records an explicitly requested feature that is not
+//! implemented: the request is accepted, and the verify phase warns once at
+//! mount time that the mount proceeds without that feature.
+
 #![short_vis_path::add(overlayfs)]
 
 use crate::{
@@ -7,13 +21,21 @@ use crate::{
 
 #[derive(Debug)]
 pub(super) struct MountOptions {
+    /// The caller asked the overlay to run its own permission checks.
     is_default_permissions: bool,
+    /// The `lowerdir`/`lowerdir+` layer paths in merge order, topmost first.
     pub(super) lower_dirs: Vec<String>,
+    /// The `upperdir` path; `None` on a mount that has no upper.
     pub(super) upper_dir: Option<String>,
+    /// The `workdir` path; present exactly when `upper_dir` is.
     pub(super) work_dir: Option<String>,
+    /// Whether the mount request carried `FsFlags::RDONLY`.
     pub(super) is_forced_read_only: bool,
+    /// The xattr namespace this mount's private records live under; `userxattr` selects `user.`.
     pub(super) xattr_namespace: XattrNamespace,
+    /// The `uuid` key's mode; the mount default applies when the key is absent.
     pub(super) uuid_mode: Option<UuidMode>,
+    /// The `xino` key's mode; the mount default applies when the key is absent.
     pub(super) xino_mode: Option<XinoMode>,
     redirect_dir: Option<RedirectDirMode>,
     index: Option<bool>,
@@ -27,16 +49,24 @@ pub(super) struct MountOptions {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum UuidMode {
+    /// UUID-blind mode: no persistent overlay UUID is written or matched.
     Off,
+    /// `uuid=null` is accepted for compatibility and behaves like `Off` (no UUID record).
     Null,
+    /// Requires a persistent UUID: reuse the upper's, else create and persist one.
     On,
+    /// Reuses an existing UUID, else upgrades to `On`; persistence failure degrades to `Null`.
     Auto,
 }
 
+/// The `xino` option: whether the overlay publishes its own device ID with a layer-encoded ino.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in overlayfs) enum XinoMode {
+    /// Never encode; a non-directory publishes the underlying dev/ino.
     Off,
+    /// Encode when the layers span several filesystems and the mount keeps a `st_ino`.
     Auto,
+    /// Forces the encoding attempt; objects that do not fit fall back to xino-off.
     On,
 }
 
@@ -77,6 +107,7 @@ impl MountOptions {
             upper_dir: None,
             work_dir: None,
             is_forced_read_only: fs_flags.contains(FsFlags::RDONLY),
+
             xattr_namespace: XattrNamespace::Trusted,
             uuid_mode: None,
             xino_mode: None,
@@ -123,6 +154,7 @@ impl MountOptions {
                     }
                     return Err(errno!(EINVAL, "duplicate overlay mount option"));
                 }
+
                 self.lower_dirs = value.split(':').map(str::to_string).collect();
                 if self.lower_dirs.iter().any(|lower_dir| lower_dir.is_empty()) {
                     return Err(errno!(
@@ -233,6 +265,7 @@ impl MountOptions {
         Ok(())
     }
 
+    /// Returns the non-empty value the entry carried for a key that takes one.
     fn require_value(value: Option<&str>) -> Result<&str> {
         let Some(value) = value else {
             return Err(errno!(EINVAL, "the overlay mount option requires a value"));
@@ -246,6 +279,7 @@ impl MountOptions {
         Ok(value)
     }
 
+    /// Rejects a value given to a key that takes none.
     fn require_bare(value: Option<&str>) -> Result<()> {
         if value.is_some() {
             return Err(errno!(
@@ -256,6 +290,7 @@ impl MountOptions {
         Ok(())
     }
 
+    /// Parses the `on`/`off` value domain shared by the boolean keys.
     fn parse_bool(value: &str) -> Result<bool> {
         match value {
             "on" => Ok(true),
@@ -264,6 +299,7 @@ impl MountOptions {
         }
     }
 
+    /// Stores a key's parsed value, rejecting a second spelling of the key.
     fn set_once<T>(slot: &mut Option<T>, value: T) -> Result<()> {
         if slot.is_some() {
             return Err(errno!(EINVAL, "duplicate overlay mount option"));
@@ -272,6 +308,7 @@ impl MountOptions {
         Ok(())
     }
 
+    /// Records a valueless key once.
     fn set_flag_once(flag: &mut bool) -> Result<()> {
         if *flag {
             return Err(errno!(EINVAL, "duplicate overlay mount option"));
@@ -366,6 +403,7 @@ impl MountOptions {
 }
 
 impl RedirectDirMode {
+    /// Returns the `redirect_dir=` value this mode is spelled with.
     fn option_value(self) -> &'static str {
         match self {
             Self::Off => "off",
@@ -377,6 +415,7 @@ impl RedirectDirMode {
 }
 
 impl VerityMode {
+    /// Returns the `verity=` value this mode is spelled with.
     fn option_value(self) -> &'static str {
         match self {
             Self::Off => "off",
@@ -388,6 +427,11 @@ impl VerityMode {
 
 #[cfg(ktest)]
 mod test {
+    //! Unit tests for the pure [`MountOptions::parse`] contract.
+    //!
+    //! The assertions form a fixed case table over the parse surface: every
+    //! accepted spelling with the fields it sets, and every rejected spelling
+    //! with the `EINVAL` it raises.
 
     use ostd::prelude::ktest;
 

@@ -7,6 +7,7 @@ pub(crate) enum TermStatus {
 }
 
 impl TermStatus {
+    /// Return as a 32-bit integer encoded as specified in wait(2) man page.
     pub(crate) fn as_u32(&self) -> u32 {
         match self {
             TermStatus::Exited(status) => (*status as u32) << 8,

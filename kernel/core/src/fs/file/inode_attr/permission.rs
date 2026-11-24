@@ -3,6 +3,8 @@ use crate::{fs::file::AccessMode, prelude::*};
 bitflags! {
     #[derive(Clone, Copy, Debug)]
     pub(crate) struct Permission: u16 {
+
+
         const MAY_EXEC      = 0x0001;
         const MAY_WRITE     = 0x0002;
         const MAY_READ      = 0x0004;

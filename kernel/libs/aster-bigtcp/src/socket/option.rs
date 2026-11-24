@@ -2,14 +2,24 @@ use smoltcp::time::Duration;
 
 use super::{NeedIfacePoll, unbound::RawTcpSocket};
 
+/// A trait defines setting socket options on a raw socket.
 pub trait RawTcpSetOption {
+    /// Sets the keep alive interval.
+    ///
+    /// Polling the iface _may_ be required after this method succeeds.
     fn set_keep_alive(&self, interval: Option<Duration>) -> NeedIfacePoll;
 
+    /// Enables or disables Nagle’s Algorithm.
+    ///
+    /// Polling the iface is _not_ required after this method succeeds.
     fn set_nagle_enabled(&self, enabled: bool);
 }
 
+/// Socket options on a raw socket.
 pub struct RawTcpOption {
+    /// The keep alive interval.
     pub keep_alive: Option<Duration>,
+    /// Whether Nagle's algorithm is enabled.
     pub is_nagle_enabled: bool,
 }
 

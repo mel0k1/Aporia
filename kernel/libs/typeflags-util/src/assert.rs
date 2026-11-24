@@ -1,3 +1,5 @@
+//! define macro assert_type_same
+
 use crate::same::SameAs;
 
 pub type AssertTypeSame<Lhs, Rhs> = <Lhs as SameAs<Rhs>>::Output;

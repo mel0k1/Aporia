@@ -1,3 +1,26 @@
+//! Root filesystem mounting during boot.
+//!
+//! Asterinas first tries to boot from the initramfs. It checks the path specified by `rdinit`, or
+//! `/init` when `rdinit` is not provided. If the selected path is accessible, Asterinas runs it as
+//! the first userspace process. Otherwise, Asterinas boots from the root filesystem.
+//!
+//! For root filesystem boot, this module mounts a supported filesystem from the block device
+//! specified by `root`. The mounted filesystem replaces the bootstrap root in the initial mount
+//! namespace and becomes the root and working directory of the first userspace process. The
+//! bootstrap root is then detached. The `root` parameter is required when this boot path is
+//! selected, and [`SUPPORTED_ROOTFS_TYPES`] lists the supported filesystem types.
+//!
+//! The following kernel parameters configure root filesystem boot:
+//!
+//! - `root` specifies the block device to mount.
+//! - `rootfstype` specifies a comma-separated list of filesystem type candidates. All supported
+//!   types are tried when it is not provided.
+//! - `ro` and `rw` select read-only or read-write mounting. The root filesystem is read-only by
+//!   default. They use last-wins semantics: the last `ro` or `rw` parameter determines the mount
+//!   mode.
+//! - `init` specifies the init executable on the mounted filesystem. If it is not provided,
+//!   Asterinas tries `/sbin/init`, `/etc/init`, `/bin/init`, and `/bin/sh` in order.
+
 macro_rules! __log_prefix {
     () => {
         "rootfs: "
@@ -22,8 +45,15 @@ use super::{
 };
 use crate::prelude::*;
 
+/// Filesystem types supported for the root filesystem.
 pub(crate) static SUPPORTED_ROOTFS_TYPES: &[&dyn DynFsType] = &[&ext2::EXT2_TYPE];
 
+/// Mounts and switches to the root filesystem configured by the kernel command line.
+///
+/// The filesystem replaces the bootstrap root mount and becomes the resolver's root and working
+/// directory.
+///
+/// Returns an error if `root` is not provided or the root filesystem cannot be opened or mounted.
 pub(crate) fn switch_to_rootfs(path_resolver: &mut PathResolver) -> Result<()> {
     let root = ROOT_PATH
         .get()
@@ -41,6 +71,11 @@ pub(crate) fn switch_to_rootfs(path_resolver: &mut PathResolver) -> Result<()> {
     Ok(())
 }
 
+/// Finds the init program specified for booting from the root filesystem.
+///
+/// Resolves the path specified by `init` and returns the resolved path together with the original
+/// pathname. Returns `Ok(None)` when `init` is not provided, and an error if the configured
+/// pathname is invalid or cannot be resolved.
 pub(crate) fn find_init(path_resolver: &PathResolver) -> Result<Option<(Path, &'static str)>> {
     let Some(init_path) = INIT_PATH.get().map(String::as_str) else {
         return Ok(None);
@@ -99,9 +134,11 @@ aster_cmdline::define_kv_param!("root", ROOT_PATH);
 static INIT_PATH: Once<String> = Once::new();
 aster_cmdline::define_kv_param!("init", INIT_PATH);
 
+/// Root filesystem type candidates.
 struct RootFsTypes(Vec<&'static dyn DynFsType>);
 
 impl RootFsTypes {
+    /// Returns the root filesystem type candidates as a slice.
     fn as_slice(&self) -> &[&'static dyn DynFsType] {
         self.0.as_slice()
     }

@@ -8,6 +8,7 @@ use crate::{prelude::*, process::Pid};
 
 mod range;
 
+/// Identifies the file table that owns a [`RangeLock`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct RangeLockOwner(usize);
 
@@ -17,20 +18,33 @@ impl RangeLockOwner {
     }
 }
 
+/// The metadata of a POSIX advisory file range lock.
 #[derive(Clone, Debug)]
 struct RangeLock {
+    /// File-table identity that owns the lock.
     owner: RangeLockOwner,
+    /// PID associated with this lock.
     pid: Pid,
+    /// Type of the lock: `F_RDLCK` (read lock), `F_WRLCK` (write lock), or `F_UNLCK` (unlock).
     type_: RangeLockType,
+    /// Range of the lock which specifies the portion of the file being locked.
     range: FileRange,
 }
 
+/// Represents a POSIX advisory file range lock in the kernel.
+/// Contains metadata about the lock and the processes waiting for it.
+/// The lock is associated with a specific range of the file.
 pub(crate) struct RangeLockItem {
+    /// The lock data including its properties.
     lock: RangeLock,
+    /// Waiters that are being blocked by this lock.
     waitqueue: Arc<WaitQueue>,
 }
 
 impl RangeLockItem {
+    /// Creates a new range lock instance.
+    ///
+    /// The new instance will be associated with the current process and the given lock owner.
     pub(crate) fn new(
         owner: RangeLockOwner,
         pid: Pid,
@@ -49,55 +63,71 @@ impl RangeLockItem {
         }
     }
 
+    /// Returns the file-table identity that owns the lock.
     pub(crate) fn owner(&self) -> RangeLockOwner {
         self.lock.owner
     }
 
+    /// Sets the file-table identity that owns the lock.
     pub(crate) fn set_owner(&mut self, owner: RangeLockOwner) {
         self.lock.owner = owner;
     }
 
+    /// Returns the process ID reported for the lock.
     pub(crate) fn pid(&self) -> Pid {
         self.lock.pid
     }
 
+    /// Sets the process ID reported for the lock.
     pub(crate) fn set_pid(&mut self, pid: Pid) {
         self.lock.pid = pid;
     }
 
+    /// Returns the type of the lock (READ/WRITE/UNLOCK)
     pub(crate) fn type_(&self) -> RangeLockType {
         self.lock.type_
     }
 
+    /// Sets the type of the lock to the specified type
     pub(crate) fn set_type(&mut self, type_: RangeLockType) {
         self.lock.type_ = type_;
     }
 
+    /// Returns the range of the lock
     pub(crate) fn range(&self) -> FileRange {
         self.lock.range
     }
 
+    /// Sets the range of the lock to the specified range
     pub(crate) fn set_range(&mut self, range: FileRange) {
         self.lock.range = range;
     }
 
+    /// Checks if this lock conflicts with another lock
+    /// Returns true if there is a conflict, otherwise false
     pub(crate) fn conflict_with(&self, other: &Self) -> bool {
         if self.owner() == other.owner() {
             return false;
         }
+
         if self.overlap_with(other).is_none() {
             return false;
         }
+
         if self.type_() == RangeLockType::WriteLock || other.type_() == RangeLockType::WriteLock {
             return true;
         }
         false
     }
 
+    /// Checks if this lock overlaps with another lock
+    /// Returns an Option that contains the overlap details if they overlap
     pub(crate) fn overlap_with(&self, other: &Self) -> Option<OverlapWith> {
         self.range().overlap_with(&other.range())
     }
 
+    /// Merges the range of this lock with another lock's range
+    /// If the merge fails, it will trigger a panic
     pub(crate) fn merge_with(&mut self, other: &Self) {
         self.lock
             .range
@@ -105,14 +135,18 @@ impl RangeLockItem {
             .expect("merge range failed");
     }
 
+    /// Returns the starting position of the lock range
     pub(crate) fn start(&self) -> usize {
         self.range().start()
     }
 
+    /// Returns the ending position of the lock range
     pub(crate) fn end(&self) -> usize {
         self.range().end()
     }
 
+    /// Sets a new starting position for the lock range
+    /// If the range shrinks, it will wake all waiting processes
     pub(crate) fn set_start(&mut self, new_start: usize) {
         let change = self
             .lock
@@ -124,6 +158,8 @@ impl RangeLockItem {
         }
     }
 
+    /// Sets a new ending position for the lock range
+    /// If the range shrinks, it will wake all waiting processes
     pub(crate) fn set_end(&mut self, new_end: usize) {
         let change = self.lock.range.set_end(new_end).expect("invalid new end");
         if let FileRangeChange::Shrunk = change {
@@ -132,12 +168,16 @@ impl RangeLockItem {
     }
 }
 
+/// Implements the drop trait for RangeLockItem
+/// Ensures that all waiting processes are woken when this item goes out of scope
 impl Drop for RangeLockItem {
     fn drop(&mut self) {
         self.waitqueue.wake_all();
     }
 }
 
+/// Implements the Debug trait for RangeLockItem
+/// Customizes the output when the item is printed in debug mode
 impl Debug for RangeLockItem {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RangeLock")
@@ -149,6 +189,8 @@ impl Debug for RangeLockItem {
     }
 }
 
+/// Implements the Clone trait for RangeLockItem
+/// Allows creating a copy of the item with the same properties
 impl Clone for RangeLockItem {
     fn clone(&self) -> Self {
         Self {
@@ -158,6 +200,17 @@ impl Clone for RangeLockItem {
     }
 }
 
+/// List of File POSIX advisory range locks.
+///
+/// Rule of ordering:
+/// Locks are sorted by file-table owner, then by the starting offset.
+///
+/// Rule of merging:
+/// Adjacent and overlapping locks with same owner and type will be merged.
+///
+/// Rule of updating:
+/// New locks with different type will replace or split the overlapping locks
+/// if they have same owner.
 pub(crate) struct RangeLockList {
     inner: RwMutex<Vec<RangeLockItem>>,
 }
@@ -169,6 +222,10 @@ impl RangeLockList {
         }
     }
 
+    /// Test whether `lock` may be set.
+    ///
+    /// If there is a conflict, return the conflicting lock.
+    /// Otherwise, return a lock with type `Unlock`.
     pub(crate) fn test_lock(&self, lock: RangeLockItem) -> RangeLockItem {
         debug!("test_lock with RangeLock: {:?}", lock);
         let mut req_lock = lock.clone();
@@ -186,6 +243,12 @@ impl RangeLockList {
         req_lock
     }
 
+    /// Attempts to set a lock on the file.
+    ///
+    /// If no conflicting locks exist, the lock is set and the function returns `Ok(())`.
+    /// If a conflicting lock exists:
+    /// - If waker is not `None`, it is added to the conflicting lock's waitqueue, and the function returns `EAGAIN`.
+    /// - If waker is `None`, the function returns `EAGAIN`.
     fn try_set_lock(&self, req_lock: &RangeLockItem, waker: Option<&Arc<Waker>>) -> Result<()> {
         let mut list = self.inner.write();
         if let Some(conflict_lock) = list.iter().find(|l| req_lock.conflict_with(l)) {
@@ -199,6 +262,10 @@ impl RangeLockList {
         }
     }
 
+    /// Sets a lock on the file.
+    ///
+    /// If the lock is non-blocking and there is a conflict, return `Err(Errno::EAGAIN)`.
+    /// Otherwise, block the current process until the lock can be set or it is interrupted by a signal.
     pub(crate) fn set_lock(&self, req_lock: &RangeLockItem, is_nonblocking: bool) -> Result<()> {
         debug!(
             "set_lock with RangeLock: {:?}, is_nonblocking: {}",
@@ -219,6 +286,7 @@ impl RangeLockList {
         }
     }
 
+    /// Insert a lock into the list.
     fn insert_lock_into_list(
         list: &mut RwMutexWriteGuard<Vec<RangeLockItem>>,
         lock: &RangeLockItem,
@@ -230,6 +298,7 @@ impl RangeLockList {
                 return;
             }
         };
+
         list.insert(first_same_owner_idx, lock.clone());
         let mut pre_idx = first_same_owner_idx;
         let mut next_idx = pre_idx + 1;
@@ -296,6 +365,11 @@ impl RangeLockList {
         }
     }
 
+    /// Unlock the lock.
+    ///
+    /// The lock will be removed from the list.
+    /// Adjacent locks will be merged if they have the same owner and type.
+    /// Overlapping locks will be split or merged if they have the same owner.
     pub(crate) fn unlock(&self, lock: &RangeLockItem) {
         debug!("unlock with RangeLock: {:?}", lock);
         let mut list = self.inner.write();
@@ -343,6 +417,7 @@ impl RangeLockList {
         }
     }
 
+    /// Removes all locks belonging to `owner`.
     pub(crate) fn unlock_all(&self, owner: RangeLockOwner) {
         let mut list = self.inner.write();
         list.retain(|lock| lock.owner() != owner);
@@ -355,6 +430,8 @@ impl Default for RangeLockList {
     }
 }
 
+/// Type of file range lock, aligned with Linux kernel.
+/// F_RDLCK = 0, F_WRLCK = 1, F_UNLCK = 2,
 #[repr(u16)]
 #[derive(Clone, Copy, Debug, PartialEq, TryFromInt)]
 pub(crate) enum RangeLockType {

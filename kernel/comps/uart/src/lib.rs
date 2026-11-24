@@ -1,3 +1,5 @@
+//! Universal asynchronous receiver-transmitter (UART).
+
 #![no_std]
 #![deny(unsafe_code)]
 

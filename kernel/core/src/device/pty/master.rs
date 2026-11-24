@@ -23,6 +23,15 @@ use crate::{
 
 const IO_CAPACITY: usize = 4096;
 
+/// A pseudoterminal master.
+///
+/// A pseudoterminal contains two buffers:
+///  * The input buffer is written by the master and read by the slave, which is maintained in the
+///    line discipline (part of [`PtySlave`], which is a [`Tty`]).
+///  * The output buffer is written by the slave and read by the master, which is maintained in the
+///    driver (i.e., [`PtyDriver`]).
+///
+/// [`Tty`]: crate::device::tty::Tty
 pub(crate) struct PtyMaster {
     ptmx: Arc<Ptmx>,
     slave: Arc<PtySlave>,

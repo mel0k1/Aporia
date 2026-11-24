@@ -109,6 +109,7 @@ fn do_sys_mmap(
                     "MAP_SHARED_VALIDATE and MAP_ANONYMOUS cannot be used together"
                 ));
             }
+
             if option.typ().is_shared() {
                 let shared_vmo = {
                     let vmo_options = VmoOptions::new(len);
@@ -224,6 +225,7 @@ fn check_offset(offset: usize, len: usize, flags: MMapFlags) -> Result<()> {
     Ok(())
 }
 
+/// The mask for the mapping type.
 const MAP_TYPE_MASK: u32 = 0xf;
 
 #[repr(u8)]
@@ -241,6 +243,7 @@ impl MMapType {
 }
 
 bitflags! {
+
     #[derive(Clone, Copy, Debug)]
     struct MMapFlags: u32 {
         const MAP_FIXED           = 0x10;

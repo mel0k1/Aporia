@@ -1,3 +1,63 @@
+//! A store of transactional logs.
+//!
+//! `TxLogStore<D>` supports creating, deleting, listing, reading,
+//! and writing `TxLog<D>`s within transactions. Each `TxLog<D>`
+//! is uniquely identified by its ID (`TxLogId`). Writing to a TX log
+//! is append only. TX logs are categorized into pre-determined buckets.
+//!
+//! File content of `TxLog<D>` is stored securely using a `CryptoLog<RawLog<D>>`,
+//! whose storage space is backed by untrusted log `RawLog<D>`,
+//! whose host blocks are managed by `ChunkAlloc`. The whole untrusted
+//! host disk that `TxLogSore<D>` used is represented by a `BlockSet`.
+//!
+//! # Examples
+//!
+//! TX logs are manipulated and accessed within transactions.
+//!
+//! ```
+//! fn create_and_read_log<D: BlockSet>(
+//!     tx_log_store: &TxLogStore<D>,
+//!     bucket: &str
+//! ) -> Result<()> {
+//!     let content = 5_u8;
+//!
+//!     // TX 1: Create then write a new log
+//!     let mut tx = tx_log_store.new_tx();
+//!     let res: Result<_> = tx.context(|| {
+//!         let new_log = tx_log_store.create_log(bucket)?;
+//!         let mut buf = Buf::alloc(1)?;
+//!         buf.as_mut_slice().fill(content);
+//!         new_log.append(buf.as_ref())
+//!     });
+//!     if res.is_err() {
+//!         tx.abort();
+//!     }
+//!     tx.commit()?;
+//!
+//!     // TX 2: Open then read the created log
+//!     let mut tx = tx_log_store.new_tx();
+//!     let res: Result<_> = tx.context(|| {
+//!         let log = tx_log_store.open_log_in(bucket)?;
+//!         let mut buf = Buf::alloc(1)?;
+//!         log.read(0 as BlockId, buf.as_mut())?;
+//!         assert_eq!(buf.as_slice()[0], content);
+//!         Ok(())
+//!     });
+//!     if res.is_err() {
+//!         tx.abort();
+//!     }
+//!     tx.commit()
+//! }
+//! ```
+//!
+//! `TxLogStore<D>`'s API is designed to be a limited POSIX FS
+//! and must be called within transactions (`Tx`). It mitigates user burden by
+//! minimizing the odds of conflicts among TXs:
+//! 1) Prohibiting concurrent TXs from opening the same log for
+//!    writing (no write conflicts);
+//! 2) Implementing lazy log deletion to avoid interference with
+//!    other TXs utilizing the log (no deletion conflicts);
+//! 3) Identifying logs by system-generated IDs (no name conflicts).
 use core::{
     any::Any,
     sync::atomic::{AtomicBool, Ordering},
@@ -25,9 +85,19 @@ use crate::{
     util::LazyDelete,
 };
 
+/// The ID of a TX log.
 pub(crate) type TxLogId = RawLogId;
+/// The name of a TX log bucket.
 type BucketName = String;
 
+/// A store of transactional logs.
+///
+/// Disk layout:
+/// ```text
+/// ------------------------------------------------------
+/// | Superblock |  RawLogStore region  | Journal region |
+/// ------------------------------------------------------
+/// ```
 #[derive(Clone)]
 pub(crate) struct TxLogStore<D> {
     state: Arc<Mutex<State>>,
@@ -39,6 +109,7 @@ pub(crate) struct TxLogStore<D> {
     tx_provider: Arc<TxProvider>,
 }
 
+/// Superblock of `TxLogStore`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(super) struct Superblock {
@@ -49,6 +120,8 @@ pub(super) struct Superblock {
 const MAGIC_NUMBER: u64 = 0x1130_0821;
 
 impl<D: BlockSet + 'static> TxLogStore<D> {
+    /// Formats the disk to create a new instance of `TxLogStore`,
+    /// with the given root key.
     pub(crate) fn format(disk: D, root_key: Key) -> Result<Self> {
         let total_nblocks = disk.nblocks();
         let (log_store_nblocks, journal_nblocks) =
@@ -101,6 +174,7 @@ impl<D: BlockSet + 'static> TxLogStore<D> {
         ))
     }
 
+    /// Calculate the number of blocks required for the store and the journal.
     fn calc_store_and_journal_nblocks(total_nblocks: usize) -> (usize, usize) {
         let log_store_nblocks = {
             let nblocks = (total_nblocks - 1) * 9 / 10;
@@ -142,6 +216,7 @@ impl<D: BlockSet + 'static> TxLogStore<D> {
         });
     }
 
+    /// Recovers an existing `TxLogStore` from a disk using the given key.
     pub(crate) fn recover(disk: D, root_key: Key) -> Result<Self> {
         let superblock = Superblock::open(&disk.subset(0..1)?, &root_key)?;
         if disk.nblocks() < superblock.total_nblocks() {
@@ -188,6 +263,7 @@ impl<D: BlockSet + 'static> TxLogStore<D> {
         Ok(tx_log_store)
     }
 
+    /// Constructs a `TxLogStore` from its parts.
     fn from_parts(
         state: TxLogStoreState,
         raw_log_store: Arc<RawLogStore<D>>,
@@ -250,6 +326,7 @@ impl<D: BlockSet + 'static> TxLogStore<D> {
         new_self
     }
 
+    /// Record all dirty logs in the current TX.
     fn update_dirty_log_metas(current_tx: &mut CurrentTx<'_>) -> Result<()> {
         let dirty_logs: Vec<(TxLogId, Arc<TxLogInner<D>>)> =
             current_tx.data_with(|open_log_table: &OpenLogTable<D>| {
@@ -342,6 +419,13 @@ impl<D: BlockSet + 'static> TxLogStore<D> {
         });
     }
 
+    /// Creates a new, empty log in a bucket.
+    ///
+    /// On success, the returned `TxLog` is opened in the appendable mode.
+    ///
+    /// # Panics
+    ///
+    /// This method must be called within a TX. Otherwise, this method panics.
     pub(crate) fn create_log(&self, bucket: &str) -> Result<Arc<TxLog<D>>> {
         let raw_log = self.raw_log_store.create_log()?;
         let log_id = raw_log.id();
@@ -386,6 +470,14 @@ impl<D: BlockSet + 'static> TxLogStore<D> {
         }))
     }
 
+    /// Opens the log of a given ID.
+    ///
+    /// For any log at any time, there can be at most one TX that opens the log
+    /// in the appendable mode.
+    ///
+    /// # Panics
+    ///
+    /// This method must be called within a TX. Otherwise, this method panics.
     pub(crate) fn open_log(&self, log_id: TxLogId, can_append: bool) -> Result<Arc<TxLog<D>>> {
         let mut current_tx = self.tx_provider.current();
         let inner_log = self.open_inner_log(log_id, can_append, &mut current_tx)?;
@@ -407,6 +499,7 @@ impl<D: BlockSet + 'static> TxLogStore<D> {
         }
 
         let state = self.state.lock();
+
         let lazy_delete = state
             .lazy_deletes
             .get(&log_id)
@@ -414,6 +507,7 @@ impl<D: BlockSet + 'static> TxLogStore<D> {
             .clone();
         let log_entry = {
             let log_entry: &TxLogEntry = state.persistent.find_log(log_id)?;
+
             let is_deleted = current_tx
                 .data_with(|store_edit: &TxLogStoreEdit| store_edit.is_log_deleted(log_id));
             if is_deleted {
@@ -459,6 +553,11 @@ impl<D: BlockSet + 'static> TxLogStore<D> {
         Ok(inner_log)
     }
 
+    /// Lists the IDs of all logs in a bucket.
+    ///
+    /// # Panics
+    ///
+    /// This method must be called within a TX. Otherwise, this method panics.
     pub(crate) fn list_logs_in(&self, bucket_name: &str) -> Result<Vec<TxLogId>> {
         let state = self.state.lock();
         let mut log_id_set = state.persistent.list_logs_in(bucket_name)?;
@@ -484,6 +583,11 @@ impl<D: BlockSet + 'static> TxLogStore<D> {
         Ok(log_id_vec)
     }
 
+    /// Opens the log with the maximum ID in a bucket.
+    ///
+    /// # Panics
+    ///
+    /// This method must be called within a TX. Otherwise, this method panics.
     pub(crate) fn open_log_in(&self, bucket: &str) -> Result<Arc<TxLog<D>>> {
         let log_ids = self.list_logs_in(bucket)?;
         let max_log_id = log_ids
@@ -493,6 +597,11 @@ impl<D: BlockSet + 'static> TxLogStore<D> {
         self.open_log(*max_log_id, false)
     }
 
+    /// Checks whether the log of a given log ID exists or not.
+    ///
+    /// # Panics
+    ///
+    /// This method must be called within a TX. Otherwise, this method panics.
     pub(crate) fn contains_log(&self, log_id: TxLogId) -> bool {
         let state = self.state.lock();
         let current_tx = self.tx_provider.current();
@@ -507,6 +616,11 @@ impl<D: BlockSet + 'static> TxLogStore<D> {
         }
     }
 
+    /// Deletes the log of a given ID.
+    ///
+    /// # Panics
+    ///
+    /// This method must be called within a TX. Otherwise, this method panics.
     pub(crate) fn delete_log(&self, log_id: TxLogId) -> Result<()> {
         let mut current_tx = self.tx_provider.current();
 
@@ -529,6 +643,11 @@ impl<D: BlockSet + 'static> TxLogStore<D> {
         Ok(())
     }
 
+    /// Moves the log of a given ID from one bucket to another.
+    ///
+    /// # Panics
+    ///
+    /// This method must be called within a TX. Otherwise, this method panics.
     pub(crate) fn move_log(
         &self,
         log_id: TxLogId,
@@ -550,18 +669,22 @@ impl<D: BlockSet + 'static> TxLogStore<D> {
         Ok(())
     }
 
+    /// Returns the root key.
     pub(crate) fn root_key(&self) -> &Key {
         &self.root_key
     }
 
+    /// Creates a new transaction.
     pub(crate) fn new_tx(&self) -> CurrentTx<'_> {
         self.tx_provider.new_tx()
     }
 
+    /// Returns the current transaction.
     pub(crate) fn current_tx(&self) -> CurrentTx<'_> {
         self.tx_provider.current()
     }
 
+    /// Syncs all the data managed by `TxLogStore` for persistence.
     pub(crate) fn sync(&self) -> Result<()> {
         self.raw_log_store.sync().unwrap();
         self.journal.lock().flush().unwrap();
@@ -585,10 +708,12 @@ impl<D: BlockSet + 'static> Debug for TxLogStore<D> {
 impl Superblock {
     const SUPERBLOCK_SIZE: usize = size_of::<Superblock>();
 
+    /// Returns the total number of blocks occupied by the `TxLogStore`.
     pub(super) fn total_nblocks(&self) -> usize {
         self.journal_area_meta.total_nblocks() + self.chunk_area_nblocks
     }
 
+    /// Reads the `Superblock` on the disk with the given root key.
     pub(super) fn open<D: BlockSet>(disk: &D, root_key: &Key) -> Result<Self> {
         let mut cipher = Buf::alloc(1)?;
         disk.read(0, cipher.as_mut())?;
@@ -608,6 +733,7 @@ impl Superblock {
         }
     }
 
+    /// Persists the `Superblock` on the disk with the given root key.
     pub(super) fn persist<D: BlockSet>(&self, disk: &D, root_key: &Key) -> Result<()> {
         let mut plain = Buf::alloc(1)?;
         plain.as_mut_slice()[..Self::SUPERBLOCK_SIZE].copy_from_slice(self.as_bytes());
@@ -626,6 +752,7 @@ impl Superblock {
     }
 }
 
+/// A transactional log.
 #[derive(Clone)]
 pub(crate) struct TxLog<D> {
     inner_log: Arc<TxLogInner<D>>,
@@ -633,6 +760,7 @@ pub(crate) struct TxLog<D> {
     can_append: bool,
 }
 
+/// Inner structures of a transactional log.
 struct TxLogInner<D> {
     log_id: TxLogId,
     tx_id: TxId,
@@ -651,28 +779,42 @@ impl<D: BlockSet + 'static> TxLog<D> {
         }
     }
 
+    /// Returns the log ID.
     pub(crate) fn id(&self) -> TxLogId {
         self.inner_log.log_id
     }
 
+    /// Returns the TX ID.
     pub(crate) fn tx_id(&self) -> TxId {
         self.inner_log.tx_id
     }
 
+    /// Returns the bucket that this log belongs to.
     pub(crate) fn bucket(&self) -> &str {
         &self.inner_log.bucket
     }
 
+    /// Returns whether the log is opened in the appendable mode.
     pub(crate) fn can_append(&self) -> bool {
         self.can_append
     }
 
+    /// Reads one or multiple data blocks at a specified position.
+    ///
+    /// # Panics
+    ///
+    /// This method must be called within a TX. Otherwise, this method panics.
     pub(crate) fn read(&self, pos: BlockId, buf: BufMut) -> Result<()> {
         debug_assert_eq!(self.tx_id(), self.tx_provider.current().id());
 
         self.inner_log.crypto_log.read(pos, buf)
     }
 
+    /// Appends one or multiple data blocks at the end.
+    ///
+    /// # Panics
+    ///
+    /// This method must be called within a TX. Otherwise, this method panics.
     pub(crate) fn append(&self, buf: BufRef) -> Result<()> {
         debug_assert_eq!(self.tx_id(), self.tx_provider.current().id());
 
@@ -684,6 +826,11 @@ impl<D: BlockSet + 'static> TxLog<D> {
         self.inner_log.crypto_log.append(buf)
     }
 
+    /// Returns the length of the log in unit of block.
+    ///
+    /// # Panics
+    ///
+    /// This method must be called within a TX. Otherwise, this method panics.
     pub(crate) fn nblocks(&self) -> usize {
         debug_assert_eq!(self.tx_id(), self.tx_provider.current().id());
 
@@ -702,6 +849,7 @@ impl<D: BlockSet + 'static> Debug for TxLog<D> {
     }
 }
 
+/// Node cache for `CryptoLog` in a transactional log.
 pub(super) struct CryptoLogCache {
     inner: Mutex<CacheInner>,
     log_id: TxLogId,
@@ -763,18 +911,21 @@ impl CacheInner {
     }
 }
 
+/// The volatile and persistent state of a `TxLogStore`.
 struct State {
     persistent: TxLogStoreState,
     lazy_deletes: HashMap<TxLogId, Arc<LazyDelete<TxLogId>>>,
     log_caches: HashMap<TxLogId, Arc<CryptoLogCache>>,
 }
 
+/// The persistent state of a `TxLogStore`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(super) struct TxLogStoreState {
     log_table: HashMap<TxLogId, TxLogEntry>,
     bucket_table: HashMap<BucketName, Bucket>,
 }
 
+/// A log entry implies the persistent state of the tx log.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(super) struct TxLogEntry {
     pub bucket: BucketName,
@@ -782,6 +933,7 @@ pub(super) struct TxLogEntry {
     pub root_mht: RootMhtMeta,
 }
 
+/// A bucket contains a set of logs which have the same name.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct Bucket {
     log_ids: HashSet<TxLogId>,
@@ -904,19 +1056,23 @@ impl TxLogStoreState {
     }
 }
 
+/// A persistent edit to the state of `TxLogStore`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(super) struct TxLogStoreEdit {
     edit_table: HashMap<TxLogId, TxLogEdit>,
 }
 
+/// Used for per-TX data, track open logs in memory
 pub(super) struct OpenLogTable<D> {
     open_table: HashMap<TxLogId, Arc<TxLogInner<D>>>,
 }
 
+/// Used for per-TX data, track open log caches in memory
 pub(super) struct OpenLogCache {
     open_table: HashMap<TxLogId, CacheInner>,
 }
 
+/// The basic unit of a persistent edit to the state of `TxLogStore`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(super) enum TxLogEdit {
     Create(TxLogCreate),
@@ -925,6 +1081,7 @@ pub(super) enum TxLogEdit {
     Move(TxLogMove),
 }
 
+/// An edit that implies a log being created.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(super) struct TxLogCreate {
     bucket: BucketName,
@@ -932,11 +1089,13 @@ pub(super) struct TxLogCreate {
     root_mht: Option<RootMhtMeta>,
 }
 
+/// An edit that implies an existing log being appended.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(super) struct TxLogAppend {
     root_mht: RootMhtMeta,
 }
 
+/// An edit that implies a log being moved from one bucket to another.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(super) struct TxLogMove {
     from: BucketName,

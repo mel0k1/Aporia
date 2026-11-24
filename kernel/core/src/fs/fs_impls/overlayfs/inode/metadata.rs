@@ -1,3 +1,22 @@
+//! The metadata-mutation entries.
+//!
+//! This module hosts the six metadata setters: `set_mode`/`set_owner`/
+//! `set_group` (chmod/chown) and `set_atime`/`set_mtime`/`set_ctime`
+//! (utimes). Every entry ends in the writable take point
+//! ([`OverlayInode::writable_real_object`]): the read-only gate, the copy-up
+//! promotion sourced from the entry's own dentry, and the upper real object
+//! the change is handed to. The overlay evaluates no DAC of its own — that
+//! stays the VFS's — so the take point is the one place a metadata write is
+//! admitted.
+//!
+//! # Ownership
+//!
+//! The three ownership-sensitive setters forward the mode, owner, or group to
+//! the upper object unchanged, set-user-ID and set-group-ID bits included.
+//! The ownership and capability rules that decide whether a caller may change
+//! them belong to the VFS, where the permission checks for these operations
+//! are being added.
+
 use core::time::Duration;
 
 use super::OverlayInode;

@@ -26,6 +26,7 @@ use crate::{
     time::Timer,
 };
 
+/// A uniquely owned vsock connection handle; dropping it will close the connection.
 pub(in vsock) struct Connection {
     inner: Takeable<Arc<ConnectionInner>>,
 }
@@ -43,6 +44,14 @@ pub(super) struct ConnectionInner {
     bound_port: BoundPort,
     pollee: Pollee,
     state: SpinLock<ConnectionState, BottomHalfDisabled>,
+    /// The number of TX bytes that have already been queued in the device's pending queue.
+    ///
+    /// See [`TxQueue`] for more information on the pending queue. This counter is used for
+    /// accounting purposes to ensure that the total number of bytes does not exceed the upper
+    /// bound, [`DEFAULT_TX_BUF_SIZE`].
+    ///
+    /// [`TxQueue`]: aster_virtio::device::socket::queue::TxQueue
+    /// [`DEFAULT_TX_BUF_SIZE`]: super::DEFAULT_TX_BUF_SIZE
     pending_tx_bytes: AtomicUsize,
 }
 
@@ -52,19 +61,46 @@ struct ConnectionState {
     rx_queue: RxQueue,
     credit: CreditState,
     shutdown: ShutdownState,
+    /// Tracks the deadline for leaving [`Phase::Connecting`] or [`Phase::Closing`].
+    ///
+    /// INVARIANT: This is `Some(_)` if and only if the phase is
+    /// [`Phase::Connecting`] or [`Phase::Closing`].
     timer: Option<TimerState>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Phase {
+    /// Represents the initial state of a newly created connection.
+    ///
+    /// INVARIANT: In this state, the peer endpoint is fully closed; that is,
+    /// both `peer_write_closed` and `peer_read_closed` are `true`.
     Connecting,
 
+    /// Represents the state reached from `Connecting` when the connection
+    /// request is rejected or times out.
+    ///
+    /// INVARIANT: In this state, the peer endpoint is fully closed.
     ConnectFailed,
 
+    /// Represents the initial state of an accepted connection, or the state
+    /// reached from `Connecting` when the connection request succeeds.
+    ///
+    /// INVARIANT: In this state, the peer endpoint is _NOT_ fully closed.
     Connected,
 
+    /// Represents the state reached from `Connected` when the socket is closed
+    /// locally, but the peer has not reset the connection.
+    ///
+    /// INVARIANT: In this state, the local endpoint is fully closed; that is,
+    /// both `local_write_closed` and `local_read_closed` are `true`. The peer
+    /// endpoint is _NOT_ fully closed.
     Closing,
 
+    /// Represents the state reached from `Connected` or `Closing` when the peer
+    /// fully shuts down the connection or resets it, or when a close timeout
+    /// expires in `Closing`.
+    ///
+    /// INVARIANT: In this state, the peer endpoint is fully closed.
     Closed,
 }
 
@@ -342,6 +378,7 @@ impl ConnectionState {
             }
             Phase::Connected => {
                 self.phase = Phase::Closed;
+
                 self.error = is_active.then_some(errno!(ECONNRESET, "the connection is reset",));
                 self.shutdown.peer_read_closed = true;
                 self.shutdown.peer_write_closed = true;

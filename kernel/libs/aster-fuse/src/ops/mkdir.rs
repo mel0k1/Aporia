@@ -1,3 +1,8 @@
+//! `FUSE_MKDIR` creates a directory under a parent directory node.
+//!
+//! The request body contains [`MkdirReq`] followed by the null-terminated child
+//! name. The reply body contains [`EntryReply`] for the created directory inode.
+
 use ostd::mm::{Infallible, VmReader, VmWriter};
 
 use super::util;
@@ -6,7 +11,9 @@ use crate::{EntryReply, FuseError, FuseOpcode, FuseOperation, FuseResult, ReplyE
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub struct MkdirReq {
+    /// File type and permission bits for the new directory.
     mode: u32,
+    /// Process umask of the requesting client, applied by the server when creating the inode.
     umask: u32,
 }
 

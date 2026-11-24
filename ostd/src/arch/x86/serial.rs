@@ -1,3 +1,5 @@
+//! The console I/O.
+
 use spin::Once;
 use x86_64::instructions::port::ReadWriteAccess;
 
@@ -8,8 +10,10 @@ use crate::{
     sync::{LocalIrqDisabled, SpinLock},
 };
 
+/// The primary serial port, which serves as an early console.
 pub static SERIAL_PORT: Once<SpinLock<Ns16550aUart<SerialAccess>, LocalIrqDisabled>> = Once::new();
 
+/// Access to serial registers via I/O ports in x86.
 #[derive(Debug)]
 pub struct SerialAccess {
     data: IoPort<u8, ReadWriteAccess>,
@@ -22,6 +26,10 @@ pub struct SerialAccess {
 }
 
 impl SerialAccess {
+    /// # Safety
+    ///
+    /// The caller must ensure that the base port is a valid serial base port and that it has
+    /// exclusive ownership of the serial registers.
     const unsafe fn new(port: u16) -> Self {
         unsafe {
             Self {
@@ -36,6 +44,9 @@ impl SerialAccess {
         }
     }
 
+    /// Detects whether a UART is present at the legacy COM1 serial port.
+    ///
+    /// Reference: <https://elixir.bootlin.com/linux/v7.2.2/source/drivers/tty/serial/8250/8250_port.c#L1094>
     fn probe(&mut self) -> bool {
         const IER_ALL_INTR: u8 = 0x0F;
 
@@ -82,6 +93,11 @@ impl Ns16550aAccess for SerialAccess {
     }
 }
 
+/// Initializes the serial port.
+///
+/// # Safety
+///
+/// This function should be called only once.
 pub(crate) unsafe fn init(early_cmdline: &EarlyCmdline) {
     if !early_cmdline.has_early_console {
         return;

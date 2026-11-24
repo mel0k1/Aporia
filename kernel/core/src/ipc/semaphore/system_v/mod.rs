@@ -1,3 +1,5 @@
+//! System V semaphore.
+
 use bitflags::bitflags;
 
 pub(crate) mod sem;

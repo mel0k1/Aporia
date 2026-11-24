@@ -1,3 +1,8 @@
+//! FUSE session connection for `virtiofs`.
+//!
+//! [`FuseSession`] is mount-scoped FUSE session. It performs
+//! `FUSE_INIT` negotiation, and exposes typed request helpers.
+
 use alloc::{string::String, sync::Arc, vec::Vec};
 use core::sync::atomic::{AtomicU64, Ordering};
 
@@ -23,15 +28,27 @@ use crate::device::filesystem::pool::{
     FuseDataBuf, FuseReplyBuf, FuseReplyBufs, FuseRequestBuf, FuseRequestBufs,
 };
 
+/// A mount-scoped FUSE session.
+///
+/// One `FuseSession` corresponds to one `mount(2)` call. It holds the
+/// negotiated FUSE protocol state and forwards typed requests to the
+/// underlying [`FileSystemDevice`].
 pub struct FuseSession {
+    /// The transport used to submit FUSE requests for this session.
     device: Arc<FileSystemDevice>,
+    /// Attribute cache version shared by all inodes in this session.
     attr_version: AtomicU64,
+    /// The maximum write size accepted by the server.
     max_write: u32,
+    /// The feature flags selected by `FUSE_INIT`.
     negotiated_flags: FuseInitFlags,
+    /// The extended feature flags selected by `FUSE_INIT`.
     negotiated_flags2: FuseInitFlags2,
 }
 
 impl FuseSession {
+    /// Creates a new FUSE session by performing `FUSE_INIT` negotiation with
+    /// the server.
     pub fn new(device: Arc<FileSystemDevice>) -> Result<Arc<Self>, FuseError> {
         let requested_flags = Self::init_flags();
         let mut operation = InitOperation::new(InitReq::new(
@@ -76,6 +93,12 @@ impl FuseSession {
         Ok(session)
     }
 
+    /// Sends one FUSE operation and waits for the typed reply.
+    ///
+    /// # Locking
+    ///
+    /// This method may sleep after submission. Callers but must
+    /// not hold spinlocks, or IRQ-disabled guards across this call.
     pub fn do_fuse_op<Op: FuseOperation>(
         &self,
         nodeid: FuseNodeId,
@@ -88,14 +111,17 @@ impl FuseSession {
         waiter.parse_reply::<Op>(payload_len)
     }
 
+    /// Returns the current attribute version for a request snapshot.
     pub fn snapshot_attr_version(&self) -> AttrVersion {
         AttrVersion::new(self.attr_version.load(Ordering::Relaxed))
     }
 
+    /// Commits a new attribute version and returns it.
     pub fn bump_attr_version(&self) -> AttrVersion {
         AttrVersion::new(self.attr_version.fetch_add(1, Ordering::Relaxed) + 1)
     }
 
+    /// Allocates a buffer for `FUSE_READ` data.
     pub fn alloc_read_buf(&self, size: usize) -> Result<FuseReplyBuf, FuseError> {
         self.device
             .from_device_pool
@@ -103,6 +129,7 @@ impl FuseSession {
             .map_err(FuseError::ResourceAlloc)
     }
 
+    /// Allocates a buffer for `FUSE_WRITE` data.
     pub fn alloc_write_buf(&self, size: usize) -> Result<FuseRequestBuf, FuseError> {
         self.device
             .to_device_pool
@@ -110,14 +137,17 @@ impl FuseSession {
             .map_err(FuseError::ResourceAlloc)
     }
 
+    /// Returns the FUSE feature flags selected after negotiation.
     pub fn negotiated_flags(&self) -> FuseInitFlags {
         self.negotiated_flags
     }
 
+    /// Returns the extended FUSE feature flags selected after negotiation.
     pub fn negotiated_flags2(&self) -> FuseInitFlags2 {
         self.negotiated_flags2
     }
 
+    /// Returns the maximum write size accepted by the server.
     pub fn max_write(&self) -> u32 {
         self.max_write
     }
@@ -133,6 +163,7 @@ impl FuseSession {
             | FuseInitFlags::INIT_EXT
     }
 
+    /// Sends a `FUSE_READ` request and waits for the reply.
     pub fn read(
         &self,
         nodeid: FuseNodeId,
@@ -148,6 +179,11 @@ impl FuseSession {
         Ok(read_len)
     }
 
+    /// Submits a `FUSE_READ` request without waiting for completion.
+    ///
+    /// Returns a waiter that the caller can await to obtain the reply.
+    /// If `complete_fn` is provided, it is invoked after the
+    /// server replies in a non-sleepable completion context.
     pub fn read_async(
         &self,
         nodeid: FuseNodeId,
@@ -164,6 +200,7 @@ impl FuseSession {
         )
     }
 
+    /// Sends a `FUSE_READDIR` request and waits for the reply.
     pub fn readdir(
         &self,
         nodeid: FuseNodeId,
@@ -185,6 +222,7 @@ impl FuseSession {
         ReaddirOperation::parse_entries(payload_len, &mut data_buf.reader().unwrap())
     }
 
+    /// Sends a `FUSE_READLINK` request and waits for the reply.
     pub fn readlink(&self, nodeid: FuseNodeId) -> Result<String, FuseError> {
         let data_buf = self.alloc_read_buf(MAX_READLINK_LEN)?;
         let mut operation = ReadlinkOperation;
@@ -202,6 +240,7 @@ impl FuseSession {
         ReadlinkOperation::parse_reply(payload_len, &mut data_buf.reader().unwrap())
     }
 
+    /// Sends a `FUSE_WRITE` request and waits for the reply.
     pub fn write(
         &self,
         nodeid: FuseNodeId,
@@ -219,6 +258,11 @@ impl FuseSession {
         Ok(write_reply.size())
     }
 
+    /// Submits a `FUSE_WRITE` request without waiting for completion.
+    ///
+    /// Returns a waiter that the caller can await to obtain the reply.
+    /// If `complete_fn` is provided, it is invoked after the
+    /// server replies in a non-sleepable completion context.
     pub fn write_async(
         &self,
         nodeid: FuseNodeId,
@@ -235,6 +279,11 @@ impl FuseSession {
         )
     }
 
+    /// Sends a `FUSE_FORGET` request on the high-priority queue.
+    ///
+    /// `FUSE_FORGET` is a no-reply request. The server must not send a
+    /// response, so this method only submits the request and never waits for
+    /// completion.
     pub fn forget(&self, nodeid: FuseNodeId, nlookup: u64) -> Result<(), FuseError> {
         if nodeid == FUSE_ROOT_ID || nlookup == 0 {
             return Ok(());
@@ -250,6 +299,10 @@ impl FuseSession {
         Ok(())
     }
 
+    /// Releases the file or directory handle `fh` on `nodeid`.
+    ///
+    /// Returns request submission errors and server-reported release errors.
+    /// If the filesystem has been unmounted, the release operation is skipped.
     pub fn release(
         &self,
         nodeid: FuseNodeId,
@@ -260,6 +313,7 @@ impl FuseSession {
         self.do_fuse_op(nodeid, ReleaseOperation::new(fh, flags, release_options))
     }
 
+    /// Requests that the FUSE server synchronize an open file.
     pub fn fsync(
         &self,
         nodeid: FuseNodeId,
@@ -269,6 +323,7 @@ impl FuseSession {
         self.do_fuse_op(nodeid, FsyncOperation::new(fh, fsync_flags))
     }
 
+    /// Requests that the FUSE server synchronize an open directory.
     pub fn fsyncdir(
         &self,
         nodeid: FuseNodeId,
@@ -279,6 +334,16 @@ impl FuseSession {
     }
 }
 
+/// Monotonically increasing token for FUSE client attribute-cache updates.
+///
+/// This is client-side session state used to reject stale attribute replies.
+/// It is not part of the virtio-fs device protocol or the FUSE wire format.
+///
+/// Each FUSE request that may return attributes snapshots the current session
+/// version before the request is sent. When the reply arrives, the snapshot is
+/// compared against the inode's committed version: if the inode version is
+/// strictly greater, a newer update has already committed and the stale reply
+/// is discarded. Local metadata changes also bump the version.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct AttrVersion(u64);

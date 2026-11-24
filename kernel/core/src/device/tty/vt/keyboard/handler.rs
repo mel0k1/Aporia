@@ -49,8 +49,12 @@ impl InputHandlerClass for VtKeyboardHandlerClass {
     }
 }
 
+/// The state of modifier keys (Shift, Ctrl, Alt).
+///
+/// It is shared across all virtual terminals.
 static MODIFIER_KEYS_STATE: ModifierKeysState = ModifierKeysState::new();
 
+/// A virtual terminal keyboard handler that handles input from a specific device.
 #[derive(Debug)]
 struct VtKeyboardHandler;
 
@@ -141,6 +145,9 @@ impl VtKeyboardHandler {
         }
     }
 
+    /// Handles key events in Medium Raw mode.
+    ///
+    /// Reference: <https://elixir.bootlin.com/linux/v6.13/source/drivers/tty/vt/keyboard.c#L1436-L1454>
     fn handle_medium_mode(&self, keycode: KeyCode, key_status: KeyStatus, vt: &Tty<VtDriver>) {
         const UP_FLAG: u8 = 0x80;
 
@@ -375,6 +382,9 @@ impl VtKeyboardHandler {
         }
     }
 
+    /// Adds the character to the input buffer of the virtual terminal.
+    ///
+    /// Reference: <https://elixir.bootlin.com/linux/v6.13/source/drivers/tty/vt/keyboard.c#L675>.
     fn push_input(&self, ch: char, vt: &Tty<VtDriver>, vt_keyboard: &VtKeyboard) {
         let keyboard_mode = vt_keyboard.mode();
 

@@ -1,3 +1,9 @@
+//! `FUSE_CREATE` creates and opens a regular file in one operation.
+//!
+//! The request body contains [`CreateReq`] followed by the null-terminated child
+//! name under the parent directory node. The reply body contains an [`EntryReply`]
+//! for the created inode followed by an [`OpenReply`] for the open file handle.
+
 use ostd::mm::{Infallible, VmReader, VmWriter};
 
 use super::util;
@@ -9,9 +15,13 @@ use crate::{
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub struct CreateReq {
+    /// Open flags for the newly created file.
     flags: u32,
+    /// File type and permission bits for the new inode.
     mode: u32,
+    /// Process umask of the requesting client, applied by the server when creating the inode.
     umask: u32,
+    /// FUSE-specific open flags.
     open_flags: FuseOpenFlags,
 }
 
@@ -26,6 +36,7 @@ impl CreateReq {
     }
 }
 
+/// The reply contains both the created inode's entry and the open file handle.
 pub struct CreateOperation<'a> {
     create_req: CreateReq,
     name: &'a str,

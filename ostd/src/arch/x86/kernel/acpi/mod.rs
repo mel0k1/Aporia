@@ -86,21 +86,35 @@ pub(crate) fn get_acpi_tables() -> Option<&'static AcpiTables<AcpiMemoryHandler>
     acpi_tables.0.as_ref()
 }
 
+/// The platform information provided by the ACPI tables.
+///
+/// Currently, this structure contains only a limited set of fields, far fewer than those in all
+/// ACPI tables. However, the goal is to expand it properly to keep the simplicity of the OSTD code
+/// while enabling OSTD users to safely retrieve information from the ACPI tables.
 #[derive(Debug)]
 pub struct AcpiInfo {
+    /// The RTC CMOS RAM index to the century of data value; the "CENTURY" field in the FADT.
     pub century_register: Option<NonZeroU8>,
+    /// IA-PC Boot Architecture Flags; the "IAPC_BOOT_ARCH" field in the FADT.
     pub boot_flags: Option<IaPcBootArchFlags>,
+    /// An I/O port to reset the machine by writing the specified value.
     pub reset_port_and_val: Option<(u16, u8)>,
+    /// A memory region that is stolen for PCI configuration space.
     pub pci_ecam_region: Option<PciEcamRegion>,
 }
 
+/// A memory region that is stolen for PCI configuration space.
 #[derive(Debug)]
 pub struct PciEcamRegion {
+    /// The base address of the memory region.
     pub base_address: u64,
+    /// The start of the bus number.
     pub bus_start: u8,
+    /// The end of the bus number.
     pub bus_end: u8,
 }
 
+/// The [`AcpiInfo`] singleton.
 pub static ACPI_INFO: Once<AcpiInfo> = Once::new();
 
 pub(in crate::arch) fn init() {

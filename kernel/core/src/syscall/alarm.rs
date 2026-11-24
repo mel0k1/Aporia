@@ -14,6 +14,7 @@ pub(super) fn sys_alarm(seconds: u32, ctx: &Context) -> Result<SyscallReturn> {
 
     let remaining = timer_guard.remain();
     let mut remaining_secs = remaining.as_secs();
+
     if (remaining_secs == 0 && remaining.subsec_nanos() > 0)
         || remaining.subsec_nanos() as i64 >= NSEC_PER_SEC / 2
     {

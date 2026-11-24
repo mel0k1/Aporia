@@ -1,3 +1,5 @@
+//! Invalidation-related registers
+
 use core::ptr::NonNull;
 
 use volatile::{
@@ -26,6 +28,12 @@ pub(super) struct InvalidationRegisters {
 }
 
 impl InvalidationRegisters {
+    /// Creates an instance from the IOMMU base address.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the base address is a valid IOMMU base address and that it has
+    /// exclusive ownership of the IOMMU invalidation registers.
     pub(super) unsafe fn new(base: NonNull<u8>) -> Self {
         let offset = {
             let extended_capability =

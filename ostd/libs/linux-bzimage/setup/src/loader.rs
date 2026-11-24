@@ -1,11 +1,14 @@
 use xmas_elf::program::{ProgramHeader, SegmentData};
 
+/// Load the kernel ELF payload to memory.
 pub(crate) fn load_elf(file: &[u8]) {
     let elf = xmas_elf::ElfFile::new(file).unwrap();
 
     for ph in elf.program_iter() {
         let ProgramHeader::Ph64(program) = ph else {
-            panic!("[setup] Unexpected program header type! Aporia should be 64-bit ELF binary.");
+            panic!(
+                "[setup] Unexpected program header type! Asterinas should be 64-bit ELF binary."
+            );
         };
 
         if program.get_type().unwrap() == xmas_elf::program::Type::Load {

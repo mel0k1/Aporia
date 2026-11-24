@@ -3,6 +3,10 @@ use alloc::sync::Arc;
 use aster_systree::{Error, Result, SysAttrSetBuilder, SysPerms, SysStr};
 use ostd::mm::{VmReader, VmWriter};
 
+/// A sub-controller responsible for memory resource management in the cgroup subsystem.
+///
+/// Note that even if the controller is inactive, it still provides some interfaces
+/// like "memory.pressure" for usage.
 pub(crate) struct MemoryController {
     _private: (),
 }

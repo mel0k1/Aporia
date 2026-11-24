@@ -15,9 +15,13 @@ use crate::{
     thread::Thread,
 };
 
+/// A single entry in the `mountstats` file.
 struct MountStatsEntry<'a> {
+    /// Filesystem-specific information or `"none"`.
     source: &'a str,
+    /// Mount point relative to the process's root directory.
     mount_point: &'a str,
+    /// The type of the filesystem.
     fs_type: &'a str,
 }
 
@@ -31,6 +35,7 @@ impl core::fmt::Display for MountStatsEntry<'_> {
     }
 }
 
+/// Represents the inode at `/proc/[pid]/task/[tid]/mountstats` (and also `/proc/[pid]/mountstats`).
 pub(super) struct MountStatsFileOps(TidDirOps);
 
 impl MountStatsFileOps {
@@ -38,6 +43,10 @@ impl MountStatsFileOps {
         ProcFile::new(Self(dir.clone()), parent, mkmod!(a+r))
     }
 
+    /// Reads mount statistics for `/proc/[pid]/mountstats`.
+    ///
+    /// Linux always exposes a per-mount summary line and only appends extra
+    /// statistics for filesystems that maintain them, such as NFS.
     fn read_mount_stats(
         &self,
         path_resolver: &PathResolver,

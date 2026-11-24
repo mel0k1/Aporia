@@ -25,6 +25,7 @@ use crate::{
     vm::vmar::VmarHandle,
 };
 
+/// The builder to build a POSIX thread
 pub(crate) struct PosixThreadBuilder {
     tid: Tid,
     thread_name: ThreadName,

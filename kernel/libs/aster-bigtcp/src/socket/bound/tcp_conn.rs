@@ -35,6 +35,7 @@ use crate::{
 
 pub type TcpConnection<E> = Socket<TcpConnectionInner<E>, E>;
 
+/// States needed by [`TcpConnectionBg`].
 pub struct TcpConnectionInner<E: Ext> {
     socket: SpinLock<RawTcpSocketExt<E>, BottomHalfDisabled>,
     poll_key: PollKey,
@@ -45,7 +46,9 @@ pub struct RawTcpSocketExt<E: Ext> {
     socket: Box<RawTcpSocket>,
     pub(super) listener: Option<Arc<TcpListenerBg<E>>>,
     has_connected: bool,
+    /// Indicates if the receiving side of this socket is shut down by the user.
     is_recv_shut: bool,
+    /// Indicates if the socket is closed by a RST packet.
     is_rst_closed: bool,
 }
 
@@ -64,33 +67,53 @@ impl<E: Ext> DerefMut for RawTcpSocketExt<E> {
 }
 
 impl<E: Ext> RawTcpSocketExt<E> {
+    /// Checks if the socket may receive any new data.
+    ///
+    /// This is similar to [`RawTcpSocket::may_recv`]. However, this method checks if there can be
+    /// _new_ data. In other words, if there is already buffered data in the socket,
+    /// [`RawTcpSocket::may_recv`] will always return true since it is possible to receive the
+    /// buffered data, but this method may return false if the peer has closed its sending half (so
+    /// no new data can come in).
     pub fn may_recv_new(&self) -> bool {
-        match self.state() {
-            State::Established => true,
-            State::FinWait1 | State::FinWait2 => true,
-            _ => false,
-        }
+        matches!(
+            self.state(),
+            State::Established | State::FinWait1 | State::FinWait2
+        )
     }
 
+    /// Checks if the socket is closing.
+    ///
+    /// More specifically, we say a socket is closing if and only if it has sent its FIN packet but
+    /// is still waiting for an ACK packet from the peer to acknowledge the FIN it sent.
     pub fn is_closing(&self) -> bool {
         let state = self.state();
         matches!(state, State::FinWait1 | State::Closing | State::LastAck)
     }
 
+    /// Returns whether the receiving half of the socket is shut down.
+    ///
+    /// This method will return true if and only if [`TcpConnection::shut_recv`] or
+    /// [`TcpConnection::close`] is called.
     pub fn is_recv_shut(&self) -> bool {
         self.is_recv_shut
     }
 
+    /// Checks if the socket is closed by a RST packet.
+    ///
+    /// Note that the flag is automatically cleared when it is read by
+    /// [`TcpConnection::clear_rst_closed`], [`TcpConnection::send`], or [`TcpConnection::recv`].
     pub fn is_rst_closed(&self) -> bool {
         self.is_rst_closed
     }
 }
 
 define_boolean_value!(
+    /// Whether the TCP connection became dead.
     pub(crate) TcpConnBecameDead
 );
 
 impl<E: Ext> RawTcpSocketExt<E> {
+    /// Checks the TCP state for additional events and whether the connection is dead.
     fn check_state(
         &mut self,
         this: &Arc<TcpConnectionBg<E>>,
@@ -149,6 +172,15 @@ impl<E: Ext> RawTcpSocketExt<E> {
         events
     }
 
+    /// Checks whether the TCP connection becomes dead.
+    ///
+    /// A TCP connection is considered dead when and only when the TCP socket is in the closed
+    /// state, meaning it's no longer accepting packets from the network. This is different from
+    /// the socket file being closed, which only initiates the socket close process.
+    ///
+    /// This method must be called after handling network events. However, it is not necessary to
+    /// call this method after handling non-closing user events, because the socket can never be
+    /// dead if it is not closed.
     fn check_dead(&self, this: &Arc<TcpConnectionBg<E>>) -> TcpConnBecameDead {
         if self.state() == State::Closed && self.remote_endpoint().is_none() {
             return TcpConnBecameDead::TRUE;
@@ -157,6 +189,7 @@ impl<E: Ext> RawTcpSocketExt<E> {
         if self.state() == State::Listen {
             if let Some(ref listener) = self.listener {
                 let mut backlog = listener.inner.backlog.lock();
+
                 let _ = backlog.connecting.remove(&this.inner.connection_key);
             }
 
@@ -236,6 +269,9 @@ pub enum ConnectState {
 }
 
 impl<E: Ext> TcpConnection<E> {
+    /// Connects to a remote endpoint.
+    ///
+    /// Polling the iface is _always_ required after this method succeeds.
     pub fn new_connect(
         mut bound: BoundTcpPort<E>,
         remote_endpoint: IpEndpoint,
@@ -282,6 +318,7 @@ impl<E: Ext> TcpConnection<E> {
         Ok(connection)
     }
 
+    /// Returns the state of the connecting procedure.
     pub fn connect_state(&self) -> ConnectState {
         let socket = self.0.inner.lock();
 
@@ -296,11 +333,19 @@ impl<E: Ext> TcpConnection<E> {
         }
     }
 
+    /// Converts back to the [`BoundTcpPort`].
+    ///
+    /// This method will succeed if the connection is fully closed and no network events can reach
+    /// this connection. We guarantee that this method will always succeed if
+    /// [`Self::connect_state`] returns [`ConnectState::Refused`].
     pub fn into_bound_port(mut self) -> Option<BoundTcpPort<E>> {
         let this: TcpConnectionBg<E> = Arc::into_inner(self.0.take())?;
         Some(this.bound)
     }
 
+    /// Sends some data.
+    ///
+    /// Polling the iface _may_ be required after this method succeeds.
     pub fn send<F, CopyErr>(
         &self,
         mut f: F,
@@ -367,6 +412,9 @@ impl<E: Ext> TcpConnection<E> {
         Ok((result, need_poll))
     }
 
+    /// Receives some data.
+    ///
+    /// Polling the iface _may_ be required after this method succeeds.
     pub fn recv<CopyFn, CopyErr>(
         &self,
         behavior: ReceiveBehavior,
@@ -450,6 +498,10 @@ impl<E: Ext> TcpConnection<E> {
         Ok((result, need_poll))
     }
 
+    /// Checks if the socket is closed by a RST packet and clears the flag.
+    ///
+    /// This flag is set when the socket is closed by a RST packet, and cleared when the connection
+    /// reset error is reported via one of the [`Self::send`], [`Self::recv`], or this method.
     pub fn clear_rst_closed(&self) -> bool {
         let mut socket = self.0.inner.lock();
 
@@ -458,6 +510,11 @@ impl<E: Ext> TcpConnection<E> {
         is_rst
     }
 
+    /// Shuts down the sending half of the connection.
+    ///
+    /// This method will return `false` if the socket is in the CLOSED or TIME_WAIT state.
+    ///
+    /// Polling the iface is _always_ required after this method succeeds.
     pub fn shut_send(&self) -> bool {
         let mut iface = self.iface().common().interface();
         let mut socket = self.0.inner.lock();
@@ -474,6 +531,11 @@ impl<E: Ext> TcpConnection<E> {
         true
     }
 
+    /// Shuts down the receiving half of the connection.
+    ///
+    /// This method will return `false` if the socket is in the CLOSED or TIME_WAIT state.
+    ///
+    /// Polling the iface is _not_ required after this method succeeds.
     pub fn shut_recv(&self) -> bool {
         let mut socket = self.0.inner.lock();
 
@@ -486,6 +548,12 @@ impl<E: Ext> TcpConnection<E> {
         true
     }
 
+    /// Closes the connection.
+    ///
+    /// Polling the iface is _always_ required after this method succeeds.
+    ///
+    /// Note that either this method or [`Self::reset`] must be called before dropping the TCP
+    /// connection to avoid resource leakage.
     pub fn close(&self) {
         let mut iface = self.iface().common().interface();
         let mut socket = self.0.inner.lock();
@@ -502,6 +570,12 @@ impl<E: Ext> TcpConnection<E> {
         iface.update_next_poll_at_ms(&self.0, poll_at);
     }
 
+    /// Resets the connection.
+    ///
+    /// Polling the iface is _always_ required after this method succeeds.
+    ///
+    /// Note that either this method or [`Self::close`] must be called before dropping the TCP
+    /// connection to avoid resource leakage.
     pub fn reset(&self) {
         let mut iface = self.iface().common().interface();
         let mut socket = self.0.inner.lock();
@@ -512,6 +586,7 @@ impl<E: Ext> TcpConnection<E> {
         iface.update_next_poll_at_ms(&self.0, poll_at);
     }
 
+    /// Calls `f` with an immutable reference to the associated [`RawTcpSocket`].
     pub fn raw_with<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&RawTcpSocketExt<E>) -> R,
@@ -556,6 +631,7 @@ pub(crate) enum TcpProcessResult {
 }
 
 impl<E: Ext> TcpConnectionBg<E> {
+    /// Tries to process an incoming packet and returns whether the packet is processed.
     pub(crate) fn process(
         self: &Arc<Self>,
         iface: &mut PollableIfaceMut<E>,
@@ -587,6 +663,7 @@ impl<E: Ext> TcpConnectionBg<E> {
         let old_state = socket.state();
         let old_recv_queue = socket.recv_queue();
         let is_rst = tcp_repr.control == TcpControl::Rst;
+
         let mut events = SocketEvents::CAN_RECV | SocketEvents::CAN_SEND;
 
         let result = match socket.process(iface.context_mut(), ip_repr, tcp_repr, payload) {
@@ -606,6 +683,7 @@ impl<E: Ext> TcpConnectionBg<E> {
         (result, became_dead)
     }
 
+    /// Tries to generate an outgoing packet and dispatches the generated packet.
     pub(crate) fn dispatch<D>(
         self: &Arc<Self>,
         iface: &mut PollableIfaceMut<E>,

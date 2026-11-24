@@ -13,6 +13,7 @@ const LINUX_REBOOT_MAGIC2A: u32 = 0x05121996;
 const LINUX_REBOOT_MAGIC2B: u32 = 0x16041998;
 const LINUX_REBOOT_MAGIC2C: u32 = 0x20112000;
 
+/// Linux reboot commands.
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, TryFromInt)]
 enum RebootCmd {

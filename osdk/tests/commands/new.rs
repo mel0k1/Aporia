@@ -57,12 +57,14 @@ fn create_two_crates_in_workspace() {
     }
 
     create_workspace(WORKSPACE_NAME, &[LIB_NAME]);
+
     let mut command = cargo_osdk(["new", LIB_NAME]);
     command.current_dir(WORKSPACE_NAME);
     let output = command.output().unwrap();
     assert_success(&output);
 
     add_member_to_workspace(WORKSPACE_NAME, KERNEL_NAME);
+
     let mut command = cargo_osdk(["new", "--kernel", KERNEL_NAME]);
     command.current_dir(WORKSPACE_NAME);
     let output = command.output().unwrap();

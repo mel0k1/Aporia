@@ -33,6 +33,7 @@ pub(super) fn sys_ioctl(
         0
     } else {
         let file_owned = file.into_owned();
+
         drop(file_table);
         file_owned.ioctl(raw_ioctl)?
     };
@@ -64,6 +65,7 @@ fn handle_fd_ioctl(
         SetNotCloseOnExec => {
             Some(file_table.read_with(|inner| {
                 let entry = inner.get_entry(raw_fd.try_into()?)?;
+
                 entry.set_flags(entry.flags() - FdFlags::CLOEXEC);
                 Ok(())
             }))
@@ -71,6 +73,7 @@ fn handle_fd_ioctl(
         SetCloseOnExec => {
             Some(file_table.read_with(|inner| {
                 let entry = inner.get_entry(raw_fd.try_into()?)?;
+
                 entry.set_flags(entry.flags() | FdFlags::CLOEXEC);
                 Ok(())
             }))

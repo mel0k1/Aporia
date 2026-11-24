@@ -14,16 +14,32 @@ use crate::{
 
 pub struct Socket<T: Inner<E>, E: Ext>(pub(super) Takeable<Arc<SocketBg<T, E>>>);
 
+/// [`TcpConnectionInner`], [`TcpListenerInner`], or [`UdpSocketInner`].
+///
+/// [`TcpConnectionInner`]: super::tcp_conn::TcpConnectionInner
+/// [`TcpListenerInner`]: super::tcp_listen::TcpListenerInner
+/// [`UdpSocketInner`]: super::udp::UdpSocketInner
 pub trait Inner<E: Ext> {
     type BoundPort: Deref<Target = BoundPort<E>>;
     type Observer: SocketEventObserver;
 
+    /// Called by [`Socket::drop`].
     fn on_drop(this: &Arc<SocketBg<Self, E>>)
     where
         E: Ext,
         Self: Sized;
 }
 
+/// Common states shared by [`TcpConnectionBg`], [`TcpListenerBg`], and [`UdpSocketBg`].
+///
+/// In the type name, `Bg` means "background". Its meaning is described below:
+/// - A foreground socket (e.g., [`TcpConnection`]) handles system calls from the user program.
+/// - A background socket (e.g., [`TcpConnectionBg`]) handles packets from the network.
+///
+/// [`TcpConnectionBg`]: super::tcp_conn::TcpConnectionBg
+/// [`TcpListenerBg`]: super::tcp_listen::TcpListenerBg
+/// [`UdpSocketBg`]: super::udp::UdpSocketBg
+/// [`TcpConnection`]: super::tcp_conn::TcpConnection
 pub struct SocketBg<T: Inner<E>, E: Ext> {
     pub(super) bound: T::BoundPort,
     pub(super) inner: T,
@@ -64,6 +80,13 @@ impl<T: Inner<E>, E: Ext> Socket<T, E> {
 }
 
 impl<T: Inner<E>, E: Ext> Socket<T, E> {
+    /// Initializes the observer whose `on_events` will be called when certain iface events happen.
+    ///
+    /// The caller needs to be responsible for race conditions if network events can occur
+    /// simultaneously.
+    ///
+    /// Calling this method on a socket whose observer has already been initialized will have no
+    /// effect.
     pub fn init_observer(&self, new_observer: T::Observer) {
         self.0.observer.call_once(|| new_observer);
     }
@@ -82,6 +105,7 @@ impl<T: Inner<E>, E: Ext> Socket<T, E> {
 }
 
 define_boolean_value!(
+    /// Whether the iface needs to be polled
     pub NeedIfacePoll
 );
 
@@ -106,6 +130,9 @@ impl<T: Inner<E>, E: Ext> SocketBg<T, E> {
 }
 
 impl<T: Inner<E>, E: Ext> SocketBg<T, E> {
+    /// Returns whether an incoming packet _may_ be processed by the socket.
+    ///
+    /// The check is intended to be lock-free and fast, but may have false positives.
     pub(crate) fn can_process(&self, dst_port: u16) -> bool {
         self.bound.port() == dst_port
     }

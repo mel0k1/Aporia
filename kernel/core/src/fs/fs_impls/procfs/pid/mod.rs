@@ -19,11 +19,13 @@ use crate::{
 mod task;
 pub(super) use task::TidDirOps;
 
+/// Represents the inode at `/proc/[pid]`.
 pub(super) struct PidDirOps(TidDirOps);
 
 impl PidDirOps {
     pub(super) fn new_inode(pid_entry: Arc<PidEntry>, parent: Weak<dyn Inode>) -> Arc<dyn Inode> {
         let this = Self(TidDirOps::new(pid_entry));
+
         ProcDir::new(this, parent, mkmod!(a+rx))
     }
 

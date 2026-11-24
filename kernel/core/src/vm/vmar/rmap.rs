@@ -9,14 +9,21 @@ use ostd::{
 
 use crate::vm::vmar::{RssType, Vmar, vmar_impls::RssDelta};
 
+/// Reverse mappings from a [`Vmo`] to [`Vmar`]s.
+///
+/// [`Vmo`]: crate::vm::page_cache::Vmo
 pub(crate) struct Rmap {
     entries: BTreeMap<KeyableWeak<Vmar>, Vec<RmapEntry>>,
 }
 
+/// A reverse mapping entry.
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct RmapEntry {
+    /// The virtual address.
     pub vaddr: Vaddr,
+    /// The VMO offset.
     pub offset: usize,
+    /// The mapping size.
     pub size: usize,
 }
 
@@ -27,6 +34,7 @@ impl Rmap {
         }
     }
 
+    /// Inserts a new reverse mapping entry.
     pub(crate) fn insert(&mut self, vmar: Weak<Vmar>, entry: RmapEntry) {
         self.entries
             .entry(KeyableWeak::from(vmar))
@@ -34,6 +42,11 @@ impl Rmap {
             .push(entry)
     }
 
+    /// Removes a reverse mapping entry.
+    ///
+    /// # Panics
+    ///
+    /// This method will panic if the reverse mapping entry does not exist.
     pub(crate) fn remove(&mut self, vmar: Weak<Vmar>, vaddr: Vaddr) {
         use alloc::collections::btree_map::Entry;
 
@@ -54,6 +67,11 @@ impl Rmap {
         }
     }
 
+    /// Iterates over all reverse mappings and unmaps the given offset range.
+    ///
+    /// # Panics
+    ///
+    /// This method may panic if the offset range is not aligned to the page boundary.
     pub(crate) fn unmap(&mut self, offset: Range<usize>) {
         debug_assert!(offset.start.is_multiple_of(PAGE_SIZE));
         debug_assert!(offset.end.is_multiple_of(PAGE_SIZE));
@@ -92,6 +110,12 @@ impl Rmap {
         });
     }
 
+    /// Iterates over all reverse mappings and freezes (i.e., makes read-only) the given offset
+    /// range.
+    ///
+    /// # Panics
+    ///
+    /// This method may panic if the offset range is not aligned to the page boundary.
     pub(crate) fn freeze(&mut self, offset: Range<usize>) {
         debug_assert!(offset.start.is_multiple_of(PAGE_SIZE));
         debug_assert!(offset.end.is_multiple_of(PAGE_SIZE));

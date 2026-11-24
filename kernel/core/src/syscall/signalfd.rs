@@ -1,3 +1,9 @@
+//! signalfd implementation for Linux compatibility.
+//!
+//! The signalfd mechanism allows receiving signals via file descriptor,
+//! enabling better integration with event loops.
+//! See <https://man7.org/linux/man-pages/man2/signalfd.2.html>.
+
 use core::{fmt::Display, sync::atomic::Ordering};
 
 use bitflags::bitflags;
@@ -27,6 +33,7 @@ use crate::{
     },
 };
 
+/// Creates a new signalfd or updates an existing one according to the given mask.
 pub(super) fn sys_signalfd(
     fd: RawFileDesc,
     mask_ptr: Vaddr,
@@ -36,6 +43,7 @@ pub(super) fn sys_signalfd(
     sys_signalfd4(fd, mask_ptr, sizemask, 0, ctx)
 }
 
+/// Creates a new signalfd or updates an existing one according to the given mask and flags.
 pub(super) fn sys_signalfd4(
     raw_fd: RawFileDesc,
     mask_ptr: Vaddr,
@@ -111,6 +119,7 @@ fn update_existing_signalfd(
 }
 
 bitflags! {
+    /// Signal file descriptor creation flags.
     #[derive(Clone, Copy, Debug)]
     struct SignalFileFlags: u32 {
         const O_CLOEXEC  = CreationFlags::O_CLOEXEC.bits();
@@ -118,12 +127,19 @@ bitflags! {
     }
 }
 
+/// Signal file implementation.
+///
+/// Represents a file that can be used to receive signals
+/// as readable events.
 struct SignalFile {
+    /// An atomic signal mask for filtering signals.
     signals_mask: AtomicSigMask,
+    /// The common state for this signalfd file.
     common: FileCommon,
 }
 
 impl SignalFile {
+    /// Creates a new signalfd instance.
     fn new(mask: AtomicSigMask, non_blocking: bool) -> Self {
         let pseudo_path = AnonInodeFs::new_path(|_| "anon_inode:[signalfd]".to_string());
         let status_flags = if non_blocking {
@@ -134,6 +150,7 @@ impl SignalFile {
 
         Self {
             signals_mask: mask,
+
             common: FileCommon::new(pseudo_path, AccessMode::O_RDWR, status_flags),
         }
     }
@@ -154,6 +171,7 @@ impl SignalFile {
         (self as &dyn FileLike).update_status_nonblock(non_blocking);
     }
 
+    /// Checks current readable I/O events.
     fn check_io_events(&self, posix_thread: &PosixThread) -> IoEvents {
         let mask = self.signal_mask();
         if posix_thread.pending_signals().intersects(mask) {
@@ -163,6 +181,7 @@ impl SignalFile {
         }
     }
 
+    /// Attempts non-blocking read operation.
     fn try_read(&self, writer: &mut VmWriter, thread: &PosixThread) -> Result<usize> {
         let mask = !self.signal_mask();
         let max_signals = writer.avail() / size_of::<SignalfdSiginfo>();

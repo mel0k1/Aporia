@@ -80,6 +80,10 @@ impl VsockSpace {
         Ok(Connection::new(inner))
     }
 
+    /// Removes a connection.
+    ///
+    /// This method should not be called with the socket state lock held. We need to lock the
+    /// sockets before locking the socket state.
     pub(super) fn remove_connection(&self, connection: &Arc<ConnectionInner>) {
         use alloc::collections::btree_map::Entry;
 
@@ -121,6 +125,10 @@ impl VsockSpace {
         Ok(Listener::new(inner))
     }
 
+    /// Removes a listener.
+    ///
+    /// This method should not be called with the socket state lock held. We need to lock the
+    /// sockets before locking the socket state.
     pub(super) fn remove_listener(&self, listener: &Arc<ListenerInner>) {
         use alloc::collections::btree_map::Entry;
 
@@ -316,6 +324,9 @@ impl VsockSpace {
             .notify(IoEvents::IN | IoEvents::OUT | IoEvents::RDHUP | IoEvents::HUP | IoEvents::ERR);
     }
 
+    /// Sends a control packet which does not carry payload.
+    ///
+    /// This method may be called while holding the socket state lock.
     #[must_use]
     pub(super) fn send_packet(&self, header: &VirtioVsockHdr) -> bool {
         let Ok(builder) = TxPacket::new_builder() else {

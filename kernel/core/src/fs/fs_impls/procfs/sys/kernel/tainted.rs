@@ -18,6 +18,7 @@ const TAINT_FLAGS_MASK: u64 = (1 << TAINT_FLAGS_COUNT) - 1;
 
 static TAINTED_MASK: AtomicU64 = AtomicU64::new(0);
 
+/// Represents the inode at `/proc/sys/kernel/tainted`.
 pub(super) struct TaintedFileOps;
 
 impl TaintedFileOps {

@@ -1,3 +1,5 @@
+//! Handle link-related requests.
+
 use aster_bigtcp::wire::EthernetAddress;
 
 use super::util::{self, ResponseMode};
@@ -13,6 +15,7 @@ use crate::{
     util::net::CSocketAddrFamily,
 };
 
+/// The unspecified link-layer address.
 const UNSPECIFIED_LINK_ADDR: EthernetAddress = EthernetAddress([0; 6]);
 
 pub(super) fn do_get_link(
@@ -96,6 +99,7 @@ fn validate_getlink_request(request_segment: &LinkSegment, strict_check: bool) -
     }
 
     let body = request_segment.body();
+
     if body._pad != 0 || body.type_ != 0 || body.flags != 0 || body.change != 0 {
         return Err(errno!(
             EINVAL,
@@ -111,6 +115,7 @@ fn validate_getlink_request(request_segment: &LinkSegment, strict_check: bool) -
                 "filtering by interface index is not supported for link dumps"
             ));
         }
+
         [
             LinkAttrClass::MASTER,
             LinkAttrClass::LINKINFO,

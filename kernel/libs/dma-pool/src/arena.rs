@@ -1,3 +1,5 @@
+//! Page-granular allocations from a pre-mapped DMA region.
+
 use alloc::sync::Arc;
 use core::ops::Range;
 
@@ -12,6 +14,10 @@ use ostd::{
     sync::{LocalIrqDisabled, SpinLock},
 };
 
+/// A page-granular pool backed by one pre-mapped DMA stream.
+///
+/// The pool owns the backing [`DmaStream`] and tracks which pages are assigned
+/// to live [`DmaArena`] values. Dropping an arena returns its pages to the pool.
 #[derive(Debug)]
 pub struct DmaArenaPool<D: DmaDirection> {
     storage: DmaStream<D>,
@@ -20,11 +26,14 @@ pub struct DmaArenaPool<D: DmaDirection> {
 
 #[derive(Debug)]
 struct Manager {
+    /// A set bit denotes a page owned by to a live [`DmaArena`].
     occupied: BitVec,
+    /// The lowest free page, or the pool capacity if the pool is full.
     min_free: usize,
 }
 
 impl<D: DmaDirection> DmaArenaPool<D> {
+    /// Creates a pool containing `capacity_pages` non-coherent DMA pages.
     pub fn new(capacity_pages: usize) -> Result<Arc<Self>> {
         if capacity_pages == 0 {
             return Err(ostd::Error::InvalidArgs);
@@ -39,6 +48,7 @@ impl<D: DmaDirection> DmaArenaPool<D> {
         }))
     }
 
+    /// Allocates `size_pages` contiguous pages from the pool's backing region.
     pub fn alloc(self: &Arc<Self>, size_pages: usize) -> Option<DmaArena<D>> {
         let mut manager = self.manager.lock();
         let capacity_pages = manager.occupied.len();
@@ -88,6 +98,11 @@ impl<D: DmaDirection> DmaArenaPool<D> {
     }
 }
 
+/// An owned contiguous allocation from a [`DmaArenaPool`].
+///
+/// An arena is a view of a page range in the pool's backing DMA region. It
+/// keeps the pool alive for as long as the allocation is in use and returns
+/// its pages to the pool when dropped.
 #[derive(Debug)]
 pub struct DmaArena<D: DmaDirection> {
     pool: Arc<DmaArenaPool<D>>,
@@ -108,12 +123,14 @@ impl<D: DmaDirection> DmaArena<D> {
         Ok(arena_start + byte_range.start..arena_start + byte_range.end)
     }
 
+    /// Synchronizes `byte_range` from the device into memory.
     pub fn sync_from_device(&self, byte_range: Range<usize>) -> Result<()> {
         self.pool
             .storage
             .sync_from_device(self.absolute_byte_range(byte_range)?)
     }
 
+    /// Synchronizes `byte_range` from memory to the device.
     pub fn sync_to_device(&self, byte_range: Range<usize>) -> Result<()> {
         self.pool
             .storage

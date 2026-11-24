@@ -9,7 +9,11 @@ use crate::{
     mm::fault::TrapFrameApi,
 };
 
+/// FPU status bits.
+/// Reference: <https://riscv.github.io/riscv-isa-manual/snapshot/privileged/#sstatus>.
 pub(in crate::arch) const SSTATUS_FS_MASK: usize = 0b11 << 13;
+/// Supervisor User Memory access bit.
+/// Reference: <https://riscv.github.io/riscv-isa-manual/snapshot/privileged/#sstatus>.
 pub(in crate::arch) const SSTATUS_SUM: usize = 0b1 << 18;
 
 global_asm!(
@@ -18,18 +22,46 @@ global_asm!(
     SSTATUS_SUM = const SSTATUS_SUM
 );
 
+/// Initialize interrupt handling for the current HART.
+///
+/// This function will:
+/// - Set `sscratch` to 0.
+/// - Set `stvec` to internal exception vector.
+///
+/// # Safety
+///
+/// On the current CPU, this function must be called
+/// - only once and
+/// - before any trap can occur.
 pub(super) unsafe fn init_on_cpu() {
     unsafe {
         asm!("csrw sscratch, zero");
+
         asm!("csrw stvec, {}", in(reg) trap_entry as *const () as usize);
     }
 }
 
+/// Trap frame of kernel interrupt
+///
+/// # Trap handler
+///
+/// You need to define a handler function like this:
+///
+/// ```no_run
+/// // SAFETY: The name does not collide with other symbols.
+/// #[unsafe(no_mangle)]
+/// pub extern "C" fn trap_handler(tf: &mut TrapFrame) {
+///     println!("TRAP! tf: {:#x?}", tf);
+/// }
+/// ```
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct TrapFrame {
+    /// General registers
     pub general: GeneralRegs,
+    /// Supervisor Status
     pub sstatus: usize,
+    /// Supervisor Exception Program Counter
     pub sepc: usize,
 }
 
@@ -43,11 +75,15 @@ impl TrapFrameApi for TrapFrame {
     }
 }
 
+/// Saved registers on a trap.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub(in crate::arch) struct RawUserContext {
+    /// General registers
     pub(in crate::arch) general: GeneralRegs,
+    /// Supervisor Status
     pub(in crate::arch) sstatus: usize,
+    /// Supervisor Exception Program Counter
     pub(in crate::arch) sepc: usize,
 }
 
@@ -72,6 +108,18 @@ impl Default for RawUserContext {
 }
 
 impl RawUserContext {
+    /// Goes to user space with the context, and comes back when a trap occurs.
+    ///
+    /// The IRQ guard ensures that local IRQs are disabled on entry.
+    /// They remain disabled throughout the _kernel-side_ execution of this method.
+    /// However, the _user-space_ execution part is still interruptible,
+    /// even while the IRQ guard is alive.
+    /// The underlying mechanism depends on the CPU architecture.
+    /// On RISC-V, `sret` restores the saved user Supervisor Interrupt Enable (SIE) bit,
+    /// which is always set.
+    ///
+    /// On return, the context will be reset to the status before the trap.
+    /// Trap reason and error code will be placed at `scause` and `stval`.
     pub(in crate::arch) fn run(&mut self, _guard: &DisabledLocalIrqGuard) {
         unsafe { run_user(self) };
     }

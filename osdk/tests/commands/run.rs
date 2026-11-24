@@ -1,3 +1,5 @@
+//! Test the `run` command
+
 use crate::util::is_tdx_enabled;
 
 mod basic {
@@ -29,12 +31,11 @@ mod basic {
 const WORKSPACE: &str = "/tmp/kernel_test_workspace/run_command";
 
 mod workspace {
+    use crate::util::*;
     use std::{
         fs::{create_dir_all, remove_dir_all},
         path::Path,
     };
-
-    use crate::util::*;
 
     fn create_kernel_in_workspace(workspace: &str, kernel_name: &str) {
         let os_dir = Path::new(workspace).join(kernel_name);
@@ -84,10 +85,9 @@ mod workspace {
 }
 
 mod coverage_feature {
-    use std::path::Path;
-
     use super::*;
     use crate::util::{cargo_osdk, depends_on_coverage};
+    use std::path::Path;
 
     #[test]
     fn basic_coverage() {
@@ -116,12 +116,10 @@ mod coverage_feature {
 }
 
 mod qemu_gdb_feature {
-    use std::{path::Path, thread::sleep};
-
-    use assert_cmd::Command;
-
     use super::*;
     use crate::util::cargo_osdk;
+    use assert_cmd::Command;
+    use std::{path::Path, thread::sleep};
 
     #[test]
     fn basic_debug() {

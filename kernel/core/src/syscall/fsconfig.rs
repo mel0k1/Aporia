@@ -79,16 +79,26 @@ fn ensure_valid_args(valid: bool) -> Result<()> {
     Ok(())
 }
 
+/// The configuration operations supported by `fsconfig`.
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, TryFromInt)]
 enum FsConfigOps {
+    /// Sets a boolean parameter.
     SetFlag = 0,
+    /// Sets a string parameter.
     SetString = 1,
+    /// Sets a binary blob parameter.
     SetBinary = 2,
+    /// Sets a path parameter.
     SetPath = 3,
+    /// Sets a path parameter that can be empty.
     SetPathEmpty = 4,
+    /// Sets a parameter using a file descriptor.
     SetFd = 5,
+    /// Creates the filesystem superblock.
     Create = 6,
+    /// Reconfigures an existing filesystem superblock.
     Reconfigure = 7,
+    /// Creates a new filesystem superblock, failing if reusing an existing one.
     CreateExcl = 8,
 }

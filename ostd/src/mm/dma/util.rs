@@ -19,6 +19,17 @@ use crate::{
     util::range_counter::RangeCounter,
 };
 
+/// Metadata for frames behind a [`KVirtArea`] of different page table flags.
+///
+/// DMA frames that are shared (in a CVM guest) or that are uncachable (for
+/// non-DMA-coherent devices) cannot be accessed via linear mappings. Doing so
+/// can cause unexpected side effects (e.g., exceptions in a CVM guest or
+/// undefined cache behaviors). Therefore, we don't mark these frames as
+/// untyped memory, meaning users outside of OSTD can no longer safely create
+/// [`VmReader`]s or [`VmWriter`]s on [`Segment<DmaBufferMeta>`].
+///
+/// [`VmReader`]: crate::mm::VmReader
+/// [`VmWriter`]: crate::mm::VmWriter
 struct DmaBufferMeta;
 impl_frame_meta_for!(DmaBufferMeta);
 
@@ -33,14 +44,33 @@ mod allocator {
 
     static DADDR_ALLOCATOR: RangeAllocator = RangeAllocator::new({
         let range_inclusive = vaddr_range::<iommu::IommuPtConfig>();
+
         *range_inclusive.start()..*range_inclusive.end() & !(PAGE_SIZE - 1)
     });
 
+    /// Returns a reference to the device address allocator.
+    ///
+    /// [`DisabledLocalIrqGuard`] is required because DMA objects may be
+    /// dropped in IRQ handlers. So the guard is necessary to prevent
+    /// deadlocks. For more details, see [`crate::mm::dma`].
+    ///
+    /// Meanwhile, note that deadlocks may occur if the page table nodes locked
+    /// in [`iommu`] are also locked in other files where only preemption is
+    /// disabled. This requires extra care.
     pub(super) fn daddr_allocator(_guard: &DisabledLocalIrqGuard) -> &RangeAllocator {
         &DADDR_ALLOCATOR
     }
 }
 
+/// This is either to
+///  - check if the same physical page is DMA mapped twice, or to
+///  - track if we need to protect/unprotect pages in the CVM.
+///
+/// The lock uses [`LocalIrqDisabled`] (rather than [`PreemptDisabled`])
+/// because DMA objects may be dropped from IRQ handlers. For details, see
+/// [module-level docs](crate::mm::dma).
+///
+/// [`PreemptDisabled`]: crate::sync::PreemptDisabled
 #[cfg(any(debug_assertions, all(target_arch = "x86_64", feature = "cvm_guest")))]
 static PADDR_REF_CNTS: SpinLock<RangeCounter, LocalIrqDisabled> =
     SpinLock::new(RangeCounter::new());
@@ -112,6 +142,16 @@ pub(super) fn alloc_kva(
     Ok((kva, paddr))
 }
 
+/// Prepares a physical address range for DMA mapping.
+///
+/// If DMA remapping is enabled, the function allocates device addresses, maps
+/// the given physical address range to them, and returns the start device
+/// address.
+///
+/// # Safety
+///
+/// The provided physical address range must be untyped DMA memory that
+/// outlives the following [`unprepare_dma()`] call.
 pub(super) unsafe fn prepare_dma(pa_range: &Range<Paddr>) -> Option<Daddr> {
     #[cfg(any(debug_assertions, all(target_arch = "x86_64", feature = "cvm_guest")))]
     unsafe {
@@ -121,6 +161,12 @@ pub(super) unsafe fn prepare_dma(pa_range: &Range<Paddr>) -> Option<Daddr> {
     unsafe { dma_remap(pa_range) }
 }
 
+/// Unprepares a physical address range from DMA mapping.
+///
+/// # Safety
+///
+/// The provided physical address range must be untyped DMA memory that was
+/// previously prepared by an [`alloc_unprotect_physical_range()`] call.
 pub(super) unsafe fn unprepare_dma(pa_range: &Range<Paddr>, daddr: Option<Daddr>) {
     unmap_dma_remap(daddr.map(|daddr| daddr..daddr + pa_range.len()));
 
@@ -130,6 +176,12 @@ pub(super) unsafe fn unprepare_dma(pa_range: &Range<Paddr>, daddr: Option<Daddr>
     }
 }
 
+/// Marks a physical address range as used (also unprotected if in TDX guest).
+///
+/// # Safety
+///
+/// The provided physical address range must be untyped DMA memory that
+/// outlives the following [`dealloc_protect_physical_range()`] call.
 #[cfg(any(debug_assertions, all(target_arch = "x86_64", feature = "cvm_guest")))]
 unsafe fn alloc_unprotect_physical_range(pa_range: &Range<Paddr>) {
     use alloc::{vec, vec::Vec};
@@ -144,6 +196,10 @@ unsafe fn alloc_unprotect_physical_range(pa_range: &Range<Paddr>) {
     crate::arch::if_tdx_enabled!({
         for partial in ranges {
             debug_assert_eq!(partial, pfn_range.clone());
+
+
+
+
             unsafe {
                 let gpa = partial.start * PAGE_SIZE;
                 let size = partial.len() * PAGE_SIZE;
@@ -159,6 +215,12 @@ unsafe fn alloc_unprotect_physical_range(pa_range: &Range<Paddr>) {
     debug_assert_eq!(ranges.collect::<Vec<_>>(), vec![pfn_range.clone()]);
 }
 
+/// Unmarks a physical address range as used (also protected if in TDX guest).
+///
+/// # Safety
+///
+/// The provided physical address range must be untyped DMA memory that was
+/// previously marked by an [`alloc_unprotect_physical_range()`] call.
 #[cfg(any(debug_assertions, all(target_arch = "x86_64", feature = "cvm_guest")))]
 unsafe fn dealloc_protect_physical_range(pa_range: &Range<Paddr>) {
     debug_assert!(pa_range.start.is_multiple_of(PAGE_SIZE));
@@ -192,6 +254,12 @@ fn panic_page_convert_error(
     )
 }
 
+/// Allocates device addresses and maps them to the given physical address range.
+///
+/// # Safety
+///
+/// The provided physical address range must be untyped DMA memory that
+/// outlives the following [`unmap_dma_remap()`] call.
 unsafe fn dma_remap(pa_range: &Range<Paddr>) -> Option<Daddr> {
     if !has_dma_remapping() {
         return None;
@@ -208,6 +276,7 @@ unsafe fn dma_remap(pa_range: &Range<Paddr>) -> Option<Daddr> {
 
     for map_paddr in pa_range.clone().step_by(PAGE_SIZE) {
         let map_daddr = (map_paddr - pa_range.start + daddr.start) as Daddr;
+
         unsafe {
             iommu::map(map_daddr, map_paddr).unwrap();
         }

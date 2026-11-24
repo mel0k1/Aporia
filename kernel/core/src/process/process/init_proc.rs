@@ -1,3 +1,5 @@
+//! This module defines functions related to spawning the init process.
+
 use ostd::{arch::cpu::context::UserContext, task::Task, user::UserContextApi};
 
 use super::{Process, Session};
@@ -19,6 +21,7 @@ use crate::{
     vm::vmar::VmarHandle,
 };
 
+/// Creates and schedules the init process to run.
 pub(crate) fn spawn_init_process(
     path_resolver: PathResolver,
     executable_path: Path,
@@ -77,6 +80,7 @@ fn set_bootstrap_session_and_group(process: &Arc<Process>) {
     pid_table.insert_process(process.pid(), process);
 }
 
+/// Creates the init task from the given executable path.
 fn create_init_task(
     tid: Tid,
     process: &Arc<Process>,

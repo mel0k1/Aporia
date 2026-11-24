@@ -16,6 +16,7 @@ use crate::{
 };
 
 impl Connection {
+    /// Copies queued payload bytes into `writer` and updates receive credit accounting.
     pub(in vsock) fn try_recv(
         &mut self,
         writer: &mut dyn MultiWrite,

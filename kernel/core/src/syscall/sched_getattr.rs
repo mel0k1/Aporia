@@ -18,6 +18,7 @@ pub(super) struct LinuxSchedAttr {
     pub(super) size: u32,
 
     pub(super) sched_policy: u32,
+
     pub(super) sched_flags: u64,
 
     pub(super) sched_nice: i32,
@@ -33,6 +34,7 @@ pub(super) struct LinuxSchedAttr {
 }
 
 const SCHED_ATTR_SIZE_VER0: u32 = 48;
+
 const SCHED_ATTR_SIZE_VER1: u32 = 56;
 
 const_assert!(size_of::<LinuxSchedAttr>() == SCHED_ATTR_SIZE_VER1 as usize);
@@ -141,6 +143,7 @@ pub(super) fn read_linux_sched_attr_from_user(
                 let _ = user_space.write_val(addr, &(size_of::<LinuxSchedAttr>() as u32));
             }
         })?;
+
     attr.size = user_size;
 
     Ok(attr)

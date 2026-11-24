@@ -1,3 +1,15 @@
+//! EFI-side management of TDX unaccepted memory.
+//!
+//! The EFI stub records unaccepted memory ranges from the final UEFI memory map
+//! in a bitmap and passes the table to the kernel through the boot parameters.
+//! It reserves the bitmap storage before exiting boot services, then registers
+//! the ranges after the final memory map is available.
+//!
+//! Asterinas uses a fixed kernel load address below 4 GiB, so the EFI stub does
+//! not need to accept memory for an arbitrary kernel destination. When ranges
+//! are registered, small regions and unaligned edges are accepted immediately;
+//! the remaining aligned regions are left for the kernel to accept later.
+
 use core::{ops::Range, ptr::NonNull};
 
 use linux_boot_params::{BootParams, EfiInfo};
@@ -9,6 +21,10 @@ use uefi::{
 
 use crate::x86::amd64_efi::{alloc, efi};
 
+/// Creates a builder for the unaccepted memory bitmap.
+///
+/// This method is called before exiting the EFI boot services to make memory allocations. Afterwards,
+/// the builder can build the final bitmap without allocations. See [`finish_unaccepted_memory`].
 pub(super) fn prepare_unaccepted_memory(
     boot_params: &mut BootParams,
 ) -> Option<EfiUnacceptedMemoryBuilder> {
@@ -38,6 +54,7 @@ pub(super) fn prepare_unaccepted_memory(
         let allocation =
             alloc::alloc_pages(AllocateType::MaxAddress(u32::MAX as u64), required_size);
         let allocation_ptr = NonNull::new(allocation.as_mut_ptr().cast()).unwrap();
+
         unsafe { EfiUnacceptedMemory::builder(allocation_ptr, allocation.len(), coverage) }
             .expect("failed to initialize unaccepted memory builder")
     };
@@ -47,6 +64,15 @@ pub(super) fn prepare_unaccepted_memory(
     Some(builder)
 }
 
+/// Builds the unaccepted memory bitmap according to `memory_map` and publishes the table address to
+/// the kernel.
+///
+/// This method may accept memory to align the regions of unaccepted memory, allowing them to be
+/// recorded in the bitmap. `memory_map` will not be updated.
+///
+/// # Safety
+///
+/// `memory_map` must accurately describe the regions of unaccepted memory.
 pub(super) unsafe fn finish_unaccepted_memory<M: MemoryMap>(
     boot_params: &mut BootParams,
     builder: Option<EfiUnacceptedMemoryBuilder>,

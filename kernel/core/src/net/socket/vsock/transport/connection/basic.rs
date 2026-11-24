@@ -13,6 +13,7 @@ use crate::{
 };
 
 impl Connection {
+    /// Returns the local address bound to this connection.
     pub(in vsock) fn local_addr(&self) -> VsockSocketAddr {
         VsockSocketAddr {
             cid: self.inner.conn_id.local_cid as u32,
@@ -20,6 +21,7 @@ impl Connection {
         }
     }
 
+    /// Returns the remote address connected to this connection.
     pub(in vsock) fn remote_addr(&self) -> VsockSocketAddr {
         VsockSocketAddr {
             cid: self.inner.conn_id.peer_cid as u32,
@@ -27,11 +29,13 @@ impl Connection {
         }
     }
 
+    /// Returns and clears the pending transport error, if any.
     pub(in vsock) fn test_and_clear_error(&self) -> Result<()> {
         let mut state = self.inner.state.lock();
         state.test_and_clear_error(&self.inner)
     }
 
+    /// Returns the currently observable I/O readiness for the connection.
     pub(in vsock) fn check_io_events(&self) -> IoEvents {
         let state = self.inner.state.lock();
         let mut events = IoEvents::empty();
@@ -73,6 +77,7 @@ impl Connection {
         events
     }
 
+    /// Returns the `Pollee` used to I/O notification.
     pub(in vsock) fn pollee(&self) -> &Pollee {
         &self.inner.pollee
     }

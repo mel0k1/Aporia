@@ -63,6 +63,7 @@ bitflags! {
         const CLONE_NEWNET         = 0x40000000;
         const CLONE_IO             = 0x80000000;
 
+        /// A bitmask of all `CloneFlags` related to namespace creation.
         const CLONE_NS_FLAGS       = Self::CLONE_NEWTIME.bits() |
             Self::CLONE_NEWNS.bits() |
             Self::CLONE_NEWCGROUP.bits() |
@@ -74,6 +75,30 @@ bitflags! {
     }
 }
 
+/// An internal structure to homogenize the arguments for `clone` and
+/// `clone3`.
+///
+/// From the clone(2) man page:
+///
+/// ```
+/// The following table shows the equivalence between the arguments
+/// of clone() and the fields in the clone_args argument supplied to
+/// clone3():
+///     clone()         clone3()        Notes
+///                     cl_args field
+///     flags & ~0xff   flags           For most flags; details
+///                                     below
+///     parent_tid      pidfd           See CLONE_PIDFD
+///     child_tid       child_tid       See CLONE_CHILD_SETTID
+///     parent_tid      parent_tid      See CLONE_PARENT_SETTID
+///     flags & 0xff    exit_signal
+///     stack           stack
+///     ---             stack_size
+///     tls             tls             See CLONE_SETTLS
+///     ---             set_tid         See below for details
+///     ---             set_tid_size
+///     ---             cgroup          See CLONE_INTO_CGROUP
+/// ```
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct CloneArgs {
     pub flags: CloneFlags,
@@ -90,6 +115,7 @@ pub(crate) struct CloneArgs {
 }
 
 impl CloneArgs {
+    /// Prepares a new [`CloneArgs`] based on the arguments for clone(2).
     pub(crate) fn for_clone(
         raw_flags: u64,
         parent_tid: Vaddr,
@@ -246,6 +272,10 @@ impl CloneFlags {
     }
 }
 
+/// Clone a child thread or child process.
+///
+/// FIXME: currently, the child process or thread will be scheduled to run at once,
+/// but this may not be the expected behavior.
 pub(crate) fn clone_child(
     ctx: &Context,
     parent_context: &UserContext,
@@ -602,6 +632,7 @@ fn clone_user_ctx(
     stack_size: Option<NonZeroU64>,
 ) -> UserContext {
     let mut child_context = parent_context.clone();
+
     child_context.set_syscall_ret(0);
 
     if let Some(new_sp) = new_sp {

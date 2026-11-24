@@ -3,14 +3,17 @@ use id_alloc::IdAlloc;
 use ostd::sync::Mutex;
 use spin::Once;
 
+/// An anonymous device ID that automatically recycles itself on drop.
 #[derive(Debug)]
 pub(crate) struct AnonDeviceId(DeviceId);
 
 impl AnonDeviceId {
+    /// Acquires an anonymous device ID for a pseudo filesystem.
     pub(crate) fn acquire() -> Option<Self> {
         DeviceIdAllocator::singleton().allocate().map(Self::new)
     }
 
+    /// Returns the underlying `DeviceId`.
     pub(crate) fn id(&self) -> DeviceId {
         self.0
     }
@@ -26,6 +29,13 @@ impl Drop for AnonDeviceId {
     }
 }
 
+/// An allocator for pseudo filesystems (no backing block device) device ID.
+///
+/// This follows the Linux convention where pseudo filesystems use major=0
+/// and dynamically allocate minor numbers (starting from 1) to distinguish different
+/// pseudo filesystem instances.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.18/source/fs/super.c#L1242-L1271>
 struct DeviceIdAllocator {
     minor_allocator: Mutex<IdAlloc>,
 }
@@ -39,6 +49,7 @@ impl DeviceIdAllocator {
 
     fn new() -> Self {
         let mut minor_allocator = IdAlloc::with_capacity(MinorId::MAX.get() as usize + 1);
+
         let _ = minor_allocator.alloc_specific(0).unwrap();
 
         Self {
@@ -53,6 +64,11 @@ impl DeviceIdAllocator {
         Some(DeviceId::new(major, MinorId::new(minor as u32)))
     }
 
+    /// Frees a dynamically allocated pseudo filesystem device ID.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the device ID is not anonymous.
     fn release(&self, id: DeviceId) {
         assert!(id.is_anonymous());
 

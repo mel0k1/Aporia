@@ -1,3 +1,5 @@
+//! The assembler crate for the Asterinas kernel.
+
 #![no_std]
 #![no_main]
 #![deny(unsafe_code)]

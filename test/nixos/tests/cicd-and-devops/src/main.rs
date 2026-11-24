@@ -1,6 +1,17 @@
+
+
+//! The test suite for CI/CD and DevOps applications on Asterinas NixOS.
+//!
+//! See `test/nixos/README.md#documentation-maintenance` for sync requirements
+//! between this test suite and the corresponding "Verified Usage" book section.
+
 use nixos_test_framework::*;
 
 nixos_test_main!();
+
+
+
+
 
 #[nixos_test]
 fn just_run_recipe(nixos_shell: &mut Session) -> Result<(), Error> {
@@ -13,6 +24,10 @@ fn just_run_recipe(nixos_shell: &mut Session) -> Result<(), Error> {
     Ok(())
 }
 
+
+
+
+
 #[nixos_test]
 fn task_run_task(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd("mkdir -p /tmp/task-test")?;
@@ -24,6 +39,10 @@ fn task_run_task(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd_and_expect("cd /tmp/task-test && task build", "Hello from Task")?;
     Ok(())
 }
+
+
+
+
 
 #[nixos_test]
 fn goreleaser_release_project(nixos_shell: &mut Session) -> Result<(), Error> {

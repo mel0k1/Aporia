@@ -8,6 +8,7 @@ pub(crate) struct RangeAllocator {
     freelist: SpinLock<Option<BTreeMap<usize, FreeRange>>>,
 }
 
+/// An error returned when allocating from a [`RangeAllocator`].
 #[derive(Debug)]
 pub(crate) struct RangeAllocError;
 
@@ -23,6 +24,7 @@ impl RangeAllocator {
         &self.fullrange
     }
 
+    /// Allocates a specific kernel virtual area.
     pub(crate) fn alloc_specific(
         &self,
         allocate_range: &Range<usize>,
@@ -68,6 +70,9 @@ impl RangeAllocator {
         }
     }
 
+    /// Allocates a range specific by the `size`.
+    ///
+    /// This is currently implemented with a simple FIRST-FIT algorithm.
     pub(crate) fn alloc(&self, size: usize) -> Result<Range<usize>, RangeAllocError> {
         let mut lock_guard = self.get_freelist_guard();
         let freelist = lock_guard.as_mut().unwrap();
@@ -99,11 +104,13 @@ impl RangeAllocator {
         }
     }
 
+    /// Frees a `range`.
     pub(crate) fn free(&self, range: Range<usize>) {
         let mut lock_guard = self.freelist.lock();
         let freelist = lock_guard.as_mut().unwrap_or_else(|| {
             panic!("Free a 'KVirtArea' when 'VirtAddrAllocator' has not been initialized.")
         });
+
         let mut free_range = range.clone();
 
         if let Some((prev_va, prev_node)) = freelist

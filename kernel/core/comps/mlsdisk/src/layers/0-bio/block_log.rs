@@ -5,13 +5,27 @@ use inherit_methods_macro::inherit_methods;
 use super::{Buf, BufMut, BufRef};
 use crate::{os::Mutex, prelude::*};
 
+/// A log of data blocks that can support random reads and append-only
+/// writes.
+///
+/// # Thread safety
+///
+/// `BlockLog` is a data structure of interior mutability.
+/// It is ok to perform I/O on a `BlockLog` concurrently in multiple threads.
+/// `BlockLog` promises the serialization of the append operations, i.e.,
+/// concurrent appends are carried out as if they are done one by one.
 pub(crate) trait BlockLog: Sync + Send {
+    /// Read one or multiple blocks at a specified position.
     fn read(&self, pos: BlockId, buf: BufMut) -> Result<()>;
 
+    /// Append one or multiple blocks at the end,
+    /// returning the ID of the first newly-appended block.
     fn append(&self, buf: BufRef) -> Result<BlockId>;
 
+    /// Ensure that blocks are persisted to the disk.
     fn flush(&self) -> Result<()>;
 
+    /// Returns the number of blocks.
     fn nblocks(&self) -> usize;
 }
 
@@ -32,6 +46,7 @@ impl_blocklog_for!(&mut T, "(**self)");
 impl_blocklog_for!(Box<T>, "(**self)");
 impl_blocklog_for!(Arc<T>, "(**self)");
 
+/// An in-memory log that impls `BlockLog`.
 pub(crate) struct MemLog {
     log: Mutex<Buf>,
     append_pos: AtomicUsize,

@@ -1,9 +1,23 @@
+//! I/O memory utilities.
+
 use alloc::vec::Vec;
 
 use crate::{boot::memory_region::MemoryRegionType, io::IoMemAllocatorBuilder};
 
 pub(crate) mod io_mem;
 
+/// Initializes the allocatable MMIO area based on the RISC-V memory
+/// distribution map.
+///
+/// Here we consider all the holes (filtering usable RAM) in the physical
+/// address space as MMIO regions.
+///
+/// # Safety
+///
+/// 1. This function must be called only once in the boot context of the
+///    bootstrapping processor.
+/// 2. This function must be called after the kernel page table is activated on
+///    the bootstrapping processor.
 pub(super) unsafe fn construct_io_mem_allocator_builder() -> IoMemAllocatorBuilder {
     let regions = &crate::boot::EARLY_INFO.get().unwrap().memory_regions;
     let reserved_filter = regions.iter().filter(|r| {

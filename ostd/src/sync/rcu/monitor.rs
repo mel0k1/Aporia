@@ -8,12 +8,18 @@ use crate::{
     task::atomic_mode::AsAtomicModeGuard,
 };
 
+/// A RCU monitor ensures the completion of _grace periods_ by keeping track
+/// of each CPU's passing _quiescent states_.
 pub(super) struct RcuMonitor {
     is_monitoring: AtomicBool,
     state: SpinLock<State>,
 }
 
 impl RcuMonitor {
+    /// Creates a new RCU monitor.
+    ///
+    /// This function is used to initialize a singleton instance of `RcuMonitor`.
+    /// The singleton instance is globally accessible via the `RCU_MONITOR`.
     pub(super) fn new() -> Self {
         Self {
             is_monitoring: AtomicBool::new(false),

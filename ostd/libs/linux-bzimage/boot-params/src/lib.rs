@@ -1,7 +1,20 @@
+//! The definition of Linux Boot Protocol boot_params struct.
+//!
+//! The bootloader will deliver the address of the `BootParams` struct
+//! as the argument of the kernel entrypoint. So we must define a Linux
+//! ABI compatible struct in Rust, despite that most of the fields are
+//! currently not needed by Asterinas.
+//!
+
 #![cfg_attr(not(test), no_std)]
 
+/// Magic stored in the boot protocol header.
 pub const LINUX_BOOT_HEADER_MAGIC: u32 = 0x53726448;
 
+/// Linux 32/64-bit Boot Protocol parameter struct.
+///
+/// Originally defined in the linux source tree:
+/// `linux/arch/x86/include/uapi/asm/bootparam.h`
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
 pub struct BootParams {
@@ -42,6 +55,10 @@ pub struct BootParams {
     pub _pad9: [u8; 276],
 }
 
+/// Linux Boot Protocol header.
+///
+/// Originally defined in the linux source tree:
+/// `linux/arch/x86/include/uapi/asm/bootparam.h`
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
 pub struct SetupHeader {
@@ -187,9 +204,19 @@ pub struct EfiInfo {
 }
 
 impl EfiInfo {
+    /// EFI loader signature used by the Intel TDX guest boot path (`AS64`).
+    ///
+    /// With this signature, `efi_systab` holds the physical address of the
+    /// unaccepted-memory table (header and bitmap), or zero if absent, rather
+    /// than an EFI system table. The address is below 4 GiB and
+    /// `efi_systab_hi` is zero.
     pub const TDX_LOADER_SIGNATURE: u32 = u32::from_le_bytes(*b"AS64");
 }
 
+/// The E820 types known to the kernel.
+///
+/// Originally defined in the linux source tree:
+/// `linux/arch/x86/include/asm/e820/types.h`
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct E820Type(pub u32);

@@ -16,28 +16,57 @@ impl PagingConstsTrait for PagingConsts {
     const NR_LEVELS: PagingLevel = 4;
     const ADDRESS_WIDTH: usize = 48;
     const VA_SIGN_EXT: bool = true;
+
     const HIGHEST_TRANSLATION_LEVEL: PagingLevel = 1;
     const PTE_SIZE: usize = size_of::<PageTableEntry>();
 }
 
 bitflags::bitflags! {
+    /// Possible flags for a page table entry.
     #[derive(Clone, Copy, Debug)]
     pub(crate) struct PteFlags: usize {
+        /// Specifies whether the mapped frame is valid.
         const VALID          = 1 << 0;
+        /// Whether the memory area represented by this entry is modified.
         const DIRTY          = 1 << 1;
+        /// Privilege level corresponding to the page table entry.
+        /// When `RPLV` = 0, the page table entry can be accessed by any program
+        /// with a privilege level not lower than `PLV`;
+        /// When `RPLV` = 1, this page table entry can only be accessed by programs
+        /// with privilege level equal to `PLV`.
         const PLVL           = 1 << 2;
         const PLVH           = 1 << 3;
+        /// Controls the memory access type of the memory access operation
+        /// falling on the address space of the table page entry.
         const MATL           = 1 << 4;
         const MATH           = 1 << 5;
+        /// If this entry is a basic page table entry, it is `GLOBAL`,
+        /// which means that the mapping is present in all address spaces,
+        /// so it isn't flushed from the TLB on an address space switch.
+        /// If this entry is a huge page table entry, it is `HUGE`,
+        /// which means that the memory area represented by this entry is
+        /// a huge page.
         const GLOBAL_OR_HUGE = 1 << 6;
+        /// Specifies whether the mapped frame or page table is loaded in memory.
+        /// This flag does not fill in TLB.
         const PRESENT        = 1 << 7;
+        /// Controls whether writes to the mapped frames are allowed.
+        /// This flag does not fill in TLB.
         const WRITABLE       = 1 << 8;
+        /// Whether this entry is a basic page table entry.
         const IS_BASIC       = 1 << 9;
+        /// First bit ignored by MMU.
         const RSV1           = 1 << 10;
+        /// Second bit ignored by MMU.
         const RSV2           = 1 << 11;
+        /// If this entry is a huge page table entry, it is `GLOBAL`.
         const GLOBAL_IN_HUGE = 1 << 12;
+        /// Controls whether reads to the mapped frames are not allowed.
         const NOT_READABLE   = 1 << 61;
+        /// Controls whether execution code in the mapped frames are not allowed.
         const NOT_EXECUTABLE = 1 << 62;
+        /// Whether the `PageTableEntry` can only be accessed by the privileged level specified in
+        /// the `PLV` field.
         const RPLV           = 1 << 63;
     }
 }
@@ -69,10 +98,22 @@ pub(crate) fn can_sync_dma() -> bool {
     false
 }
 
+/// # Safety
+///
+/// The caller must ensure that
+///  - the virtual address range and DMA direction correspond correctly to a
+///    DMA region;
+///  - `can_sync_dma()` is `true`.
 pub(crate) unsafe fn sync_dma_range(_range: Range<Vaddr>, _is_from_device: bool) {
     unreachable!("`can_sync_dma()` never returns `true`");
 }
 
+/// Activates the given root-level page table.
+///
+/// # Safety
+///
+/// Changing the root-level page table is unsafe, because it's possible to violate memory safety by
+/// changing the page mapping.
 pub(crate) unsafe fn activate_page_table(root_paddr: Paddr) {
     assert!(root_paddr.is_multiple_of(PagingConsts::BASE_PAGE_SIZE));
     loongArch64::register::pgdl::set_base(root_paddr);
@@ -93,6 +134,7 @@ pub(crate) fn current_page_table_paddr() -> Paddr {
 #[derive(Clone, Copy, Debug, Default, Pod)]
 pub(crate) struct PageTableEntry(usize);
 
+/// Parses a bit-flag bits `val` in the representation of `from` to `to` in bits.
 macro_rules! parse_flags {
     ($val:expr, $from:expr, $to:expr) => {
         (($val as usize & $from.bits() as usize) >> $from.bits().ilog2() << $to.bits().ilog2())

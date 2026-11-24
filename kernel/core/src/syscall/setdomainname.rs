@@ -11,6 +11,7 @@ pub(super) fn sys_setdomainname(addr: Vaddr, len: usize, ctx: &Context) -> Resul
     Ok(SyscallReturn::Return(0))
 }
 
+/// Reads a UTS field from user space.
 pub(super) fn read_uts_field(addr: Vaddr, len: usize, ctx: &Context) -> Result<UtsField> {
     if len > UtsField::MAX_BYTES {
         return Err(errno!(EINVAL, "the UTS name is too long"));

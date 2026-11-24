@@ -1,3 +1,6 @@
+//! This module defines the socket table, which manages all TCP and UDP sockets,
+//! for efficiently inserting, looking up, and removing sockets.
+
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use core::net::Ipv4Addr;
 
@@ -13,6 +16,11 @@ use crate::{
 
 pub type SocketHash = u32;
 
+/// A unique key for identifying a `TcpListener`.
+///
+/// Note that two `TcpListener`s cannot listen on the same address
+/// even if both sockets set SO_REUSEADDR to true,
+/// so there cannot be multiple listeners with the same `ListenerKey`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ListenerKey {
     addr: IpAddress,
@@ -41,6 +49,7 @@ impl From<IpListenEndpoint> for ListenerKey {
     }
 }
 
+/// A unique key for identifying a `TcpConnection`.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct ConnectionKey {
     local_addr: IpAddress,
@@ -136,9 +145,15 @@ const fn hash_addr_port(addr: IpAddress, port: PortNum) -> SocketHash {
     }
 }
 
+/// The socket table manages TCP and UDP sockets.
+///
+/// Unlike the Linux inet hashtable, which is shared across a single network namespace,
+/// this table is currently limited to a single interface.
+///
 pub(crate) struct SocketTable<E: Ext> {
     listener_buckets: Box<[ListenerHashBucket<E>]>,
     connection_buckets: Box<[ConnectionHashBucket<E>]>,
+
     udp_sockets: Vec<Arc<UdpSocketBg<E>>>,
 }
 
@@ -169,6 +184,10 @@ impl<E: Ext> SocketTable<E> {
         }
     }
 
+    /// Inserts a TCP listener into the table.
+    ///
+    /// If a socket with the same [`ListenerKey`] has already been inserted,
+    /// this method will return an error and the listener will not be inserted.
     pub(crate) fn insert_listener(
         &mut self,
         listener: Arc<TcpListenerBg<E>>,

@@ -10,6 +10,7 @@ use crate::{
     process::posix_thread::AsPosixThread,
 };
 
+/// Represents the inode at `/proc/self-thread`.
 pub(super) struct ThreadSelfSymOps;
 
 impl ThreadSelfSymOps {

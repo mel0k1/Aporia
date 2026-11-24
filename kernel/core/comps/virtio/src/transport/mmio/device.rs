@@ -140,6 +140,7 @@ impl VirtioTransport for VirtioMmioTransport {
                     driver_daddr - descriptor_daddr,
                     size_of::<Descriptor>() * queue_size as usize
                 );
+
                 assert_eq!(descriptor_daddr % PAGE_SIZE, 0);
                 let pfn = (descriptor_daddr / PAGE_SIZE) as u32;
                 field_ptr!(&self.layout, VirtioMmioLayout, legacy_queue_align)
@@ -170,6 +171,7 @@ impl VirtioTransport for VirtioMmioTransport {
                 field_ptr!(&self.layout, VirtioMmioLayout, queue_device_high)
                     .write_once(&((device_daddr >> 32) as u32))
                     .unwrap();
+
                 field_ptr!(&self.layout, VirtioMmioLayout, queue_sel)
                     .write_once(&(idx as u32))
                     .unwrap();
@@ -222,6 +224,7 @@ impl VirtioTransport for VirtioMmioTransport {
         let device_feature_low = field_ptr!(&self.layout, VirtioMmioLayout, device_features)
             .read_once()
             .unwrap();
+
         field_ptr!(&self.layout, VirtioMmioLayout, device_features_select)
             .write_once(&1u32)
             .unwrap();

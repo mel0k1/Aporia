@@ -18,6 +18,7 @@ pub(super) fn sys_getsockname(
     let socket = file.as_socket_or_err()?;
 
     let socket_addr = socket.addr()?;
+
     write_socket_addr_to_user(&socket_addr, addr, addrlen_ptr)?;
 
     Ok(SyscallReturn::Return(0))

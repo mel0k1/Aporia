@@ -1,3 +1,7 @@
+//! The OSTD unit test runner is a kernel that runs the tests defined by the
+//! `#[ostd::ktest]` attribute. The kernel should be automatically selected to
+//! run when OSDK is used to test a specific crate.
+
 #![no_std]
 #![forbid(unsafe_code)]
 
@@ -24,6 +28,7 @@ pub enum KtestResult {
     Failed,
 }
 
+/// The entry point of the test runner.
 #[ostd::ktest::main]
 fn main() {
     use ostd::task::TaskOptions;
@@ -67,6 +72,16 @@ fn panic_handler(info: &core::panic::PanicInfo) -> ! {
     ostd::prelude::abort();
 }
 
+/// Run all the tests registered by `#[ktest]` in the `.ktest_array` section.
+///
+/// The `whitelist` argument is optional. If it is `None`, all tests compiled will be run.
+/// If it is `Some`, only the tests whose test path being the suffix of any paths in the whitelist
+/// will be run.
+///
+/// Returns the test result interpreted as `ok` or `FAILED`.
+///
+/// If a test inside a crate fails, the test runner will continue to run the rest of the tests
+/// inside the crate. But the tests in the following crates will not be run.
 fn run_ktests<PathsIter>(
     test_whitelist: Option<PathsIter>,
     crate_whitelist: Option<&[&str]>,

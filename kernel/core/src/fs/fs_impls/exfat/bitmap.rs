@@ -104,11 +104,13 @@ impl ExfatBitmap {
         Ok(true)
     }
 
+    /// Return the first unused cluster.
     pub(super) fn find_next_unused_cluster(&self, cluster: ClusterID) -> Result<ClusterID> {
         let clusters = self.find_next_unused_cluster_range_by_bits(cluster, 1)?;
         Ok(clusters.start)
     }
 
+    /// Return the first unused cluster range, set num_clusters=1 to find a single cluster.
     fn find_next_unused_cluster_range_by_bits(
         &self,
         search_start_cluster: ClusterID,
@@ -147,6 +149,7 @@ impl ExfatBitmap {
         Err(errno!(ENOSPC))
     }
 
+    /// Make sure the bit at the range start position is 0.
     fn adjust_head_pos(
         &self,
         bytes: &[BitStore],
@@ -168,6 +171,8 @@ impl ExfatBitmap {
         (cur_unit_index, cur_unit_offset)
     }
 
+    /// Check if the next mid_unit_num units are zero.
+    /// If not, return the index of the first not zero unit.
     fn check_mid_units(&self, bytes: &[BitStore], cur_unit_index: u32, mid_unit_num: u32) -> u32 {
         for i in 1..mid_unit_num + 1 {
             if bytes[(cur_unit_index + i) as usize] != 0 {
@@ -177,6 +182,8 @@ impl ExfatBitmap {
         cur_unit_index
     }
 
+    /// Check if the tail unit is valid.
+    /// Currently not used.
     fn check_tail_bits(
         &self,
         bytes: &[BitStore],
@@ -213,6 +220,7 @@ impl ExfatBitmap {
             ..result_bit_index + EXFAT_RESERVED_CLUSTERS + num_clusters
     }
 
+    /// Return the next contiguous unused clusters, set cluster_num=1 to find a single cluster
     pub(super) fn find_next_unused_cluster_range(
         &self,
         search_start_cluster: ClusterID,
@@ -241,21 +249,25 @@ impl ExfatBitmap {
         if num_clusters <= unit_size {
             return self.find_next_unused_cluster_range_by_bits(search_start_cluster, num_clusters);
         }
+
         while cur_unit_index < complete_unit_num {
             (cur_unit_index, cur_unit_offset) =
                 self.adjust_head_pos(bytes, cur_unit_index, cur_unit_offset, total_cluster_num);
             let head_cluster_num = unit_size - cur_unit_offset;
             let mid_unit_num = (num_clusters - head_cluster_num) / unit_size;
             let tail_cluster_num = (num_clusters - head_cluster_num) % unit_size;
+
             if cur_unit_index + mid_unit_num >= complete_unit_num {
                 break;
             }
+
             let ret = self.check_mid_units(bytes, cur_unit_index, mid_unit_num);
             if ret != cur_unit_index {
                 cur_unit_index = ret;
                 cur_unit_offset = 0;
                 continue;
             }
+
             if tail_cluster_num == 0 {
                 return Ok(self.make_range(cur_unit_index, cur_unit_offset, num_clusters));
             }
@@ -273,6 +285,7 @@ impl ExfatBitmap {
                 cur_unit_offset = tailing_zeros + 1;
                 continue;
             }
+
             return Ok(self.make_range(cur_unit_index, cur_unit_offset, num_clusters));
         }
         Err(errno!(ENOSPC))

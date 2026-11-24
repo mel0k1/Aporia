@@ -3,7 +3,12 @@ use crate::{
     device::Device, dispatch_ioctl, prelude::*, process::pid_table, util::ioctl::RawIoctl,
 };
 
+/// A terminal.
+///
+/// We currently support two kinds of terminal, the TTY and pty. They're associated with a
+/// `JobControl` to track the session and the foreground process group.
 pub(crate) trait Terminal: Device {
+    /// Returns the job control of the terminal.
     fn job_control(&self) -> &JobControl;
 }
 
@@ -23,6 +28,15 @@ mod ioctl_defs {
 }
 
 impl dyn Terminal {
+    /// Handles job-control ioctls.
+    ///
+    /// The return value depends on whether the ioctl is recognized:
+    /// - If the terminal recognizes and handles the ioctl, it should return
+    ///   `Ok(true)`.
+    /// - If an error occurs while processing the ioctl, it should return
+    ///   `Err(_)`.
+    /// - If the terminal does not recognize the ioctl command, it should return
+    ///   `Ok(false)` to indicate that the ioctl command is not supported.
     pub(crate) fn job_ioctl(
         self: Arc<Self>,
         raw_ioctl: RawIoctl,
@@ -98,6 +112,7 @@ impl dyn Terminal {
         Ok(true)
     }
 
+    /// Sets the terminal to be the controlling terminal of the process.
     pub(super) fn set_control(self: Arc<Self>, process: &Process) -> Result<()> {
         let process_group_mut = process.process_group.lock();
 
@@ -129,6 +144,7 @@ impl dyn Terminal {
         Ok(())
     }
 
+    /// Unsets the terminal from the controlling terminal of the process.
     fn unset_control(self: Arc<Self>, process: &Process) -> Result<()> {
         self.is_control_and(process, |session, session_inner| {
             if !session.is_leader(process) {
@@ -141,6 +157,7 @@ impl dyn Terminal {
                     constants::{SIGCONT, SIGHUP},
                     signals::kernel::KernelSignal,
                 };
+
                 foreground.broadcast_signal(KernelSignal::new(SIGHUP));
                 foreground.broadcast_signal(KernelSignal::new(SIGCONT));
             }
@@ -149,6 +166,7 @@ impl dyn Terminal {
         })
     }
 
+    /// Sets the foreground process group of the terminal.
     fn set_foreground(self: Arc<Self>, pgid: Pgid, process: &Process) -> Result<()> {
         let pid_table = pid_table::pid_table_mut();
 
@@ -173,6 +191,10 @@ impl dyn Terminal {
         })
     }
 
+    /// Runs `op` when the process controls the terminal.
+    ///
+    /// Note that this requires that the terminal is the controlling terminal of the session, but
+    /// does _not_ require that the process is a session leader.
     fn is_control_and<F, R>(self: &Arc<Self>, process: &Process, op: F) -> Result<R>
     where
         F: FnOnce(&Arc<Session>, &mut SessionGuard) -> Result<R>,

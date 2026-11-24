@@ -32,6 +32,7 @@ impl X2Apic {
     pub(super) fn enable(&mut self) {
         const X2APIC_ENABLE_BITS: u64 = {
             const EN_BIT_IDX: u8 = 11;
+
             const EXTD_BIT_IDX: u8 = 10;
 
             (1 << EN_BIT_IDX) | (1 << EXTD_BIT_IDX)

@@ -1,3 +1,49 @@
+//! The copy-up authority: per-object coordination, winner/waiter trigger,
+//! and object-kind promotion.
+//!
+//! Key concepts:
+//! - **copy-up chain**: the lower-only objects from the operation's target up
+//!   to the first upper-backed ancestor, collected from the overlay dentry
+//!   parent chain. That ancestor is the **publication parent**: it publishes
+//!   the object below it instead of being promoted, and each round's promoted
+//!   object becomes the next round's publication parent. Every collected
+//!   element carries the name it publishes under its publication parent.
+//! - **winner/waiter**: the tasks racing on one object's per-inode transaction
+//!   lock — for a non-directory that lock is a plain serialization token,
+//!   because the sole published-state fact is `upper: Once` being set. The
+//!   winner performs the promotion; the waiters re-observe `upper` under that
+//!   lock and skip.
+//! - **promotion round**: one step promoting one object, from the `upper`
+//!   re-check through commit.
+//!
+//! [`OverlayFs::copy_up_at`] is the promotion entry that drives these rounds.
+//!
+//! # Module map
+//!
+//! | Submodule | Responsibility |
+//! |---|---|
+//! | [`workdir`] | the workdir temp create, publish, and cleanup lifecycle |
+//!
+//! # Locking
+//!
+//! A copy-up collects its chain from the VFS dcache alone — reading the dentry's
+//! parent and name are NameAndParent leaf reads. Each promotion round then nests in
+//! this order — the publication parent's transaction lock, then the promoted
+//! object's transaction lock — and releases both at the round's end, so every lock
+//! edge runs ancestor-to-descendant.
+//!
+//! Both name-taken latches of the round are read under those two locks and before
+//! anything is staged, so a name taken away aborts the round with nothing staged.
+//! The winner holds the promoted object's lock continuously from the `upper`
+//! re-check through the commit tail, and the publication parent's lock across that
+//! same span.
+//!
+//! Below the two transaction locks a round takes the commit tail's cache guard,
+//! because the staging and publication calls are real-layer calls. That guard is
+//! the round's single `InodeCache` touch: the commit tail rekeys the promoted
+//! instance onto the key its identity now resolves to, and the round's own latch
+//! reads answer whether its coordinate still denotes it.
+
 use self::workdir::WorkdirTemp;
 use crate::{
     fs::{
@@ -18,6 +64,7 @@ use crate::{
 pub(super) mod workdir;
 
 impl OverlayFs {
+    /// Promotes every lower-only ancestor above `dentry`, then the object behind it.
     pub(super) fn copy_up_at(&self, dentry: &Dentry) -> Result<()> {
         let promoted = Arc::downcast::<OverlayInode>(dentry.inode().clone())
             .expect("the copy-up operation dentry is not an overlay inode");
@@ -36,6 +83,7 @@ impl OverlayFs {
             let parent_object = Arc::downcast::<OverlayInode>(parent.inode().clone())
                 .expect("the copy-up publication parent is not an overlay inode");
             chain.push((object, name));
+
             if parent_object.upper.get().is_some() {
                 break parent_object;
             }
@@ -51,6 +99,8 @@ impl OverlayFs {
         Ok(())
     }
 
+    /// Promotes a rename's target in one round under the publication parent the caller has already
+    /// promoted; this entry is the target's own take point and carries the read-only gate.
     pub(super) fn promote_rename_target(
         &self,
         publication_parent: &Arc<OverlayInode>,
@@ -63,6 +113,7 @@ impl OverlayFs {
         self.promote_level(publication_parent, promoted_object, name)
     }
 
+    /// Promotes one level of a copy-up chain under the publication parent's lock, then this object's.
     fn promote_level(
         &self,
         publication_parent: &Arc<OverlayInode>,
@@ -109,6 +160,7 @@ impl OverlayFs {
 
         let source = promoted_object.real_object();
         let staged = promoted_object.stage_in_workdir(name)?;
+
         let origin_record_landed = promoted_object.stage_temp_contents(&staged, source)?;
         self.commit_copyup_publication(
             promoted_object,
@@ -120,6 +172,7 @@ impl OverlayFs {
         Ok(())
     }
 
+    /// Commits one staged temp as the published copy-up object.
     fn commit_copyup_publication(
         &self,
         promoted_object: &Arc<OverlayInode>,
@@ -135,8 +188,10 @@ impl OverlayFs {
         let published = staged.dentry().clone();
         staged.publish(upper_parent, name, RenameMode::Replace)?;
         let published_upper = RealObject::new_upper(published);
+
         let upper_key = self.identity().real_id_of(&published_upper);
         promoted_object.upper.call_once(|| published_upper);
+
         if !origin_record_landed
             && !promoted_object.type_().is_directory()
             && let Some(lower) = promoted_object.lowers.first()
@@ -152,6 +207,8 @@ impl OverlayFs {
 }
 
 impl OverlayInode {
+    /// Creates this object's staged temp: an empty real object in the workdir that mirrors this
+    /// object's kind, its mode, and, for a symlink, its target.
     fn stage_in_workdir(&self, name: &str) -> Result<WorkdirTemp> {
         let fs = self.fs_arc();
         let upper_workdir = fs.upper_workdir_inuse();
@@ -247,6 +304,8 @@ impl OverlayInode {
         Ok(temp)
     }
 
+    /// Fills one staged temp from `source` and reports whether the origin-record step landed; `source`
+    /// is the source-side object, while the temp and its dentry are the destination of the copy.
     fn stage_temp_contents(&self, temp: &WorkdirTemp, source: &RealObject) -> Result<bool> {
         source.copy_metadata_to(temp.dentry())?;
 

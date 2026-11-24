@@ -33,6 +33,7 @@ mod tainted;
 mod uts;
 mod yama;
 
+/// Represents the inode at `/proc/sys/kernel`.
 pub(in procfs) struct KernelDirOps;
 
 impl KernelDirOps {

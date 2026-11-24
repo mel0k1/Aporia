@@ -1,3 +1,19 @@
+//! OSDK profile command implementation.
+//!
+//! The profile command is used to collect stack traces when running the target
+//! kernel in QEMU. It attaches to the GDB server initiated with [`super::run`]
+//! and collects the stack trace periodically. The collected data can be
+//! further analyzed using tools like
+//! [flame graph](https://github.com/brendangregg/FlameGraph).
+
+use inferno::flamegraph;
+
+use crate::{
+    cli::{ProfileArgs, ProfileFormat},
+    commands::util::bin_file_name,
+    util::{get_kernel_crate, get_target_directory, new_command_checked_exists},
+};
+use regex::Regex;
 use std::{
     collections::HashMap,
     fs::File,
@@ -5,15 +21,6 @@ use std::{
     path::PathBuf,
     process::Stdio,
     thread, time,
-};
-
-use inferno::flamegraph;
-use regex::Regex;
-
-use crate::{
-    cli::{ProfileArgs, ProfileFormat},
-    commands::util::bin_file_name,
-    util::{get_kernel_crate, get_target_directory, new_command_checked_exists},
 };
 
 pub fn execute_profile_command(_profile: &str, args: &ProfileArgs) {
@@ -59,6 +66,7 @@ fn do_collect_stack_traces(args: &ProfileArgs) {
     let mut profile_buffer = ProfileBuffer::new();
 
     println!("Profiling \"{}\" at \"{}\".", file_path.display(), remote);
+
     let mut gdb_process = {
         let file_cmd = format!("file {}", file_path.display());
         let target_cmd = format!("target remote {}", remote);
@@ -206,8 +214,10 @@ impl Profile {
 #[derive(Debug)]
 struct ProfileBuffer {
     cur_profile: Profile,
+
     hex_in_pattern: Regex,
     impl_pattern: Regex,
+
     cur_cpu: Option<u32>,
 }
 

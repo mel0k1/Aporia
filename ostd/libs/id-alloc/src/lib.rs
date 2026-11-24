@@ -5,6 +5,8 @@ use core::{fmt::Debug, ops::Range};
 
 use bitvec::prelude::BitVec;
 
+/// An id allocator implemented by the bitmap.
+/// The true bit implies that the id is allocated, and vice versa.
 #[derive(Clone)]
 pub struct IdAlloc {
     bitset: BitVec<u8>,
@@ -12,6 +14,7 @@ pub struct IdAlloc {
 }
 
 impl IdAlloc {
+    /// Constructs a new id allocator with a maximum capacity.
     pub fn with_capacity(capacity: usize) -> Self {
         let mut bitset = BitVec::with_capacity(capacity);
         bitset.resize(capacity, false);
@@ -21,6 +24,9 @@ impl IdAlloc {
         }
     }
 
+    /// Allocates and returns a new `id`.
+    ///
+    /// If allocation is not possible, it returns `None`.
     pub fn alloc(&mut self) -> Option<usize> {
         if self.first_available_id < self.bitset.len() {
             let id = self.first_available_id;
@@ -32,6 +38,13 @@ impl IdAlloc {
         }
     }
 
+    /// Allocates a consecutive range of new `id`s.
+    ///
+    /// The `count` is the number of consecutive `id`s to allocate. If it is 0, return `None`.
+    ///
+    /// If allocation is not possible, it returns `None`.
+    ///
+    /// TODO: Choose a more efficient strategy.
     pub fn alloc_consecutive(&mut self, count: usize) -> Option<Range<usize>> {
         if count == 0 {
             return None;
@@ -70,6 +83,11 @@ impl IdAlloc {
         Some(allocated_range)
     }
 
+    /// Releases the consecutive range of allocated `id`s.
+    ///
+    /// # Panics
+    ///
+    /// If the `range` is out of bounds, this method will panic.
     pub fn free_consecutive(&mut self, range: Range<usize>) {
         if range.is_empty() {
             return;
@@ -86,6 +104,11 @@ impl IdAlloc {
         }
     }
 
+    /// Releases the allocated `id`.
+    ///
+    /// # Panics
+    ///
+    /// If the `id` is out of bounds, this method will panic.
     pub fn free(&mut self, id: usize) {
         debug_assert!(self.is_allocated(id));
 
@@ -95,6 +118,14 @@ impl IdAlloc {
         }
     }
 
+    /// Allocates a specific ID.
+    ///
+    /// If the ID is already allocated, it returns `None`, otherwise it
+    /// returns the allocated ID.
+    ///
+    /// # Panics
+    ///
+    /// If the `id` is out of bounds, this method will panic.
     pub fn alloc_specific(&mut self, id: usize) -> Option<usize> {
         if self.bitset[id] {
             return None;
@@ -106,10 +137,16 @@ impl IdAlloc {
         Some(id)
     }
 
+    /// Returns true if the `id` is allocated.
+    ///
+    /// # Panics
+    ///
+    /// If the `id` is out of bounds, this method will panic.
     pub fn is_allocated(&self, id: usize) -> bool {
         self.bitset[id]
     }
 
+    /// Updates the `first_available_id` field to the first zero index at or after `start`.
     fn update_first_available_id(&mut self, start: usize) {
         let len = self.bitset.len();
         let bit_slice = self

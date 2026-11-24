@@ -135,6 +135,7 @@ impl VirtioTransport for VirtioPciModernTransport {
         let device_feature_low = field_ptr!(&self.common_cfg, VirtioPciCommonCfg, device_features)
             .read_once()
             .unwrap();
+
         field_ptr!(&self.common_cfg, VirtioPciCommonCfg, device_feature_select)
             .write_once(&1u32)
             .unwrap();

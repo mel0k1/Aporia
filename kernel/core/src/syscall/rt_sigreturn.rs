@@ -23,6 +23,7 @@ pub(super) fn sys_rt_sigreturn(ctx: &Context, user_ctx: &mut UserContext) -> Res
     ucontext.uc_mcontext.copy_user_regs_to(user_ctx);
 
     let stack = ucontext.uc_stack;
+
     let _ = set_new_stack(stack, ctx, user_ctx.stack_pointer());
 
     let fpu_context_addr = cfg_select! {

@@ -42,6 +42,7 @@ struct Message {
 }
 
 impl MessageQueue {
+    /// Looks up a message queue bound to the specific address in the global table.
     pub(super) fn lookup_bound(addr: &UnixSocketAddrKey) -> Result<Arc<MessageQueue>> {
         QUEUE_TABLE
             .get_queue(addr)
@@ -101,6 +102,7 @@ impl MessageQueue {
         self.addr.get().cloned().unwrap_or(UnixSocketAddr::Unnamed)
     }
 
+    /// Blocks until the buffer is free and the `try_send` succeeds, or until interrupted.
     pub(super) fn block_send<F, R>(&self, timeout: Option<Duration>, mut try_send: F) -> Result<R>
     where
         F: FnMut() -> Result<R>,
@@ -194,6 +196,7 @@ impl MessageReceiver {
             inner.total_length -= message.bytes.len();
 
             self.queue.pollee.invalidate();
+
             self.queue.send_wait_queue.wake_all();
 
             message.aux.generate_control(behavior, is_pass_cred)

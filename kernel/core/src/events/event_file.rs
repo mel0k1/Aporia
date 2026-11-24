@@ -1,3 +1,14 @@
+//! The eventfd file object and its counter semantics.
+//!
+//! An eventfd maintains a 64-bit counter. Userspace writes add to the counter,
+//! while reads either consume the whole counter or decrement it by one in
+//! semaphore mode. Both operations may wait according to the file's status
+//! flags.
+//!
+//! `EventFile` is the file-descriptor-facing object behind an eventfd.  Its
+//! `KernelEventFile` component owns the counter and notification state shared
+//! with in-kernel producers and consumers.
+
 use core::fmt::Display;
 
 use ostd::sync::LocalIrqDisabled;
@@ -13,6 +24,7 @@ use crate::{
 };
 
 bitflags! {
+    /// Flags used internally when creating an eventfd file.
     #[derive(Clone, Copy, Debug)]
     pub(crate) struct EventFileFlags: u32 {
         const EFD_SEMAPHORE = 1;
@@ -21,6 +33,7 @@ bitflags! {
     }
 }
 
+/// The eventfd state shared by the file-descriptor and kernel-facing APIs.
 pub(crate) struct KernelEventFile {
     counter: SpinLock<u64, LocalIrqDisabled>,
     pollee: Pollee,
@@ -40,6 +53,8 @@ impl KernelEventFile {
         }
     }
 
+    /// Gets an independently owned kernel-facing state from an eventfd file.
+    /// Reference: <https://elixir.bootlin.com/linux/v7.0/source/fs/eventfd.c#L366>.
     #[cfg_attr(not(ktest), expect(dead_code))]
     pub(crate) fn from_file(file: &dyn FileLike) -> Result<Arc<Self>> {
         let event_file = file
@@ -48,6 +63,12 @@ impl KernelEventFile {
         Ok(event_file.kernel_event_file.clone())
     }
 
+    /// Reports the file-facing I/O readiness of the shared eventfd state.
+    ///
+    /// Kernel consumers can select the readiness relevant to their operation
+    /// through the poll mask. [`IoEvents::OUT`] retains its file-facing meaning:
+    /// userspace can write a value of at least one without blocking. It does not
+    /// constrain [`Self::signal`].
     fn check_io_events(&self) -> IoEvents {
         let counter = self.counter.lock();
 
@@ -69,6 +90,9 @@ impl KernelEventFile {
         events
     }
 
+    /// Consumes and returns the counter value.
+    ///
+    /// Reference: <https://elixir.bootlin.com/linux/v7.0/source/fs/eventfd.c#L176>.
     pub(crate) fn consume(&self) -> Option<u64> {
         let mut counter = self.counter.lock();
         let value = if *counter == 0 {
@@ -87,6 +111,11 @@ impl KernelEventFile {
         Some(value)
     }
 
+    /// Increments the counter by one.
+    ///
+    /// Unlike userspace writes, this operation may bring the counter to
+    /// `u64::MAX`, which is reported through `POLLERR`.
+    /// Reference: <https://elixir.bootlin.com/linux/v7.0/source/fs/eventfd.c#L46>.
     #[cfg_attr(not(ktest), expect(dead_code))]
     pub(crate) fn signal(&self) {
         let mut counter = self.counter.lock();
@@ -127,6 +156,7 @@ impl EventFile {
         let pseudo_path = AnonInodeFs::new_path(|_| "anon_inode:[eventfd]".to_string());
         Self {
             kernel_event_file: Arc::new(KernelEventFile::new(init_val, is_semaphore)),
+
             common: FileCommon::new(pseudo_path, AccessMode::O_RDWR, status_flags),
         }
     }
@@ -144,6 +174,10 @@ impl EventFile {
         Ok(())
     }
 
+    /// Adds a userspace-supplied value to the counter.
+    ///
+    /// If the new value overflows or exceeds `MAX_COUNTER_VALUE`, the counter
+    /// is not modified and this method returns `Err(EAGAIN)`.
     fn add_counter_val(&self, val: u64) -> Result<()> {
         let mut counter = self.kernel_event_file.counter.lock();
 

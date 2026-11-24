@@ -1,3 +1,5 @@
+//! State shared by all references to a file description.
+
 use core::sync::atomic::Ordering;
 
 use super::{AccessMode, AtomicStatusFlags, FileLike, StatusFlags, file_handle::StatusFlagsUpdate};
@@ -11,6 +13,10 @@ use crate::{
     },
 };
 
+/// Common fields for a file description.
+///
+/// This type is intended to collect state that belongs to the file description rather than to a
+/// specific file descriptor.
 pub(crate) struct FileCommon {
     path: Path,
     access_mode: AccessMode,
@@ -19,6 +25,7 @@ pub(crate) struct FileCommon {
 }
 
 impl FileCommon {
+    /// Creates common state for a file description.
     pub(crate) fn new(path: Path, access_mode: AccessMode, status_flags: StatusFlags) -> Self {
         Self {
             path,
@@ -28,22 +35,27 @@ impl FileCommon {
         }
     }
 
+    /// Returns the path associated with the file description.
     pub(crate) fn path(&self) -> &Path {
         &self.path
     }
 
+    /// Returns the access mode of the file description.
     pub(crate) fn access_mode(&self) -> AccessMode {
         self.access_mode
     }
 
+    /// Returns the current file status flags.
     pub(crate) fn status_flags(&self) -> StatusFlags {
         self.status_flags.load(Ordering::Relaxed)
     }
 
+    /// Returns whether the file description is in non-blocking mode.
     pub(crate) fn is_nonblocking(&self) -> bool {
         self.status_flags().contains(StatusFlags::O_NONBLOCK)
     }
 
+    /// Atomically updates the file status flags.
     pub(super) fn update_status_flags(&self, file: &dyn FileLike, update: StatusFlagsUpdate) {
         if !update.affects(StatusFlags::O_ASYNC) {
             self.apply_status_flags(update);
@@ -68,6 +80,7 @@ impl FileCommon {
             });
     }
 
+    /// Returns the asynchronous I/O signal owner.
     pub(crate) fn owner(&self) -> &FileOwner {
         &self.owner
     }
@@ -79,17 +92,20 @@ impl Drop for FileCommon {
     }
 }
 
+/// The process that receives asynchronous I/O signals for a file description.
 pub(crate) struct FileOwner {
     inner: Mutex<Option<Owner>>,
 }
 
 impl FileOwner {
+    /// Creates an owner state with no process assigned.
     pub(crate) fn new() -> Self {
         Self {
             inner: Mutex::new(None),
         }
     }
 
+    /// Returns the process ID of the current owner.
     pub(crate) fn pid(&self) -> Option<Pid> {
         self.inner.lock().as_ref().map(|owner| owner.pid)
     }

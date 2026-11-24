@@ -1,3 +1,7 @@
+//! NVMe Submission and Completion Queue implementation.
+//!
+//! Refer to NVM Express Base Specification Revision 2.0, Section 3.3 (Queue Mechanism).
+
 use alloc::vec::Vec;
 use core::{
     ops::DerefMut,
@@ -16,10 +20,13 @@ use crate::{
     transport::pci::transport::DbregAccess,
 };
 
+/// Number of entries in each submission and completion ring.
 pub(crate) const QUEUE_DEPTH: usize = 64;
 
+/// Number of queue pairs the driver allocates (admin plus I/O).
 pub(crate) const QUEUE_NUM: usize = 2;
 
+/// Completion Queue.
 #[derive(Debug)]
 pub(crate) struct NvmeCompletionQueue {
     cqueue: SafePtr<Cqring, DmaCoherent>,
@@ -32,6 +39,9 @@ struct Cqring {
 }
 
 impl NvmeCompletionQueue {
+    /// Creates a new completion ring.
+    ///
+    /// Returns `None` if DMA memory for the completion ring cannot be allocated.
     pub(crate) fn new() -> Option<Self> {
         let dma = DmaCoherent::alloc(1, true).ok()?;
         Some(Self {
@@ -41,10 +51,15 @@ impl NvmeCompletionQueue {
         })
     }
 
+    /// Returns the DMA physical address of the completion ring.
     pub(crate) fn cq_daddr(&self) -> usize {
         self.cqueue.daddr()
     }
 
+    /// Consumes the next completion entry if its phase tag matches the expected phase.
+    ///
+    /// Returns the new head index (for the CQ head doorbell) and the completion, or `None` if no
+    /// entry is ready.
     fn complete(&mut self) -> Option<(u16, NvmeCompletion)> {
         let ring_ptr: SafePtr<[NvmeCompletion; QUEUE_DEPTH], &DmaCoherent> =
             field_ptr!(&self.cqueue, Cqring, ring);
@@ -69,6 +84,11 @@ impl NvmeCompletionQueue {
     }
 }
 
+/// Submission Queue.
+///
+/// The type parameter `C` is optional driver-side state for in-flight commands:
+/// [`NoContext`] when none is needed (e.g., the admin queue),
+/// or [`Context`] to keep one value per CID until the matching completion is taken.
 pub(crate) struct NvmeSubmissionQueue<C = NoContext> {
     inner: NvmeSubmissionQueueInner,
     context: C,
@@ -94,6 +114,9 @@ impl<C> core::fmt::Debug for NvmeSubmissionQueue<C> {
 }
 
 impl<C: Default> NvmeSubmissionQueue<C> {
+    /// Creates a new submission queue.
+    ///
+    /// Returns `None` if DMA memory for the submission ring cannot be allocated.
     pub(crate) fn new() -> Option<Self> {
         Some(Self {
             inner: NvmeSubmissionQueueInner::new()?,
@@ -103,14 +126,17 @@ impl<C: Default> NvmeSubmissionQueue<C> {
 }
 
 impl<C> NvmeSubmissionQueue<C> {
+    /// Updates the mirrored SQ head from the SQ head pointer in `completion`.
     pub(crate) fn update_sq_head(&mut self, completion: &NvmeCompletion) {
         self.inner.head = completion.sq_head() % (QUEUE_DEPTH as u16);
     }
 
+    /// Returns the DMA physical address of the submission ring.
     pub(crate) fn sq_daddr(&self) -> usize {
         self.inner.squeue.daddr()
     }
 
+    /// Returns the number of SQ slots available for new commands starting at the current tail.
     pub(crate) fn free_slots(&self) -> usize {
         let used = if self.inner.tail >= self.inner.head {
             (self.inner.tail - self.inner.head) as usize
@@ -122,6 +148,7 @@ impl<C> NvmeSubmissionQueue<C> {
 }
 
 impl NvmeSubmissionQueue<NoContext> {
+    /// Replaces the unused unit context slots with an empty context table of type `T`.
     pub(crate) fn with_items<T>(self) -> NvmeSubmissionQueue<Context<T>> {
         NvmeSubmissionQueue {
             inner: self.inner,
@@ -131,11 +158,15 @@ impl NvmeSubmissionQueue<NoContext> {
 }
 
 impl<T> NvmeSubmissionQueue<Context<T>> {
+    /// Removes and returns the outstanding context for `cid`.
+    ///
+    /// Returns `None` if `cid` is out of range or the slot has no outstanding context.
     pub(crate) fn take_item(&mut self, cid: u16) -> Option<T> {
         self.context.0.get_mut(cid as usize)?.take()
     }
 }
 
+/// Hardware submission ring.
 #[derive(Debug)]
 struct NvmeSubmissionQueueInner {
     squeue: SafePtr<Sqring, DmaCoherent>,
@@ -148,6 +179,9 @@ struct Sqring {
 }
 
 impl NvmeSubmissionQueueInner {
+    /// Creates a new submission ring.
+    ///
+    /// Returns `None` if DMA memory for the submission ring cannot be allocated.
     fn new() -> Option<Self> {
         let dma = DmaCoherent::alloc(1, true).ok()?;
         Some(Self {
@@ -157,6 +191,11 @@ impl NvmeSubmissionQueueInner {
         })
     }
 
+    /// Enqueues a command into the submission ring.
+    ///
+    /// Does nothing when the queue is full (`(tail + 1) % size == head`).
+    ///
+    /// Returns the new tail index for the SQ Tail doorbell, or `None` if full.
     fn submit(&mut self, entry: NvmeCommand) -> Option<u16> {
         let next_tail = (self.tail + 1) % (QUEUE_DEPTH as u16);
         if next_tail == self.head {
@@ -187,6 +226,7 @@ impl<'a, Q> NvmeCompletionQueueAccess<'a, Q>
 where
     Q: DerefMut<Target = NvmeCompletionQueue>,
 {
+    /// Binds queue `qid` and doorbell stride `dstrd` to `queue` and `dbregs` for locked poll.
     pub(crate) fn new(qid: u16, dstrd: u16, queue: Q, dbregs: DbregAccess<'a>) -> Self {
         Self {
             qid,
@@ -196,6 +236,9 @@ where
         }
     }
 
+    /// Consumes all ready completions and updates the CQ head doorbell once.
+    ///
+    /// Returns an empty vector when no completion is ready.
     pub(crate) fn complete(&mut self) -> Vec<NvmeCompletion> {
         let mut entries = Vec::new();
         let mut last_head = None;
@@ -209,6 +252,7 @@ where
         entries
     }
 
+    /// Polls one completion without ringing the CQ doorbell.
     fn poll(&mut self) -> Option<(NvmeCompletion, u16)> {
         let (new_head, entry) = self.queue.complete()?;
         if entry.has_error() {
@@ -224,6 +268,7 @@ where
         Some((entry, new_head))
     }
 
+    /// Rings the CQ head doorbell after one or more [`Self::poll`] calls.
     fn ring_doorbell(&mut self, new_head: u16) {
         fence(Ordering::SeqCst);
         self.dbregs.write_racy(
@@ -246,6 +291,7 @@ impl<'a, Q, C> NvmeSubmissionQueueAccess<'a, Q>
 where
     Q: DerefMut<Target = NvmeSubmissionQueue<C>>,
 {
+    /// Binds queue `qid` and doorbell stride `dstrd` to `queue` and `dbregs` for locked submit.
     pub(crate) fn new(qid: u16, dstrd: u16, queue: Q, dbregs: DbregAccess<'a>) -> Self {
         Self {
             qid,
@@ -255,12 +301,15 @@ where
         }
     }
 
+    /// Returns the number of free SQ slots available for new commands.
     pub(crate) fn free_slots(&self) -> usize {
         self.queue.free_slots()
     }
 
+    /// Rings the SQ tail doorbell after one or more enqueued commands.
     fn ring_doorbell(&mut self) {
         let new_tail = self.queue.inner.tail;
+
         fence(Ordering::SeqCst);
         self.dbregs.write_racy(
             NvmeDoorbellRegs::Sqtdbl,
@@ -275,6 +324,13 @@ impl<'a, Q> NvmeSubmissionQueueAccess<'a, Q>
 where
     Q: DerefMut<Target = NvmeSubmissionQueue<NoContext>>,
 {
+    /// Submits a command and rings the SQ tail doorbell.
+    ///
+    /// Writes at the current tail, sets the command identifier to that slot index, advances the
+    /// tail, then updates the doorbell.
+    ///
+    /// Returns the command identifier used (same as the tail before enqueue), or `None` if the
+    /// queue is full.
     pub(crate) fn submit(&mut self, mut entry: NvmeCommand) -> Option<u16> {
         let cid = self.queue.inner.tail;
         entry.set_cid(cid);
@@ -288,6 +344,7 @@ impl<'a, Q, T> NvmeSubmissionQueueAccess<'a, Q>
 where
     Q: DerefMut<Target = NvmeSubmissionQueue<Context<T>>>,
 {
+    /// Submits a batch of commands with contexts and rings the SQ doorbell once.
     pub(crate) fn submit_with_items(
         &mut self,
         commands: impl IntoIterator<Item = (NvmeCommand, T)>,
@@ -303,6 +360,7 @@ where
         Some(count)
     }
 
+    /// Enqueues one command and context without ringing the SQ doorbell.
     fn enqueue_one(&mut self, mut entry: NvmeCommand, item: T) -> Option<u16> {
         let cid = self.queue.inner.tail;
         if self.queue.context.0[cid as usize].is_some() {

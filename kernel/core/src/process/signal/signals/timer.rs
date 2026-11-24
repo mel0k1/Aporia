@@ -24,6 +24,7 @@ impl Signal for TimerSignal {
 
     fn to_info(&self) -> siginfo_t {
         let mut info = siginfo_t::new(self.num, SI_TIMER);
+
         info.set_timer(self.timerid, 0);
         info.set_ptr(self.ptr);
         info

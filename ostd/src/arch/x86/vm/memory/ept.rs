@@ -1,3 +1,5 @@
+//! Four-level Intel extended page tables with tracked 4-KiB backing frames.
+
 use crate::mm::{
     Paddr, PageProperty, PagingConstsTrait, PagingLevel, PodOnce,
     page_prop::{CachePolicy, PageFlags, PageTableFlags, PrivilegedPageFlags as PrivFlags},
@@ -23,10 +25,13 @@ bitflags::bitflags! {
         const WRITABLE   = 1 << 1;
         const EXECUTABLE = 1 << 2;
 
+
         const IGNORE_PAT = 1 << 6;
 
         const ACCESSED   = 1 << 8;
         const DIRTY      = 1 << 9;
+
+
 
         const PRESENT    = 1 << 11;
         const AVAIL2     = 1 << 52;
@@ -38,6 +43,7 @@ bitflags::bitflags! {
     }
 }
 
+/// Parses a bit-flag bits `val` in the representation of `from` to `to` in bits.
 macro_rules! parse_flags {
     ($val:expr, $from:expr, $to:expr) => {
         (($val as usize & $from.bits() as usize) >> $from.bits().ilog2() << $to.bits().ilog2())

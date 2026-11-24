@@ -1,3 +1,21 @@
+//! The workdir temporary lifecycle.
+//!
+//! [`WorkdirTemp`] is the guard of one staged object: it holds the name the object was created
+//! under, its dentry, an owned handle of the workspace it lives in, and whether an outlet has
+//! already consumed it. Two consuming outlets discharge the guard — [`WorkdirTemp::publish`]
+//! renames the object into the upper, and [`WorkdirTemp::into_whiteout`] detaches it into a
+//! whiteout handle the workspace never cleans up — and [`Drop`](WorkdirTemp) is the backstop for
+//! an early `?` that took neither, removing the temp. Because the workspace handle is owned and
+//! has no accessor, those outlets are the only paths that move a guarded name.
+//!
+//! [`UpperWorkdirInuse::create_workdir_temp`] and
+//! [`UpperWorkdirInuse::create_workdir_link_temp`] each generate one counter-derived name and
+//! perform one explicit creation; the naming itself belongs to the owner
+//! ([`UpperWorkdirInuse::next_temp_name`]).
+//!
+//! Invariants: the workspace is pinned at mount time and lives outside every layer root; workdir
+//! temps are never visible entries of any layer.
+
 use crate::{
     fs::{
         fs_impls::overlayfs::{fs::mount::inuse::UpperWorkdirInuse, inode::CreateOp},
@@ -9,6 +27,10 @@ use crate::{
     prelude::*,
 };
 
+/// The guard of one staged object.
+///
+/// It holds the name the object was created under, its dentry, an owned handle of the workspace it
+/// lives in, and whether an outlet has already consumed it.
 pub(in super::super) struct WorkdirTemp {
     name: String,
     dentry: Arc<Dentry>,
@@ -25,14 +47,24 @@ impl WorkdirTemp {
         self.dentry.inode()
     }
 
+    /// The temp's own dentry, paired with [`Self::inode`] for real-layer setter calls.
     pub(in super::super) fn dentry(&self) -> &Arc<Dentry> {
         &self.dentry
     }
 
+    /// Marks this guard consumed without touching the workspace entry.
+    ///
+    /// The outlet that detaches the staged object (a shared whiteout outlives the guard) calls
+    /// this, so `Drop` leaves the entry where it is.
     pub(in super::super) fn mark_consumed(&mut self) {
         self.consumed = true;
     }
 
+    /// Publishes this staged temp into `upper_parent` under `name`, consuming the guard.
+    ///
+    /// A successful rename moves the entry out of the workspace, and a failed one leaves the
+    /// guard unconsumed so `Drop` removes the temp — the same best-effort cleanup the callers
+    /// used to write by hand.
     pub(in super::super) fn publish(
         mut self,
         upper_parent: &Arc<Dentry>,
@@ -51,6 +83,7 @@ impl WorkdirTemp {
 }
 
 impl Drop for WorkdirTemp {
+    /// Removes a temp that was neither published nor detached.
     fn drop(&mut self) {
         if self.consumed {
             return;
@@ -69,6 +102,7 @@ impl Drop for WorkdirTemp {
 }
 
 impl UpperWorkdirInuse {
+    /// Creates one staged temp under a counter-derived name with the real call `op` selects.
     pub(in super::super) fn create_workdir_temp(
         &self,
         target_name: &str,
@@ -85,6 +119,7 @@ impl UpperWorkdirInuse {
         })
     }
 
+    /// Creates one staged temp that is a hard link to `source`.
     pub(in super::super) fn create_workdir_link_temp(
         &self,
         target_name: &str,

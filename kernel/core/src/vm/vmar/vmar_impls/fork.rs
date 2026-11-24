@@ -11,6 +11,8 @@ use super::{RssDelta, Vmar};
 use crate::{prelude::*, process::ProcessVm, vm::vmar::VmarHandle};
 
 impl Vmar {
+    /// Creates a new VMAR whose content is inherited from another
+    /// using copy-on-write (COW) technique.
     pub(crate) fn fork_from(vmar: &Self) -> VmarHandle {
         let heap_guard = vmar.process_vm.heap().lock();
 
@@ -60,6 +62,13 @@ impl Vmar {
     }
 }
 
+/// Sets mappings in the source page table as read-only to trigger COW, and
+/// copies the mappings to the destination page table.
+///
+/// The copied range starts from `src`'s current position with the given
+/// `size`. The destination range starts from `dst`'s current position.
+///
+/// The number of physical frames copied is returned.
 fn cow_copy_pt(src: &mut CursorMut<'_>, dst: &mut CursorMut<'_>, size: usize) -> usize {
     let start_va = src.virt_addr();
     let end_va = start_va + size;
@@ -232,6 +241,7 @@ mod test {
 
     #[ktest]
     fn cow_copy_pt_iomem() {
+        /// A very large address (1TiB) beyond typical physical memory for testing.
         const IOMEM_PADDR: usize = 0x100_000_000_000;
 
         let vm_space = VmSpace::new();

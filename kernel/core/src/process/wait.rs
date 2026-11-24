@@ -163,12 +163,17 @@ enum WaitStatusSource<'a> {
     Thread(&'a PosixThread),
 }
 
+/// The result of trying to wait for a child/tracee state change.
 enum WaitResult {
+    /// A waitable status is found.
     Found(WaitStatus),
+    /// At least one target matches, but none is waitable yet.
     MatchedButUnready,
+    /// No target matches the wait filter.
     NoMatch,
 }
 
+/// Checks tracees for exited or ptrace-stopped threads.
 fn try_wait_tracees(
     child_filter: &ProcessFilter,
     wait_options: WaitOptions,
@@ -245,6 +250,7 @@ fn cleanup_exited_tracee(
     );
 }
 
+/// Checks children for zombie or stopped/continued events.
 fn try_wait_children(
     child_filter: &ProcessFilter,
     wait_options: WaitOptions,
@@ -294,6 +300,7 @@ fn try_wait_children(
     fallback_result
 }
 
+/// Free zombie child with `child_pid`, returns the exit code of child process.
 fn reap_zombie_child(
     child_pid: Pid,
     children_lock: &mut BTreeMap<Pid, Arc<Process>>,

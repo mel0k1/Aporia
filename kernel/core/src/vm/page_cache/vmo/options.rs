@@ -1,3 +1,5 @@
+//! Options for allocating root and child VMOs.
+
 use core::sync::atomic::AtomicUsize;
 
 use align_ext::AlignExt;
@@ -13,6 +15,29 @@ use crate::{
     },
 };
 
+/// Options for allocating a root VMO.
+///
+/// # Examples
+///
+/// Creating a generic VMO:
+/// ```
+/// use ostd::mm::PAGE_SIZE;
+///
+/// use crate::vm::page_cache::VmoOptions;
+///
+/// let vmo = VmoOptions::new(PAGE_SIZE).alloc();
+/// assert!(vmo.is_ok());
+/// ```
+///
+/// Creating an anonymous page-cache-style VMO:
+/// ```
+/// use ostd::mm::PAGE_SIZE;
+///
+/// use crate::vm::page_cache::VmoOptions;
+///
+/// let vmo = VmoOptions::new_anon(10 * PAGE_SIZE).alloc();
+/// assert!(vmo.is_ok());
+/// ```
 pub(crate) struct VmoOptions {
     size: usize,
     flags: VmoFlags,
@@ -20,6 +45,14 @@ pub(crate) struct VmoOptions {
 }
 
 impl VmoOptions {
+    /// Creates a default set of options with the specified size of the VMO
+    /// (in bytes).
+    ///
+    /// The size of the VMO will be rounded up to align with the page size.
+    ///
+    /// This is the low-level builder entry point. Call [`VmoOptions::new_anon`]
+    /// for resizable RAM-backed page-cache-style VMOs, or
+    /// [`VmoOptions::new_page_cache`] for page-cache VMOs with a backend.
     pub(crate) fn new(size: usize) -> Self {
         Self {
             size,
@@ -28,19 +61,27 @@ impl VmoOptions {
         }
     }
 
+    /// Creates options for an anonymous resizable VMO.
     pub(crate) fn new_anon(size: usize) -> Self {
         Self::new(size).flags(VmoFlags::RESIZABLE)
     }
 
+    /// Creates options for a page-cache VMO with a backend.
     pub(crate) fn new_page_cache(size: usize, backend: Weak<dyn PageCacheBackend>) -> Self {
         Self::new(size).flags(VmoFlags::RESIZABLE).backend(backend)
     }
 
+    /// Sets the VMO flags.
+    ///
+    /// The default value is `VmoFlags::empty()`.
+    ///
+    /// For more information about the flags, see `VmoFlags`.
     pub(crate) fn flags(mut self, flags: VmoFlags) -> Self {
         self.flags = flags;
         self
     }
 
+    /// Sets the backend for the VMO.
     fn backend(mut self, backend: Weak<dyn PageCacheBackend>) -> Self {
         self.backend = Some(backend);
         self
@@ -48,6 +89,7 @@ impl VmoOptions {
 }
 
 impl VmoOptions {
+    /// Allocates the VMO according to the specified options.
     pub(crate) fn alloc(self) -> Result<Arc<Vmo>> {
         let VmoOptions {
             size,
@@ -108,6 +150,7 @@ mod test {
     fn alloc_vmo() {
         let vmo = VmoOptions::new(PAGE_SIZE).alloc().unwrap();
         assert_eq!(vmo.size(), PAGE_SIZE);
+
         let mut read_buffer = [0; size_of::<usize>()];
         let mut writer = VmWriter::from(read_buffer.as_mut_slice()).to_fallible();
         vmo.read(0, &mut writer).unwrap();
@@ -127,6 +170,7 @@ mod test {
     fn write_and_read() {
         let vmo = VmoOptions::new(PAGE_SIZE).alloc().unwrap();
         let val = 42u8;
+
         let mut reader = VmReader::from(core::slice::from_ref(&val)).to_fallible();
         vmo.write(111, &mut reader).unwrap();
 
@@ -135,6 +179,7 @@ mod test {
         vmo.read(111, &mut writer).unwrap();
         let read_val = read_buffer[0];
         assert_eq!(val, read_val);
+
         let mut reader = VmReader::from(&[0x12, 0x34, 0x56, 0x78][..]).to_fallible();
         vmo.write(222, &mut reader).unwrap();
 

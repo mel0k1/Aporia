@@ -7,7 +7,18 @@ use ostd::{
     irq::IrqLine,
 };
 
+/// An extension trait that provides [`acquire_irq_lines`] for [`FdtNode`].
+///
+/// [`acquire_irq_lines`]: Self::acquire_irq_lines
 pub trait AcquireIrqLines {
+    /// Allocates and maps `N` [`MappedIrqLine`]s according to the `interrupts` property of the
+    /// device tree node.
+    ///
+    /// The caller is expected to pass an accurate value of `N`. This method will fail if the node
+    /// contains too many or too few interrupt lines in the `interrupts` property.
+    ///
+    /// This method will also fail if any interrupt lines in the `interrupts` property is invalid or
+    /// unavailable.
     fn acquire_irq_lines<const N: usize>(&self) -> Option<[MappedIrqLine; N]>;
 }
 

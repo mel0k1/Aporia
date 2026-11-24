@@ -1,3 +1,5 @@
+//! Lifecycle management for host daemons running alongside QEMU.
+
 mod signal;
 mod supervisor;
 
@@ -9,14 +11,22 @@ use std::{
 };
 
 use rustix::process::{self, Pid, Signal};
-pub(crate) use signal::SignalGuard;
-pub(crate) use supervisor::DaemonSupervisor;
 
 use crate::{config::scheme::DaemonScheme, error::Errno, error_msg};
 
+pub(crate) use signal::SignalGuard;
+pub(crate) use supervisor::DaemonSupervisor;
+
+/// Interval between polls while monitoring QEMU and shutting down daemons.
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
+/// Maximum time allowed for a daemon to exit after `SIGTERM`.
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// A host daemon that has been started and is supervised until QEMU exits.
+///
+/// The owning supervisor polls the child until it exits and reaps it. When the
+/// QEMU run ends or is interrupted, the supervisor terminates the daemon and
+/// reaps its child process.
 struct RunningDaemon<'a> {
     daemon: &'a DaemonScheme,
     child: Child,
@@ -29,6 +39,7 @@ impl<'a> RunningDaemon<'a> {
         command.args(&daemon.args);
 
         command.current_dir(work_dir);
+
         command.process_group(0);
 
         let child = command.spawn().map_err(|err| {

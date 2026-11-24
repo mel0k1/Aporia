@@ -1,3 +1,5 @@
+//! Configure the Global Descriptor Table (GDT).
+
 use core::{
     cell::UnsafeCell,
     mem::offset_of,
@@ -26,6 +28,16 @@ use crate::{
     mm::Vaddr,
 };
 
+/// Initializes and loads the GDT and TSS.
+///
+/// The caller should only call this method once in the boot context for each available processor.
+/// This is not a safety requirement, however, because calling this method again will do nothing
+/// more than load the GDT and TSS with the same contents.
+///
+/// # Safety
+///
+/// The caller must ensure that no preemption can occur during the method, otherwise we may
+/// accidentally load a wrong GDT and TSS that actually belongs to another CPU.
 pub(super) unsafe fn init_on_cpu() {
     let gdt = GDT.get_on_cpu(CpuId::current_racy());
 
@@ -45,19 +57,23 @@ pub(super) unsafe fn init_on_cpu() {
         limit: (size_of_val(gdt) - 1) as u16,
         base: VirtAddr::new(core::ptr::from_ref(gdt).addr() as u64),
     };
+
     unsafe { lgdt(&gdtr) };
 
     unsafe { load_tss(TSS_SEL) };
 }
 
+/// Returns the current CPU's GDT base address.
 pub(in crate::arch) fn gdt_base(_guard: &DisabledLocalIrqGuard) -> Vaddr {
     GDT.as_ptr() as Vaddr
 }
 
+/// Returns the GDT limit.
 pub(in crate::arch) fn gdt_limit() -> u16 {
     (size_of::<Gdt>() - 1) as u16
 }
 
+/// Returns the current CPU's TSS base address.
 pub(in crate::arch) fn tss_base(_guard: &DisabledLocalIrqGuard) -> Vaddr {
     UnsafeCell::raw_get(LOCAL_TSS.as_ptr()) as Vaddr
 }
@@ -65,6 +81,7 @@ pub(in crate::arch) fn tss_base(_guard: &DisabledLocalIrqGuard) -> Vaddr {
 #[unsafe(link_section = ".cpu_local_tss")]
 static LOCAL_TSS: StaticCpuLocal<UnsafeCell<TaskStateSegment>> = {
     let tss = UnsafeCell::new(TaskStateSegment::new());
+
     unsafe { CpuLocal::__new_static(tss) }
 };
 
@@ -77,6 +94,7 @@ struct Gdt {
     _ucode32: u64,
     udata: u64,
     ucode64: u64,
+
     tss0: AtomicU64,
     tss1: AtomicU64,
 }

@@ -10,6 +10,7 @@ pub(crate) fn init() {
     socket::vsock::init();
 }
 
+/// Lazy init should be called after spawning init thread.
 pub(crate) fn init_in_first_kthread() {
     iface::init_in_first_kthread();
 }

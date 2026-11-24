@@ -1,14 +1,34 @@
+//! The bottom half of interrupt handling.
+
 use spin::Once;
 
 use super::{DisabledLocalIrqGuard, InterruptLevel, disable_local};
 use crate::task::disable_preempt;
 
+/// Registers a bottom half callback to be executed at interrupt level 1.
+///
+/// The callback takes a [`DisabledLocalIrqGuard`] as the first argument.
+/// This allows the callback to drop the guard
+/// in order to re-enable IRQs on the current CPU.
+/// The callback requires returning a `DisabledLocalIrqGuard`,
+/// thus ensuring that local IRQs are disabled by the end of the callback.
+/// The second argument is the IRQ number being processed.
+///
+/// The function may be called only once; subsequent calls take no effect.
 pub fn register_bottom_half_handler_l1(
     func: fn(DisabledLocalIrqGuard, u8) -> DisabledLocalIrqGuard,
 ) {
     BOTTOM_HALF_HANDLER_L1.call_once(|| func);
 }
 
+/// Registers a bottom half callback to be executed at interrupt level 2.
+///
+/// Unlike the level 1 bottom half callback,
+/// the level 2 bottom half callback registered with this function
+/// cannot re-enable local IRQs.
+/// The function takes the IRQ number being processed as argument.
+///
+/// The function may be called only once; subsequent calls take no effect.
 pub fn register_bottom_half_handler_l2(func: fn(u8)) {
     BOTTOM_HALF_HANDLER_L2.call_once(|| func);
 }

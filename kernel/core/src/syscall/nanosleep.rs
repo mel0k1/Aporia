@@ -86,9 +86,11 @@ fn do_clock_nanosleep(
             ClockId::CLOCK_BOOTTIME => BootTimeClock::timer_manager(),
             ClockId::CLOCK_MONOTONIC => MonotonicClock::timer_manager(),
             ClockId::CLOCK_REALTIME => RealTimeClock::timer_manager(),
+
             ClockId::CLOCK_PROCESS_CPUTIME_ID => {
                 ctx.process.timer_manager().prof_timer().timer_manager()
             }
+
             ClockId::CLOCK_THREAD_CPUTIME_ID
             | ClockId::CLOCK_MONOTONIC_RAW
             | ClockId::CLOCK_REALTIME_COARSE

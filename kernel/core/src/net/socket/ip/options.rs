@@ -10,6 +10,7 @@ use crate::{
     prelude::*,
 };
 
+/// IP-level socket options.
 #[derive(Clone, Copy, CopyGetters, Debug, Setters)]
 #[get_copy = "pub"]
 #[set = "pub"]

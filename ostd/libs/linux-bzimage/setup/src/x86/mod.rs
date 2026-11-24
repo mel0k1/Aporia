@@ -25,7 +25,9 @@ global_asm!(
     CFG_TARGET_ARCH_X86_64 = const CFG_TARGET_ARCH_X86_64,
 );
 
+/// Returns the difference between the real load address and the one in the linker script.
 pub(crate) fn image_load_offset() -> isize {
+    /// The load address of the `entry_legacy32` symbol specified in the linker script.
     const CODE32_START: isize = 0x100000;
 
     unsafe extern "C" {
@@ -40,6 +42,7 @@ global_asm!(
     concat!(".incbin \"", env!("PAYLOAD_FILE"), "\""),
 );
 
+/// Returns an immutable slice containing the payload (i.e., the kernel).
 fn payload() -> &'static [u8] {
     unsafe extern "C" {
         fn __payload_start();

@@ -16,7 +16,11 @@ use crate::{
 };
 
 struct PendingInvalidation {
+    /// Whether invalidation is pending.
+    ///
+    /// Note that permission changes can set this without frames to be released.
     is_pending: bool,
+    /// Frames that will only be released after INVEPT.
     frames: Vec<Frame<dyn AnyFrameMeta>>,
 }
 
@@ -28,17 +32,24 @@ cpu_local! {
         });
 }
 
+/// Checks the EPT and invalidation capabilities used by guest memory.
+///
+/// # Safety
+///
+/// The current CPU must support VMX.
 pub(super) unsafe fn check_ept_support(_irq_guard: &DisabledLocalIrqGuard) -> Result<()> {
     let primary_allowed_1 = (unsafe { rdmsr(IA32_VMX_PROCBASED_CTLS) } >> 32) as u32;
     if primary_allowed_1 & PrimaryControls::SECONDARY_CONTROLS.bits() == 0 {
         return Err(Error::NotEnoughResources);
     }
+
     let secondary_allowed_1 = (unsafe { rdmsr(IA32_VMX_PROCBASED_CTLS2) } >> 32) as u32;
     if secondary_allowed_1 & SecondaryControls::ENABLE_EPT.bits() == 0 {
         return Err(Error::NotEnoughResources);
     }
 
     let cap = unsafe { rdmsr(IA32_VMX_EPT_VPID_CAP) };
+
     const REQUIRED: u64 = (1 << 6) | (1 << 14) | (1 << 20) | (1 << 26);
     if cap & REQUIRED != REQUIRED {
         return Err(Error::NotEnoughResources);
@@ -46,6 +57,11 @@ pub(super) unsafe fn check_ept_support(_irq_guard: &DisabledLocalIrqGuard) -> Re
     Ok(())
 }
 
+/// Dispatches EPT invalidation and retains the frames until every CPU has flushed.
+///
+/// The current CPU flushes before returning; remote CPUs flush asynchronously.
+/// Each CPU owns a reference to every frame until its INVEPT completes.
+/// The returned handle can be used to wait for remote invalidations to complete.
 pub(in crate::arch::vm) fn invalidate(
     _vmx_guard: &VmxGuard,
     frames: &[RcuDrop<Frame<dyn AnyFrameMeta>>],

@@ -1,10 +1,20 @@
+//! Intervals and interval sets used in VMARs.
+
 use alloc::collections::btree_map::{BTreeMap, Cursor, CursorMut};
 use core::ops::Range;
 
+/// The interval of an item in an interval set.
+///
+/// All items in the interval set must have a range.
 pub(crate) trait Interval<K: Clone> {
+    /// Returns the range of the interval.
     fn range(&self) -> Range<K>;
 }
 
+/// A collection that contains non-overlapping intervals as items.
+///
+/// In particular, the collection allows one to retrieve interval items that
+/// intersect with a point of value or range of values.
 #[derive(Debug)]
 pub(crate) struct IntervalSet<K, V>
 where
@@ -29,36 +39,47 @@ where
     K: Clone + Ord,
     V: Interval<K>,
 {
+    /// Creates a new interval set.
     pub(crate) const fn new() -> Self {
         Self {
             btree: BTreeMap::new(),
         }
     }
 
+    /// Returns the number of elements in the interval set.
     pub(crate) fn len(&self) -> usize {
         self.btree.len()
     }
 
+    /// Inserts an interval item into the interval set.
     pub(crate) fn insert(&mut self, item: V) {
         let range = item.range();
         self.btree.insert(range.start, item);
     }
 
+    /// Removes an interval item from the interval set.
     pub(crate) fn remove(&mut self, key: &K) -> Option<V> {
         self.btree.remove(key)
     }
 
+    /// Returns an iterator over the interval items in the interval set.
     pub(crate) fn iter(&self) -> impl DoubleEndedIterator<Item = &V> {
         self.btree.values()
     }
 
+    /// Finds an interval item that contains the given point.
+    ///
+    /// If no such item exists, returns [`None`]. Otherwise, returns the item
+    /// that contains the point.
     pub(crate) fn find_one(&self, point: &K) -> Option<&V> {
         let cursor = self.btree.lower_bound(core::ops::Bound::Excluded(point));
+
         cursor
             .peek_prev()
             .and_then(|(_, v)| (v.range().end > *point).then_some(v))
     }
 
+    /// Finds all interval items that intersect with the given range.
     pub(crate) fn find<'a>(&'a self, range: &Range<K>) -> IntervalIter<'a, K, V> {
         let cursor = self
             .btree
@@ -70,6 +91,9 @@ where
         }
     }
 
+    /// Finds the last interval item before the given point.
+    ///
+    /// If no such item exists, returns [`None`].
     pub(crate) fn find_prev(&self, point: &K) -> Option<&V> {
         self.btree
             .upper_bound(core::ops::Bound::Excluded(point))
@@ -77,6 +101,9 @@ where
             .map(|(_, v)| v)
     }
 
+    /// Finds the first interval item after the given point.
+    ///
+    /// If no such item exists, returns [`None`].
     pub(crate) fn find_next(&self, point: &K) -> Option<&V> {
         self.btree
             .lower_bound(core::ops::Bound::Excluded(point))
@@ -84,11 +111,16 @@ where
             .map(|(_, v)| v)
     }
 
+    /// Takes an interval item that contains the given point.
+    ///
+    /// If no such item exists, returns [`None`]. Otherwise, returns the item
+    /// that contains the point.
     #[cfg(ktest)]
     pub(crate) fn take_one(&mut self, point: &K) -> Option<V> {
         let mut cursor = self
             .btree
             .lower_bound_mut(core::ops::Bound::Excluded(point));
+
         if let Some((_, v)) = cursor.peek_prev() {
             if v.range().end > *point {
                 return Some(cursor.remove_prev().unwrap().1);
@@ -102,6 +134,10 @@ where
         None
     }
 
+    /// Takes all interval items that intersect with the given range.
+    ///
+    /// This method returns a draining iterator that removes the items from the
+    /// interval set.
     #[cfg(ktest)]
     pub(crate) fn take<'a>(&'a mut self, range: &Range<K>) -> IntervalDrain<'a, K, V> {
         let cursor = self
@@ -114,11 +150,13 @@ where
         }
     }
 
+    /// Clears the interval set, removing all intervals.
     pub(crate) fn clear(&mut self) {
         self.btree.clear();
     }
 }
 
+/// An iterator that iterates over intervals in an interval set.
 #[derive(Debug)]
 pub(crate) struct IntervalIter<'a, K, V>
 where
@@ -158,6 +196,7 @@ where
     }
 }
 
+/// A draining iterator that iterates over intervals in an interval set.
 #[cfg_attr(not(ktest), expect(dead_code))]
 #[derive(Debug)]
 pub(crate) struct IntervalDrain<'a, K, V>

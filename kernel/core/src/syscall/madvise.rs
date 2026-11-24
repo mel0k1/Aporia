@@ -86,6 +86,14 @@ enum MadviseBehavior {
     MADV_DONTNEED_LOCKED = 24,
 }
 
+/// Madvise that a dummy implementation is also correct.
+///
+/// This list can only contain madvise behaviors that do not alter the semantics of the user
+/// program. In other words, they are intended solely for performance optimization and can safely
+/// be ignored by the kernel.
+///
+/// **Please think twice before adding a new behavior to this list. Not all madvise behaviors can
+/// be no-ops.**
 const DUMMY_MADVISE: &[MadviseBehavior] = &[
     MadviseBehavior::MADV_NORMAL,
     MadviseBehavior::MADV_RANDOM,

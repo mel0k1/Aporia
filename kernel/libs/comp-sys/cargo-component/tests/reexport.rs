@@ -1,3 +1,8 @@
+
+
+
+//! This test checks that if cargo-component can control reexported entry points.
+
 mod test_utils;
 
 #[test]

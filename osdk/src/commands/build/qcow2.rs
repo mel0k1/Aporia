@@ -15,6 +15,7 @@ pub fn convert_iso_to_qcow2(iso: AsterVmImage) -> AsterVmImage {
     };
     let iso_path = iso.path();
     let qcow2_path = iso_path.with_extension("qcow2");
+
     let mut qemu_img = new_command_checked_exists("qemu-img");
     qemu_img.args([
         "convert",

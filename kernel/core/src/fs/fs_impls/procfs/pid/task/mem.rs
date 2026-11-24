@@ -15,6 +15,7 @@ use crate::{
     thread::Thread,
 };
 
+/// Represents the inode at `/proc/[pid]/task/[tid]/mem` (and also `/proc/[pid]/mem`).
 pub(super) struct MemFileOps(TidDirOps);
 
 impl MemFileOps {
@@ -36,6 +37,7 @@ impl ProcFileOpsByHandle for MemFileOps {
         let Some(process) = self.0.process() else {
             return Err(errno!(ESRCH, "the process does not exist"));
         };
+
         let vmar_guard = process.lock_vmar();
 
         process
@@ -53,6 +55,7 @@ impl ProcFileOpsByHandle for MemFileOps {
     }
 }
 
+/// A file handle opened from `/proc/[pid]/task/[tid]/mem` (and also `/proc/[pid]/mem`).
 struct MemFileHandle(TidDirOps, VmarSnapshot);
 
 impl Pollable for MemFileHandle {

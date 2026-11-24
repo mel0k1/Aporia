@@ -1,6 +1,17 @@
+
+
+//! The test suite for databases and middleware applications on Asterinas NixOS.
+//!
+//! See `test/nixos/README.md#documentation-maintenance` for sync requirements
+//! between this test suite and the corresponding "Verified Usage" book section.
+
 use nixos_test_framework::*;
 
 nixos_test_main!();
+
+
+
+
 
 #[nixos_test]
 fn sqlite_create_database(nixos_shell: &mut Session) -> Result<(), Error> {
@@ -37,6 +48,10 @@ fn sqlite_select_records(nixos_shell: &mut Session) -> Result<(), Error> {
     Ok(())
 }
 
+
+
+
+
 #[nixos_test]
 fn redis_set_get_delete_key(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.with_background_process(
@@ -59,6 +74,10 @@ fn redis_set_get_delete_key(nixos_shell: &mut Session) -> Result<(), Error> {
 
     Ok(())
 }
+
+
+
+
 
 #[nixos_test]
 fn valkey_set_get_delete_key(nixos_shell: &mut Session) -> Result<(), Error> {
@@ -83,6 +102,10 @@ fn valkey_set_get_delete_key(nixos_shell: &mut Session) -> Result<(), Error> {
     Ok(())
 }
 
+
+
+
+
 #[nixos_test]
 fn etcd_put_get_delete_key(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.with_background_process(
@@ -104,6 +127,10 @@ fn etcd_put_get_delete_key(nixos_shell: &mut Session) -> Result<(), Error> {
 
     Ok(())
 }
+
+
+
+
 
 #[nixos_test]
 fn influxdb_write_query_data(nixos_shell: &mut Session) -> Result<(), Error> {

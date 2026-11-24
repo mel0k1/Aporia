@@ -1,3 +1,5 @@
+//! Tests for the kernel slab allocation counter.
+
 use alloc::vec::Vec;
 
 use ostd::{
@@ -7,6 +9,8 @@ use ostd::{
 
 use crate::slab_cache::SlabCache;
 
+/// Allocating enough slots forces new slabs, increasing the counter by at
+/// least one page each, and freeing them releases some slabs back.
 #[ktest]
 fn slab_counter_tracks_slab_pages() {
     const NR_SLABS: usize = 20;

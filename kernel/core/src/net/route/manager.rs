@@ -5,6 +5,7 @@ use super::{
 };
 use crate::prelude::*;
 
+/// The manager that owns the routing policy rules and tables for one IP address family.
 pub(super) struct RouteManager<A: RouteAddressFamily> {
     rules: BTreeMap<RulePriority, Vec<Rule>>,
     tables: BTreeMap<RouteTableId, RouteTable<A>>,

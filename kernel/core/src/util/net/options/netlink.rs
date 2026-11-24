@@ -7,6 +7,9 @@ use crate::{
     prelude::*,
 };
 
+/// Socket options for netlink socket.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.0.9/source/include/uapi/linux/netlink.h#L149>.
 #[expect(non_camel_case_types)]
 #[expect(clippy::upper_case_acronyms)]
 #[repr(i32)]

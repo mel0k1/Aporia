@@ -34,6 +34,10 @@ pub(super) struct PollContext<'a, E: Ext> {
     actions: &'a mut Vec<SocketTableAction<E>>,
 }
 
+/// Socket table actions such as adding or removing TCP connections.
+///
+/// Note that they must be performed in order. This is because the same connection key can occur
+/// multiple times, but with different types of operations (e.g., add or remove).
 pub(super) enum SocketTableAction<E: Ext> {
     AddTcpConn(Arc<TcpConnectionBg<E>>),
     DelTcpConn(ConnectionKey),

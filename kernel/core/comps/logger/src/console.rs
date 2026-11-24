@@ -1,9 +1,15 @@
+//! `print` and `println` macros
+//!
+//! FIXME: It will print to all `virtio-console` devices, which is not a good choice.
+//!
+
 use alloc::{collections::btree_map::BTreeMap, fmt, string::String, sync::Arc};
 use core::fmt::Write;
 
 use aster_console::AnyConsoleDevice;
 use ostd::sync::{LocalIrqDisabled, SpinLockGuard};
 
+/// Prints the formatted arguments to the standard output.
 pub fn _print(args: fmt::Arguments) {
     let devices = aster_console::all_devices_lock();
 
@@ -26,6 +32,7 @@ pub fn _print(args: fmt::Arguments) {
     Printer(devices).write_fmt(args).unwrap();
 }
 
+/// Copied from Rust std: <https://github.com/rust-lang/rust/blob/master/library/std/src/macros.rs>
 #[macro_export]
 macro_rules! print {
     ($($arg:tt)*) => {{
@@ -33,6 +40,7 @@ macro_rules! print {
     }};
 }
 
+/// Copied from Rust std: <https://github.com/rust-lang/rust/blob/master/library/std/src/macros.rs>
 #[macro_export]
 macro_rules! println {
     () => {

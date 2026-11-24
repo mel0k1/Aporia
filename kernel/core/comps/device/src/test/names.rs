@@ -1,3 +1,5 @@
+//! Device name validation tests.
+
 use ostd::prelude::ktest;
 
 use super::toy::{self, ToyDev, ToyDisk};

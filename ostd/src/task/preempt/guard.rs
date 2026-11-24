@@ -1,5 +1,6 @@
 use crate::{sync::GuardTransfer, task::atomic_mode::InAtomicMode};
 
+/// A guard for disable preempt.
 #[clippy::has_significant_drop]
 #[must_use]
 #[derive(Debug)]
@@ -32,6 +33,7 @@ impl Drop for DisabledPreemptGuard {
     }
 }
 
+/// Disables preemption.
 pub fn disable_preempt() -> DisabledPreemptGuard {
     DisabledPreemptGuard::new()
 }

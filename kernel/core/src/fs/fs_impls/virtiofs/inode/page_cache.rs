@@ -1,3 +1,5 @@
+//! Page cache backend implementation for `VirtioFsInode`.
+
 use core::ops::Deref;
 
 use aster_fuse::{FuseCompletion, FuseNodeId, ReadReq, WriteFlags, WriteReq};
@@ -31,6 +33,7 @@ impl PageCacheBackend for VirtioFsInode {
         let read_offset = idx * PAGE_SIZE;
         let mut chunk = ReadChunk::with_capacity(1);
         chunk.push(locked_page)?;
+
         let read_req = ReadReq::new(
             handle.fh(),
             read_offset as u64,
@@ -271,6 +274,7 @@ fn submit_read_chunk(
 
     let complete_fn = move |status| {
         complete_read_pages(status, total_len, pages);
+
         drop(handle);
     };
 

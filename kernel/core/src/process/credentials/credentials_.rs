@@ -13,29 +13,70 @@ use crate::{
 
 #[derive(Debug)]
 pub(super) struct Credentials_ {
+    /// The real user ID.
+    ///
+    /// This is the user to which the process belongs.
     ruid: AtomicUid,
+    /// The effective user ID.
+    ///
+    /// This is used to determine the permissions granted to a process when it tries to perform
+    /// various operations (e.g., system calls).
     euid: AtomicUid,
+    /// The saved-set user ID.
+    ///
+    /// This saves a copy of the effective user ID that were set when the program was executed.
     suid: AtomicUid,
+    /// The filesystem user ID.
+    ///
+    /// This is used to determine permissions for accessing files.
     fsuid: AtomicUid,
 
+    /// The real group ID.
+    ///
+    /// This is the group to which the process belongs.
     rgid: AtomicGid,
+    /// The effective group ID.
+    ///
+    /// This is used to determine the permissions granted to a process when it tries to perform
+    /// various operations (e.g., system calls).
     egid: AtomicGid,
+    /// The saved-set group ID.
+    ///
+    /// This saves a copy of the effective group ID that were set when the program was executed.
     sgid: AtomicGid,
+    /// The filesystem group ID.
+    ///
+    /// This is used to determine permissions for accessing files.
     fsgid: AtomicGid,
 
+    /// A set of additional groups to which a process belongs.
     supplementary_gids: RwLock<BTreeSet<Gid>>,
 
+    /// Capabilities that child processes can inherit.
     inheritable_capset: AtomicCapSet,
+    /// Capabilities that a process can potentially be granted.
+    ///
+    /// It defines the maximum set of privileges that the process could possibly have. Even if the
+    /// process is not currently using these privileges, it has the potential ability to enable
+    /// them.
     permitted_capset: AtomicCapSet,
+    /// Capabilities that a process can actually use.
     effective_capset: AtomicCapSet,
+    /// Capabilities that limit privileges granted during `execve()` and may be added to the
+    /// inheritable set.
     bounding_capset: AtomicCapSet,
+    /// Capabilities that are preserved across non-privileged `execve()` and automatically added to
+    /// the permitted and effective sets for the new program.
     ambient_capset: AtomicCapSet,
 
+    /// Secure bits.
     securebits: AtomicSecureBits,
 
+    /// Whether `execve()` is forbidden from granting new privileges.
     no_new_privs: AtomicBool,
 }
 
+/// Credentials computed for a pending `execve()`.
 #[derive(Clone, Copy, Debug)]
 pub(in crate::process) struct ExecCred {
     setuid: Option<Uid>,
@@ -52,6 +93,9 @@ impl ExecCred {
 }
 
 impl Credentials_ {
+    /// Creates a new `Credentials_`.
+    ///
+    /// The real, effective, saved set, and filesystem IDs will be initialized to the same ID.
     pub(super) fn new(uid: Uid, gid: Gid, capset: CapSet) -> Self {
         let mut supplementary_gids = BTreeSet::new();
         supplementary_gids.insert(gid);
@@ -563,6 +607,7 @@ impl Credentials_ {
         self.no_new_privs.store(true, Ordering::Relaxed);
     }
 
+    /// Calculates and validates credentials for `execve()`.
     pub(super) fn prepare_exec_cred(
         &self,
         file_capabilities: Option<FileCapabilities>,
@@ -590,6 +635,7 @@ impl Credentials_ {
         })
     }
 
+    /// Applies previously computed credentials for `execve()`.
     pub(super) fn apply_exec_cred(&self, exec_cred: ExecCred) -> Result<()> {
         if let Some(setuid) = exec_cred.setuid {
             self.set_euid(setuid);

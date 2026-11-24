@@ -19,6 +19,16 @@ use crate::{
 pub(super) struct ConnectedStream {
     tcp_conn: TcpConnection,
     remote_endpoint: IpEndpoint,
+    /// Indicates whether this connection is "new" in a `connect()` system call.
+    ///
+    /// If the connection is not new, `connect()` will fail with the error code `EISCONN`,
+    /// otherwise it will succeed. This means that `connect()` will succeed _exactly_ once,
+    /// regardless of whether the connection is established synchronously or asynchronously.
+    ///
+    /// If the connection is established synchronously, the synchronous `connect()` will succeed
+    /// and any subsequent `connect()` will fail; otherwise, the first `connect()` after the
+    /// connection is established asynchronously will succeed and any subsequent `connect()` will
+    /// fail.
     is_new_connection: bool,
 }
 
@@ -203,11 +213,13 @@ pub(super) fn close_and_linger(tcp_conn: TcpConnection, linger: LingerOption, po
             tcp_conn.iface().poll();
             return;
         }
+
         (true, duration) if duration.is_zero() => {
             tcp_conn.reset();
             tcp_conn.iface().poll();
             return;
         }
+
         (true, duration) => {
             tcp_conn.close();
             tcp_conn.iface().poll();

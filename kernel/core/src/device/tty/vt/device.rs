@@ -6,6 +6,7 @@ use crate::device::tty::vt::manager::{VtConsole, default_vt};
 
 const DEFAULT_VT_CONSOLE_NAME: &str = "Default-VT-Console";
 
+/// A console device that forwards output to the default VT console.
 #[derive(Debug)]
 struct DefaultVtConsoleDevice;
 

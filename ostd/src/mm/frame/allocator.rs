@@ -1,3 +1,5 @@
+//! The physical memory allocator.
+
 use core::{alloc::Layout, ops::Range};
 
 use align_ext::AlignExt;
@@ -12,6 +14,7 @@ use crate::{
     util::ops::range_difference,
 };
 
+/// Options for allocating physical memory frames.
 pub struct FrameAllocOptions {
     zeroed: bool,
 }
@@ -23,19 +26,29 @@ impl Default for FrameAllocOptions {
 }
 
 impl FrameAllocOptions {
+    /// Creates new options for allocating the specified number of frames.
     pub fn new() -> Self {
         Self { zeroed: true }
     }
 
+    /// Sets whether the allocated frames should be initialized with zeros.
+    ///
+    /// If `zeroed` is `true`, the allocated frames are filled with zeros.
+    /// If not, the allocated frames will contain sensitive data and the caller
+    /// should clear them before sharing them with other components.
+    ///
+    /// By default, the frames are zero-initialized.
     pub fn zeroed(&mut self, zeroed: bool) -> &mut Self {
         self.zeroed = zeroed;
         self
     }
 
+    /// Allocates a single untyped frame without metadata.
     pub fn alloc_frame(&self) -> Result<Frame<()>> {
         self.alloc_frame_with(())
     }
 
+    /// Allocates a single frame with additional metadata.
     pub fn alloc_frame_with<M: AnyFrameMeta>(&self, metadata: M) -> Result<Frame<M>> {
         let single_layout = Layout::from_size_align(PAGE_SIZE, PAGE_SIZE).unwrap();
         let frame = get_global_frame_allocator()
@@ -45,16 +58,22 @@ impl FrameAllocOptions {
 
         if self.zeroed {
             let addr = paddr_to_vaddr(frame.paddr()) as *mut u8;
+
             unsafe { core::ptr::write_bytes(addr, 0, PAGE_SIZE) }
         }
 
         Ok(frame)
     }
 
+    /// Allocates a contiguous range of untyped frames without metadata.
     pub fn alloc_segment(&self, nframes: usize) -> Result<Segment<()>> {
         self.alloc_segment_with(nframes, |_| ())
     }
 
+    /// Allocates a contiguous range of frames with additional metadata.
+    ///
+    /// The returned [`Segment`] contains at least one frame. The method returns
+    /// an error if the number of frames is zero.
     pub fn alloc_segment_with<M: AnyFrameMeta, F>(
         &self,
         nframes: usize,
@@ -76,6 +95,7 @@ impl FrameAllocOptions {
 
         if self.zeroed {
             let addr = paddr_to_vaddr(segment.paddr()) as *mut u8;
+
             unsafe { core::ptr::write_bytes(addr, 0, nframes * PAGE_SIZE) }
         }
 
@@ -103,15 +123,57 @@ fn test_alloc_dealloc() {
     }
 }
 
+/// The trait for the global frame allocator.
+///
+/// OSTD allows a customized frame allocator by the [`global_frame_allocator`]
+/// attribute, which marks a static variable of this type.
+///
+/// The API mimics the standard Rust allocator API ([`GlobalAlloc`] and
+/// [`global_allocator`]). However, this trait is much safer. Double free
+/// or freeing in-use memory through this trait only messes up the allocator's
+/// state rather than causing undefined behavior.
+///
+/// Whenever OSTD or other modules need to allocate or deallocate frames via
+/// [`FrameAllocOptions`], they are forwarded to the global frame allocator.
+/// It is not encouraged to call the global allocator directly.
+///
+/// [`global_frame_allocator`]: crate::global_frame_allocator
+/// [`GlobalAlloc`]: core::alloc::GlobalAlloc
 pub trait GlobalFrameAllocator: Sync {
+    /// Allocates a contiguous range of frames.
+    ///
+    /// The caller guarantees that `layout.size()` is aligned to [`PAGE_SIZE`].
+    ///
+    /// When any of the allocated memory is not in use, OSTD returns them by
+    /// calling [`GlobalFrameAllocator::dealloc`]. If multiple frames are
+    /// allocated, they may be returned in any order with any number of calls.
     fn alloc(&self, layout: Layout) -> Option<Paddr>;
 
+    /// Deallocates a contiguous range of frames.
+    ///
+    /// The caller guarantees that `addr` and `size` are both aligned to
+    /// [`PAGE_SIZE`]. The deallocated memory should always be allocated by
+    /// [`GlobalFrameAllocator::alloc`]. However, if
+    /// [`GlobalFrameAllocator::alloc`] returns multiple frames, it is possible
+    /// that some of them are deallocated before others. The deallocated memory
+    /// must never overlap with any memory that is already deallocated or
+    /// added, without being allocated in between.
+    ///
+    /// The deallocated memory can be uninitialized.
     fn dealloc(&self, addr: Paddr, size: usize);
 
+    /// Adds a contiguous range of frames to the allocator.
+    ///
+    /// The memory being added must never overlap with any memory that was
+    /// added before.
+    ///
+    /// The added memory can be uninitialized.
     fn add_free_memory(&self, addr: Paddr, size: usize);
 }
 
 unsafe extern "Rust" {
+    /// The global frame allocator's reference exported by
+    /// [`crate::global_frame_allocator`].
     static __GLOBAL_FRAME_ALLOCATOR_REF: &'static dyn GlobalFrameAllocator;
 }
 
@@ -119,6 +181,14 @@ pub(super) fn get_global_frame_allocator() -> &'static dyn GlobalFrameAllocator 
     unsafe { __GLOBAL_FRAME_ALLOCATOR_REF }
 }
 
+/// Initializes the global frame allocator.
+///
+/// It just does adds the frames to the global frame allocator. Calling it
+/// multiple times would be not safe.
+///
+/// # Safety
+///
+/// This function should be called only once.
 pub(crate) unsafe fn init() {
     let early_allocator = EARLY_ALLOCATOR.lock().take().unwrap();
     let early_allocated_ranges = early_allocator.allocated_regions();
@@ -153,6 +223,7 @@ pub(crate) unsafe fn init() {
     }
 }
 
+/// An allocator in the early boot phase when frame metadata is not available.
 pub(super) struct EarlyFrameAllocator {
     under_4g_range: Range<Paddr>,
     under_4g_end: Paddr,
@@ -161,10 +232,26 @@ pub(super) struct EarlyFrameAllocator {
     max_end: Paddr,
 }
 
+/// The global frame allocator in the early boot phase.
+///
+/// It is used to allocate frames before the frame metadata is initialized.
+/// The allocated frames are not tracked by the frame metadata. After the
+/// metadata is initialized with [`super::meta::init`], the frames are tracked
+/// with metadata and the early allocator is no longer used.
+///
+/// This is protected by the [`spin::Mutex`] rather than [`crate::sync::SpinLock`]
+/// since the latter uses CPU-local storage, which isn't available in the early
+/// boot phase. So we must make sure that no interrupts are enabled when using
+/// this allocator.
 pub(super) static EARLY_ALLOCATOR: spin::Mutex<Option<EarlyFrameAllocator>> =
     spin::Mutex::new(None);
 
 impl EarlyFrameAllocator {
+    /// Creates a new early frame allocator.
+    ///
+    /// It uses at most 2 regions, the first is the maximum usable region below
+    /// 4 GiB. The other is the maximum usable region above 4 GiB and is only
+    /// usable when linear mapping is constructed.
     pub(crate) fn new() -> Self {
         let regions = &crate::boot::EARLY_INFO.get().unwrap().memory_regions;
 
@@ -205,6 +292,7 @@ impl EarlyFrameAllocator {
         }
     }
 
+    /// Allocates a contiguous range of frames.
     pub(super) fn alloc(&mut self, layout: Layout) -> Option<Paddr> {
         let size = layout.size().align_up(PAGE_SIZE);
         let align = layout.align().max(PAGE_SIZE);
@@ -233,11 +321,26 @@ impl EarlyFrameAllocator {
     }
 }
 
+/// Metadata for frames allocated in the early boot phase.
+///
+/// Frames allocated with [`early_alloc`] are not immediately tracked with
+/// frame metadata. But [`super::meta::init`] will track them later.
 #[derive(Debug)]
 pub(crate) struct EarlyAllocatedFrameMeta;
 
 impl_frame_meta_for!(EarlyAllocatedFrameMeta);
 
+/// Allocates a contiguous range of frames in the early boot phase.
+///
+/// The early allocated frames will not be reclaimable, until the metadata is
+/// initialized by [`super::meta::init`]. Then we can use [`Frame::from_raw`]
+/// to free the frames.
+///
+/// # Panics
+///
+/// This function panics if:
+///  - it is called before [`init_early_allocator`],
+///  - or if is called after [`init`].
 pub(crate) fn early_alloc(layout: Layout) -> Option<Paddr> {
     let mut early_allocator = EARLY_ALLOCATOR.lock();
     let paddr = early_allocator.as_mut().unwrap().alloc(layout)?;
@@ -250,6 +353,14 @@ pub(crate) fn early_alloc(layout: Layout) -> Option<Paddr> {
     Some(paddr)
 }
 
+/// Initializes the early frame allocator.
+///
+/// [`early_alloc`] should be used after this initialization. After [`init`], the
+/// early allocator.
+///
+/// # Safety
+///
+/// This function should be called only once after the memory regions are ready.
 pub(crate) unsafe fn init_early_allocator() {
     let mut early_allocator = EARLY_ALLOCATOR.lock();
     *early_allocator = Some(EarlyFrameAllocator::new());

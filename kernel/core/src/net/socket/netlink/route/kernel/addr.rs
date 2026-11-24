@@ -1,3 +1,5 @@
+//! Handle address-related requests.
+
 use alloc::borrow::ToOwned;
 use core::{net::IpAddr, num::NonZeroU32};
 
@@ -34,6 +36,7 @@ pub(super) fn do_get_addr(
     validate_getaddr_request(request_segment, strict_check)?;
 
     let requested_family = request_segment.body().family;
+
     let requested_index = strict_check
         .then(|| NonZeroU32::new(request_segment.body().index))
         .flatten();
@@ -75,6 +78,7 @@ fn validate_getaddr_request(request_segment: &AddrSegment, strict_check: bool) -
     }
 
     let body = request_segment.body();
+
     if body.prefix_len != 0 || body.flags != 0 || body.scope != 0 {
         return Err(errno!(
             EINVAL,

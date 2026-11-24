@@ -1,5 +1,6 @@
 use crate::{prelude::*, syscall::SyscallReturn};
 
+/// expand the user heap to new heap end, returns the new heap end if expansion succeeds.
 pub(super) fn sys_brk(heap_end: u64, ctx: &Context) -> Result<SyscallReturn> {
     let new_heap_end = if heap_end == 0 {
         None

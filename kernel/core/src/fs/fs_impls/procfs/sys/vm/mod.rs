@@ -16,6 +16,7 @@ use crate::{
 
 mod mmap_min_addr;
 
+/// Represents the inode at `/proc/sys/vm`.
 pub(super) struct VmDirOps;
 
 impl VmDirOps {

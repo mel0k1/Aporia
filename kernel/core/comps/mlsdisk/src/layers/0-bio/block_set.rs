@@ -5,9 +5,18 @@ use inherit_methods_macro::inherit_methods;
 use super::{Buf, BufMut, BufRef};
 use crate::{error::Errno, os::Mutex, prelude::*};
 
+/// A fixed set of data blocks that can support random reads and writes.
+///
+/// # Thread safety
+///
+/// `BlockSet` is a data structure of interior mutability.
+/// It is ok to perform I/O on a `BlockSet` concurrently in multiple threads.
+/// `BlockSet` promises the atomicity of reading and writing individual blocks.
 pub trait BlockSet: Sync + Send {
+    /// Read one or multiple blocks at a specified position.
     fn read(&self, pos: BlockId, buf: BufMut) -> Result<()>;
 
+    /// Read a slice of bytes at a specified byte offset.
     fn read_slice(&self, offset: usize, buf: &mut [u8]) -> Result<()> {
         let start_pos = offset / BLOCK_SIZE;
         let end_pos = (offset + buf.len()).div_ceil(BLOCK_SIZE);
@@ -24,8 +33,10 @@ pub trait BlockSet: Sync + Send {
         Ok(())
     }
 
+    /// Write one or multiple blocks at a specified position.
     fn write(&self, pos: BlockId, buf: BufRef) -> Result<()>;
 
+    /// Write a slice of bytes at a specified byte offset.
     fn write_slice(&self, offset: usize, buf: &[u8]) -> Result<()> {
         let start_pos = offset / BLOCK_SIZE;
         let end_pos = (offset + buf.len()).div_ceil(BLOCK_SIZE);
@@ -57,12 +68,15 @@ pub trait BlockSet: Sync + Send {
         Ok(())
     }
 
+    /// Get a subset of the blocks in the block set.
     fn subset(&self, range: Range<BlockId>) -> Result<Self>
     where
         Self: Sized;
 
+    /// Ensure that blocks are persisted to the disk.
     fn flush(&self) -> Result<()>;
 
+    /// Returns the number of blocks.
     fn nblocks(&self) -> usize;
 }
 
@@ -100,6 +114,9 @@ impl_blockset_for!(Arc<T>, "(**self)", |this: &Arc<T>, range| {
     (**this).subset(range).map(|v| Arc::new(v))
 });
 
+/// A disk that impl `BlockSet`.
+///
+/// The `region` is the accessible subset.
 #[derive(Clone)]
 pub(in crate::layers) struct MemDisk {
     disk: Arc<Mutex<Buf>>,
@@ -107,6 +124,7 @@ pub(in crate::layers) struct MemDisk {
 }
 
 impl MemDisk {
+    /// Create a `MemDisk` with the number of blocks.
     pub(in crate::layers) fn create(num_blocks: usize) -> Result<Self> {
         let blocks = Buf::alloc(num_blocks)?;
         Ok(Self {

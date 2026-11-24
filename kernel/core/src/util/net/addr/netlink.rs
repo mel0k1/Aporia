@@ -4,12 +4,17 @@ use crate::{
     prelude::*,
 };
 
+/// Netlink socket address.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(crate) struct CSocketAddrNetlink {
+    /// Address family (AF_NETLINK).
     nl_family: u16,
+    /// Pad bytes (always zero).
     nl_pad: u16,
+    /// Port ID.
     nl_pid: u32,
+    /// Multicast groups mask.
     nl_groups: u32,
 }
 

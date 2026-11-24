@@ -1,5 +1,6 @@
 use crate::{net::socket::util::SocketAddr, prelude::*};
 
+/// A vsock socket address.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct VsockSocketAddr {

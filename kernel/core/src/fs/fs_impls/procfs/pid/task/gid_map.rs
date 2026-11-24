@@ -12,6 +12,7 @@ use crate::{
     thread::Thread,
 };
 
+/// Represents the inode at `/proc/[pid]/task/[tid]/gid_map` (and also `/proc/[pid]/gid_map`).
 pub(super) struct GidMapFileOps(TidDirOps);
 
 impl GidMapFileOps {

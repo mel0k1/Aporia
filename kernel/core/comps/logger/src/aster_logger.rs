@@ -5,6 +5,7 @@ use ostd::{
     timer::Jiffies,
 };
 
+/// The logger used for Asterinas.
 struct AsterLogger;
 
 static LOGGER: AsterLogger = AsterLogger;

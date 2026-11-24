@@ -121,6 +121,7 @@ fn get_reusable_existing_bundle(
     Some(existing_bundle)
 }
 
+/// If the source is not since modified and the last build is recent, we can reuse the existing bundle.
 pub fn do_cached_build(
     bundle_path: impl AsRef<Path>,
     osdk_output_directory: impl AsRef<Path>,
@@ -213,6 +214,7 @@ fn build_kernel_elf(
     let rustc_linker_script_arg = format!("-C link-arg=-T{}.ld", arch);
 
     let mut rustflags = Vec::from(rustflags);
+
     rustflags.extend([
         &rustc_linker_script_arg,
         "-C relocation-model=static",

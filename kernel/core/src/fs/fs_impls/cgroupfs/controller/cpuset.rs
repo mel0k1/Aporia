@@ -7,6 +7,7 @@ use ostd::{
     mm::{VmReader, VmWriter},
 };
 
+/// A sub-controller responsible for CPU resource management in the cgroup subsystem.
 pub(crate) struct CpuSetController {
     _private: (),
 }
@@ -41,7 +42,9 @@ impl super::SubControl for CpuSetController {
                     writeln!(printer, "0-{}", num_cpus - 1)?;
                 }
             }
+
             "cpuset.mems.effective" => writeln!(printer, "0")?,
+
             _ => return Err(Error::AttributeError),
         }
 

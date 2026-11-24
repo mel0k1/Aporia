@@ -1,3 +1,6 @@
+//! Regression tests for the page-cache subsystem in the
+//! concurrency scenarios.
+
 use alloc::vec;
 
 use ostd::{
@@ -11,11 +14,14 @@ use crate::{prelude::*, thread::kernel_thread::ThreadOptions};
 
 mod utils;
 
+/// Creates a page cache with `num_pages` backend pages for test scenarios.
 fn new_backend_page_cache(backend: &Arc<MockPageCacheBackend>, num_pages: usize) -> PageCache {
     let backend_dyn: Arc<dyn PageCacheBackend> = backend.clone();
     PageCache::new_with_backend(num_pages * PAGE_SIZE, Arc::downgrade(&backend_dyn)).unwrap()
 }
 
+/// Creates a locked page cache that models the inode-level lock held by
+/// filesystem callers before touching the page cache.
 fn new_locked_backend_page_cache(
     backend: &Arc<MockPageCacheBackend>,
     num_pages: usize,
@@ -23,6 +29,12 @@ fn new_locked_backend_page_cache(
     Arc::new(RwMutex::new(new_backend_page_cache(backend, num_pages)))
 }
 
+/// Simulates stores through a shared writable VMO mapping.
+///
+/// A store page fault first commits page 0 for shared writes, which marks an
+/// up-to-date backend page dirty. The actual byte copy then writes the
+/// committed frame directly, matching mapped-memory stores without routing
+/// through the page-cache write API.
 fn write_vmo_bytes(vmo: &Vmo, bytes: &[u8]) {
     assert!(!bytes.is_empty());
     assert!(bytes.len() <= PAGE_SIZE);
@@ -35,6 +47,8 @@ fn write_vmo_bytes(vmo: &Vmo, bytes: &[u8]) {
     assert_eq!(writer.write(&mut reader), bytes.len());
 }
 
+/// Serializes a cold read and a later overwrite with the caller-provided
+/// buffered-I/O lock required by the page-cache synchronization model.
 #[ktest]
 fn concurrent_read_and_write() {
     let backend = MockPageCacheBackend::new(1);
@@ -94,6 +108,8 @@ fn concurrent_read_and_write() {
     assert_eq!(read_buffer, new_pattern);
 }
 
+/// Flushes a dirty page while another task re-dirties it, so writeback reaches
+/// the backend and the newest dirty bytes are not silently lost.
 #[ktest]
 fn concurrent_write_and_flush() {
     let backend = MockPageCacheBackend::new(1);
@@ -150,6 +166,8 @@ fn concurrent_write_and_flush() {
     assert_eq!(backend.persisted_page_bytes(0), latest_dirty_pattern);
 }
 
+/// Re-dirties a page while another task runs `flush_range()` and
+/// `evict_range()`, ensuring the newest dirty page is kept cached.
 #[ktest]
 fn concurrent_write_and_evict() {
     let backend = MockPageCacheBackend::new(1);
@@ -206,6 +224,8 @@ fn concurrent_write_and_evict() {
     assert_eq!(backend.persisted_page_bytes(0), latest_dirty_pattern);
 }
 
+/// Commits a page while a concurrent truncate shrinks the page cache, ensuring
+/// pages beyond the new size stay inaccessible.
 #[ktest]
 fn concurrent_commit_and_truncate() {
     let backend = MockPageCacheBackend::new(2);
@@ -268,6 +288,8 @@ fn concurrent_commit_and_truncate() {
     assert_eq!(read_buffer, vec![0; PAGE_SIZE]);
 }
 
+/// Faults the same cold page through `try_commit_page()` and `commit_on()`,
+/// verifying that one backend read initializes the page for all waiters.
 #[ktest]
 fn concurrent_page_faults() {
     let backend = MockPageCacheBackend::new(1);
@@ -276,6 +298,7 @@ fn concurrent_page_faults() {
 
     let page_cache = new_backend_page_cache(&backend, 1);
     let vmo = page_cache.as_vmo().clone();
+
     assert!(matches!(
         vmo.try_commit_page(0, VmoMapMode::SharedRead),
         Err(VmoCommitError::NeedIo { index: 0 })
@@ -328,6 +351,8 @@ fn concurrent_page_faults() {
     assert_eq!(read_buffer, vec![0x6b; PAGE_SIZE]);
 }
 
+/// Keeps backend reads failing for one page and checks both the initial
+/// committer and a later waiter return `EIO` instead of livelocking.
 #[ktest]
 fn persistent_backend_errors() {
     let backend = MockPageCacheBackend::new(1);
@@ -378,6 +403,8 @@ fn persistent_backend_errors() {
     assert_eq!(backend.read_count(0), 2);
 }
 
+/// Delays BIO completion on demand to exercise shared read I/O, writeback
+/// hand-off, and waiting for `is_writing_back` to clear.
 #[ktest]
 fn delayed_io_completion() {
     let backend = MockPageCacheBackend::new(1);

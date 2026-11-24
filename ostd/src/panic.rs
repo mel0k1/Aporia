@@ -1,7 +1,13 @@
+//! Panic support.
+
 use crate::early_println;
 
 extern crate gimli;
 
+/// The default panic handler for OSTD based kernels.
+///
+/// The user can override it by defining their own panic handler with the macro
+/// `#[ostd::panic_handler]`.
 #[linkage = "weak"]
 #[unsafe(no_mangle)]
 pub fn __ostd_panic_handler(info: &core::panic::PanicInfo) -> ! {
@@ -24,10 +30,17 @@ pub fn __ostd_panic_handler(info: &core::panic::PanicInfo) -> ! {
     abort();
 }
 
+/// Aborts the system.
+///
+/// This function will first attempt to power off the system. If that fails, it will halt all CPUs.
 pub fn abort() -> ! {
     crate::power::poweroff(crate::power::ExitCode::Failure);
 }
 
+/// A guard that aborts the system if dropped.
+///
+/// This is useful to ensure that certain objects will not be dropped during
+/// panic handling.
 #[derive(Debug)]
 pub(crate) struct PanicGuard {
     _private: (),
@@ -41,10 +54,15 @@ impl Drop for PanicGuard {
 }
 
 impl PanicGuard {
+    /// Creates a panic guard that aborts the system if dropped.
     pub(crate) fn new() -> Self {
         PanicGuard { _private: () }
     }
 
+    /// Finishes panic guarding by forgetting the guard.
+    ///
+    /// After the panic guarding finishes, it no longer aborts the system
+    /// when panic happens.
     pub(crate) fn forget(self) {
         core::mem::forget(self);
     }
@@ -52,6 +70,9 @@ impl PanicGuard {
 
 pub use unwinding::panic::{begin_panic, catch_unwind};
 
+/// Prints the stack trace of the current thread to the console.
+///
+/// The printing procedure is protected by a spin lock to prevent interleaving.
 pub fn print_stack_trace() {
     use core::ffi::c_void;
 
@@ -63,6 +84,8 @@ pub fn print_stack_trace() {
 
     use crate::{early_print, sync::SpinLock};
 
+    /// We acquire a global lock to prevent the frames in the stack trace from
+    /// interleaving. The spin lock is used merely for its simplicity.
     static BACKTRACE_PRINT_LOCK: SpinLock<()> = SpinLock::new(());
     let _lock = BACKTRACE_PRINT_LOCK.lock();
 
@@ -84,6 +107,7 @@ pub fn print_stack_trace() {
                 pc,
             );
         }
+
         for i in 0..8u16 {
             let reg_name = cfg_select! {
                 target_arch = "x86_64" => gimli::X86_64::register_name(Register(i)),

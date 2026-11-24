@@ -23,10 +23,12 @@ use crate::{
 
 pub(super) struct VtManager {
     terminals: [Arc<Tty<VtDriver>>; MAX_CONSOLES],
+    /// Protects `VtManagerState` data and serializes VT manager operations.
     state: SpinLock<VtManagerState, LocalIrqDisabled>,
     vt_active_wq: WaitQueue,
 }
 
+/// Lock-holding facade for VT manager operations.
 pub(super) struct VtManagerGuard<'a> {
     manager: &'a VtManager,
     state: SpinLockGuard<'a, VtManagerState, LocalIrqDisabled>,
@@ -34,8 +36,11 @@ pub(super) struct VtManagerGuard<'a> {
 
 #[derive(Clone, Copy, Debug)]
 struct VtManagerState {
+    /// Current active VT index.
     active: VtIndex,
+    /// Pending VT switch target requested from the active VT in [`VtModeType::Process`] mode.
     wanted: Option<VtIndex>,
+    /// Per-VT activation generation counter. Incremented whenever a VT becomes active.
     gens: [u64; MAX_CONSOLES],
 }
 
@@ -51,14 +56,25 @@ impl VtManagerState {
         }
     }
 
+    /// Returns the base VT index for relative switching.
+    ///
+    /// According to Linux behavior, if a switch is already pending (`wanted` is set),
+    /// relative switches are computed from that pending target rather than
+    /// the current foreground VT.
     fn base_for_relative_switch(&self) -> VtIndex {
         self.wanted.unwrap_or(self.active)
     }
 }
 
 impl VtManager {
+    /// The minimum default allocated VT index.
+    ///
+    /// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/linux/vt.h#L12>
     const MIN_DEFAULT_ALLOCATED_VT_INDEX: VtIndex = VtIndex::new(1).unwrap();
 
+    /// The default active VT index.
+    ///
+    /// Reference: <https://elixir.bootlin.com/linux/v6.17/source/drivers/tty/vt/vt.c#L3750>
     const DEFAULT_ACTIVE_VT_INDEX: VtIndex = VtIndex::new(1).unwrap();
 
     fn new() -> Result<Self> {
@@ -86,6 +102,7 @@ impl VtManager {
         })
     }
 
+    /// Acquires the VT manager lock and returns a lock-holding facade.
     pub(super) fn lock(&self) -> VtManagerGuard<'_> {
         VtManagerGuard {
             manager: self,
@@ -93,6 +110,10 @@ impl VtManager {
         }
     }
 
+    /// Waits until the given VT becomes the active VT.
+    ///
+    /// Note:
+    /// - This is used for the `VT_WAITACTIVE` ioctl command.
     pub(super) fn wait_for_vt_active(&self, target: VtIndex) -> Result<()> {
         let state_lock = self.state.lock();
 
@@ -116,17 +137,25 @@ impl VtManager {
         Ok(())
     }
 
+    /// Gets the currently active VT.
     pub(super) fn active_vt(&self) -> &Arc<Tty<VtDriver>> {
         let state_lock = self.state.lock();
         self.vt(state_lock.active)
     }
 
+    /// Gets the VT at the given index.
     fn vt(&self, index: VtIndex) -> &Arc<Tty<VtDriver>> {
         &self.terminals[index.to_zero_based()]
     }
 }
 
 impl VtManagerGuard<'_> {
+    /// Gets an available VT index that is not allocated, or `None` if all VTs are allocated.
+    ///
+    /// Note:
+    /// - This is used for the `VT_OPENQRY` ioctl command.
+    ///
+    /// Reference: <https://elixir.bootlin.com/linux/v6.17/source/drivers/tty/vt/vt_ioctl.c#L823-L833>
     pub(super) fn get_available_vt_index(&self) -> Option<VtIndex> {
         for i in 0..MAX_CONSOLES {
             let idx = VtIndex::new((i + 1) as u8).unwrap();
@@ -137,6 +166,12 @@ impl VtManagerGuard<'_> {
         None
     }
 
+    /// Sets the VT mode and controlling process for the given VT.
+    ///
+    /// Note:
+    /// - This is used for the `VT_SETMODE` ioctl command.
+    ///
+    /// Reference: <https://elixir.bootlin.com/linux/v6.17/source/drivers/tty/vt/vt_ioctl.c#L762-L783>
     pub(super) fn set_vt_mode(&mut self, index: VtIndex, vt_mode: VtMode) {
         if index == self.state.active {
             self.state.wanted = None;
@@ -149,14 +184,22 @@ impl VtManagerGuard<'_> {
             .set_vt_mode_and_process(vt_mode, Some(Arc::downgrade(&current!())));
     }
 
+    /// Sets the console mode for the given VT.
     pub(super) fn set_console_mode(&self, index: VtIndex, mode: ConsoleMode) {
         self.manager.vt(index).driver().vt_console().set_mode(mode);
     }
 
+    /// Gets the global VT state for ioctl responses.
+    ///
+    /// Note:
+    /// - This is used for the `VT_GETSTATE` ioctl command.
+    ///
+    /// Reference: <https://elixir.bootlin.com/linux/v6.17/source/drivers/tty/vt/vt_ioctl.c#L800-L821>
     pub(super) fn get_global_vt_state(&self) -> CVtState {
         let active_index = self.state.active;
 
         let mut state_bits: u16 = 1;
+
         let max_track = (u16::BITS as usize).saturating_sub(1).min(MAX_CONSOLES);
 
         for i in 0..max_track {
@@ -173,10 +216,20 @@ impl VtManagerGuard<'_> {
         }
     }
 
+    /// Switches to the target VT if it's different from the current one.
+    ///
+    /// Note:
+    /// - This is used for the `VT_ACTIVATE` ioctl command and keyboard-driven VT switching.
     pub(super) fn switch_vt(&mut self, target: VtIndex) -> Result<()> {
         self.switch_vt_inner(target)
     }
 
+    /// Handles the `ReleaseDisplay` ioctl command.
+    ///
+    /// Note:
+    /// - This is used for the `VT_RELDISP` ioctl command.
+    ///
+    /// Reference: <https://elixir.bootlin.com/linux/v6.13/source/drivers/tty/vt/vt_ioctl.c#L555-L589>
     pub(super) fn handle_release_display(
         &mut self,
         vt_index: VtIndex,
@@ -216,10 +269,19 @@ impl VtManagerGuard<'_> {
         self.complete_switch_vt(wanted)
     }
 
+    /// Allocates the given VT.
+    ///
+    /// Reference: <https://elixir.bootlin.com/linux/v6.17/source/drivers/tty/vt/vt.c#L1053>
     pub(super) fn allocate_vt(&self, index: VtIndex) {
         self.manager.vt(index).driver().vt_console().allocate();
     }
 
+    /// Disallocates all VTs except VT1 since it's the default VT and always open.
+    ///
+    /// Note:
+    /// - This is used for the `VT_DISALLOCATE` ioctl command with `index` set to 0.
+    ///
+    /// Reference: <https://elixir.bootlin.com/linux/v6.17/source/drivers/tty/vt/vt_ioctl.c#L648-L666>
     pub(super) fn disallocate_all_vts(&self) {
         for i in 1..MAX_CONSOLES {
             let idx = VtIndex::new((i + 1) as u8).unwrap();
@@ -227,6 +289,13 @@ impl VtManagerGuard<'_> {
         }
     }
 
+    /// Disallocates the specified VT if it's not busy.
+    ///
+    /// Note:
+    /// - This is used for the `VT_DISALLOCATE` ioctl command with `index`
+    ///   set to a specific VT index.
+    ///
+    /// Reference: <https://elixir.bootlin.com/linux/v6.17/source/drivers/tty/vt/vt_ioctl.c#L629-L646>
     pub(super) fn disallocate_vt(&self, index: VtIndex) -> Result<()> {
         if self.is_busy(index) {
             return Err(errno!(EBUSY, "the VT is busy"));
@@ -242,6 +311,12 @@ impl VtManagerGuard<'_> {
         Ok(())
     }
 
+    /// Switches to the previous allocated VT (wrap-around).
+    ///
+    /// Note:
+    /// - This is used for the `SpecialHandler::DecreaseConsole` keyboard handler.
+    ///
+    /// Reference: <https://elixir.bootlin.com/linux/v6.17/source/drivers/tty/vt/keyboard.c#L556>
     pub(super) fn dec_console(&mut self) -> Result<()> {
         let cur = self.state.base_for_relative_switch();
 
@@ -259,6 +334,12 @@ impl VtManagerGuard<'_> {
         }
     }
 
+    /// Switches to the next allocated VT (wrap-around).
+    ///
+    /// Note:
+    /// - This is used for the `SpecialHandler::IncreaseConsole` keyboard handler.
+    ///
+    /// Reference: <https://elixir.bootlin.com/linux/v6.17/source/drivers/tty/vt/keyboard.c#L573>
     pub(super) fn inc_console(&mut self) -> Result<()> {
         let cur = self.state.base_for_relative_switch();
 
@@ -276,19 +357,34 @@ impl VtManagerGuard<'_> {
         }
     }
 
+    /// Checks if the VT at `index` is allocated.
+    ///
+    /// Reference: <https://elixir.bootlin.com/linux/v6.17/source/drivers/tty/vt/vt.c#L993-L996>
     fn is_allocated(&self, index: VtIndex) -> bool {
         self.manager.vt(index).driver().vt_console().is_allocated()
     }
 
+    /// Checks if the VT at `index` is currently in use.
+    ///
+    /// Reference: <https://elixir.bootlin.com/linux/v6.17/source/drivers/tty/vt/vt_ioctl.c#L44-L55>
     fn is_in_use(&self, index: VtIndex) -> bool {
         let driver = self.manager.vt(index).driver();
         driver.vt_console().is_allocated() && driver.open_file_counter().has_open_files(self)
     }
 
+    /// Checks if the VT at `index` is busy, meaning it's either in use or the active VT.
+    ///
+    /// Reference: <https://elixir.bootlin.com/linux/v6.17/source/drivers/tty/vt/vt_ioctl.c#L57-L67>
     fn is_busy(&self, index: VtIndex) -> bool {
         self.is_in_use(index) || index == self.state.active
     }
 
+    /// Switches to the target VT if it's different from the current one.
+    ///
+    /// References:
+    /// - <https://elixir.bootlin.com/linux/v6.17/source/drivers/tty/vt/vt.c#L3235-L3257>
+    /// - <https://elixir.bootlin.com/linux/v6.17/source/drivers/tty/vt/vt.c#L3191-L3233>
+    /// - <https://elixir.bootlin.com/linux/v6.17/source/drivers/tty/vt/vt_ioctl.c#L1212-L1280>
     fn switch_vt_inner(&mut self, target: VtIndex) -> Result<()> {
         if target == self.state.active {
             return Ok(());
@@ -323,6 +419,9 @@ impl VtManagerGuard<'_> {
         self.complete_switch_vt(target)
     }
 
+    /// Completes the VT switch to the target VT.
+    ///
+    /// Reference: <https://elixir.bootlin.com/linux/v6.17/source/drivers/tty/vt/vt_ioctl.c#L1137-L1210>
     fn complete_switch_vt(&mut self, target: VtIndex) -> Result<()> {
         let old_active_console = self.manager.vt(self.state.active).driver().vt_console();
         old_active_console.deactivate();

@@ -12,6 +12,7 @@ pub(super) fn sys_setpgid(pid: Pid, pgid: Pgid, ctx: &Context) -> Result<Syscall
     }
 
     let pid = if pid == 0 { current.pid() } else { pid };
+
     let pgid = if pgid == 0 { pid } else { pgid };
 
     debug!("pid = {}, pgid = {}", pid, pgid);

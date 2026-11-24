@@ -9,6 +9,7 @@ use crate::{
     thread::Thread,
 };
 
+/// Represents the inode at `/proc/[pid]/task/[tid]/auxv` (and also `/proc/[pid]/auxv`).
 pub(super) struct AuxvFileOps(TidDirOps);
 
 impl AuxvFileOps {

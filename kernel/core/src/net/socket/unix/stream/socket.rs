@@ -124,6 +124,15 @@ impl OptionSet {
         }
     }
 
+    /// Creates a new option set for an accepted socket.
+    ///
+    /// This should work together with [`Self::apply_to_listener`] to pass the necessary flags from
+    /// a listening socket to an accepted socket. See the references below for a list of socket
+    /// options that should be inherited this way.
+    ///
+    /// Reference:
+    /// <https://elixir.bootlin.com/linux/v6.18.6/source/net/unix/af_unix.c#L1765>
+    /// <https://elixir.bootlin.com/linux/v6.18.6/source/include/net/sock.h#L543-L550>
     pub(super) fn new_accepted(is_pass_cred: bool) -> Self {
         let mut result = Self::new();
         if is_pass_cred {

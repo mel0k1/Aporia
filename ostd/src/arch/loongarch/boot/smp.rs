@@ -1,3 +1,5 @@
+//! Multiprocessor Boot Support
+
 use crate::{boot::smp::PerApRawInfo, mm::Paddr};
 
 pub(crate) fn count_processors() -> Option<u32> {

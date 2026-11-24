@@ -8,6 +8,7 @@ use crate::{
     time::{itimerval_t, timer::Timeout, timeval_t},
 };
 
+/// `ItimerType` is used to differ the target timer for some timer-related syscalls.
 #[expect(non_camel_case_types)]
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, PartialEq, TryFromInt)]

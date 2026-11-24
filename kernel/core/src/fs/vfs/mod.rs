@@ -1,3 +1,8 @@
+//! Virtual File System (VFS) layer.
+//!
+//! The VFS provides a unified abstraction over different file system implementations,
+//! serving as the bridge between system calls and concrete file systems.
+
 mod fs_apis;
 pub(crate) mod notify;
 pub mod path;

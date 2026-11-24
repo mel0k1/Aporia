@@ -4,10 +4,13 @@ use spin::Once;
 
 use super::SoftIrqLine;
 
+/// The maximum number of IRQ lines we track (256 should have covered most common hardware).
 pub(super) const NR_IRQ_LINES: usize = 256;
 
+/// Counters of each IRQ line for the number of executions.
 pub(super) static IRQ_COUNTERS: Once<[PerCpuCounter; NR_IRQ_LINES]> = Once::new();
 
+/// Iterates all IRQ lines for the number of executions across all CPUs.
 pub fn iter_irq_counts_across_all_cpus() -> impl Iterator<Item = usize> {
     let irq_counters = IRQ_COUNTERS.get().unwrap();
     irq_counters.iter().map(|counter| counter.sum_all_cpus())
@@ -17,6 +20,7 @@ pub(super) fn process_statistic(irq_num: u8) {
     IRQ_COUNTERS.get().unwrap()[irq_num as usize].add_on_cpu(CpuId::current_racy(), 1);
 }
 
+/// Iterates all softirq lines for the number of executions across all CPUs.
 pub fn iter_softirq_counts_across_all_cpus() -> impl Iterator<Item = usize> {
     (0..SoftIrqLine::NR_LINES).map(|i| {
         let soft_irq_line = SoftIrqLine::get(i);
@@ -28,6 +32,7 @@ pub fn iter_softirq_counts_across_all_cpus() -> impl Iterator<Item = usize> {
     })
 }
 
+/// Iterates all softirq lines for the number of executions on a specific CPU.
 pub fn iter_softirq_counts_on_cpu(cpuid: CpuId) -> impl Iterator<Item = usize> {
     (0..SoftIrqLine::NR_LINES).map(move |i| {
         let soft_irq_line = SoftIrqLine::get(i);

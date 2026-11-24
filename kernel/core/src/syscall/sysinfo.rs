@@ -39,6 +39,7 @@ pub(super) fn sys_sysinfo(sysinfo_addr: Vaddr, ctx: &Context) -> Result<SyscallR
         totalram: crate::vm::mem_total() as u64,
         freeram: osdk_frame_allocator::load_total_free_size() as u64,
         procs: pid_table::pid_table_mut().process_count() as u16,
+
         mem_unit: 1,
         ..Default::default()
     };
@@ -47,6 +48,10 @@ pub(super) fn sys_sysinfo(sysinfo_addr: Vaddr, ctx: &Context) -> Result<SyscallR
 }
 
 trait RoundUpSeconds {
+    /// Returns the duration in seconds, rounding up a nonzero sub-second part.
+    ///
+    /// This matches the rounding used by Linux `sysinfo`.
+    /// Reference: <https://elixir.bootlin.com/linux/v6.18/source/kernel/sys.c#L2904-L2906>
     fn as_secs_round_up(&self) -> u64;
 }
 

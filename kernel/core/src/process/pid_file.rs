@@ -39,6 +39,7 @@ impl PidFile {
 
         Self {
             process: Arc::downgrade(&process),
+
             common: FileCommon::new(pseudo_path, AccessMode::O_RDWR, status_flags),
         }
     }
@@ -95,6 +96,7 @@ impl FileLike for PidFile {
                 writeln!(f, "mnt_id:\t{}", PidfdFs::mount_node().id())?;
                 writeln!(f, "ino:\t{}", PidfdFs::shared_inode().ino())?;
                 writeln!(f, "Pid:\t{}", self.pid)?;
+
                 writeln!(f, "NSpid:\t{}", self.pid)
             }
         }

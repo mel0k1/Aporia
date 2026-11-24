@@ -11,6 +11,10 @@ use crate::{
     socket::{NeedIfacePoll, TcpConnectionBg},
 };
 
+/// An interface with auxiliary data that makes it pollable.
+///
+/// This is used, for example, when updating a socket's next poll time and finding a socket to
+/// poll.
 pub(crate) struct PollableIface<E: Ext> {
     interface: smoltcp::iface::Interface,
     pending_conns: PendingConnSet<E>,
@@ -59,16 +63,22 @@ impl<E: Ext> PollableIface<E> {
         routes
     }
 
+    /// Returns the next poll time.
     pub(super) fn next_poll_at_ms(&self) -> Option<u64> {
         self.pending_conns.next_poll_at_ms()
     }
 }
 
 impl<E: Ext> PollableIface<E> {
+    /// Returns the `smoltcp` context for passing to the `smoltcp` APIs.
     pub(crate) fn context_mut(&mut self) -> &mut smoltcp::iface::Context {
         self.interface.context()
     }
 
+    /// Updates the next poll time of `socket` to `poll_at`.
+    ///
+    /// This method (or [`PollableIfaceMut::update_next_poll_at_ms`]) should be called after network or
+    /// user events that change the poll time occur.
     pub(crate) fn update_next_poll_at_ms(
         &mut self,
         socket: &Arc<TcpConnectionBg<E>>,
@@ -77,6 +87,14 @@ impl<E: Ext> PollableIface<E> {
         self.pending_conns.update_next_poll_at_ms(socket, poll_at)
     }
 
+    /// Maps an address to the local unicast address if it is a broadcast address.
+    ///
+    /// For example, if the interface is configured with the address `10.0.2.15/24`, this method
+    ///  - will return `10.0.2.15` for `10.0.2.255`, and
+    ///  - will return the original address for `10.0.2.15` and `10.0.2.16`.
+    ///
+    /// Note: "local" means that the IP address belongs to the local interface, not to be confused
+    /// with the localhost IP (`127.0.0.1`).
     pub(crate) fn map_broadcast_to_local(
         &self,
         addr: smoltcp::wire::IpAddress,
@@ -94,6 +112,11 @@ impl<E: Ext> PollableIface<E> {
     }
 }
 
+/// A mutable reference to a [`PollableIface`].
+///
+/// This type is reconstructed from mutable references to fields in [`PollableIface`], since the fields
+/// must be broken into individual fields during interface polling due to limitations of the
+/// [`smoltcp`] APIs.
 pub(crate) struct PollableIfaceMut<'a, E: Ext> {
     context: &'a mut smoltcp::iface::Context,
     pending_conns: &'a mut PendingConnSet<E>,
@@ -123,14 +146,20 @@ impl<E: Ext> PollableIfaceMut<'_, E> {
 }
 
 impl<E: Ext> PollableIfaceMut<'_, E> {
+    /// Returns an immutable reference to the `smoltcp` context.
     pub(crate) fn context(&self) -> &smoltcp::iface::Context {
         self.context
     }
 
+    /// Returns the `smoltcp` context for passing to the `smoltcp` APIs.
     pub(crate) fn context_mut(&mut self) -> &mut smoltcp::iface::Context {
         self.context
     }
 
+    /// Updates the next poll time of `socket` to `poll_at`.
+    ///
+    /// This method (or [`PollableIface::update_next_poll_at_ms`]) should be called after network
+    /// or user events that change the poll time occur.
     pub(crate) fn update_next_poll_at_ms(
         &mut self,
         socket: &Arc<TcpConnectionBg<E>>,
@@ -140,6 +169,7 @@ impl<E: Ext> PollableIfaceMut<'_, E> {
     }
 }
 
+/// A key to sort sockets by their next poll time.
 pub(crate) struct PollKey {
     next_poll_at_ms: AtomicU64,
     id: usize,
@@ -168,9 +198,19 @@ impl Ord for PollKey {
 }
 
 impl PollKey {
+    /// A value indicating that an immediate poll is required.
     const IMMEDIATE_VAL: u64 = 0;
+    /// A value indicating that no poll is required.
     const INACTIVE_VAL: u64 = u64::MAX;
 
+    /// Creates a new [`PollKey`].
+    ///
+    /// `id` must be a unique identifier for the associated socket, as it will be used to locate
+    /// the socket to update its next poll time. This is usually done using the address of the
+    /// [`Arc`] socket (see [`Arc::as_ptr`]).
+    ///
+    /// [`Arc`]: alloc::sync::Arc
+    /// [`Arc::as_ptr`]: alloc::sync::Arc::as_ptr
     pub(crate) fn new(id: usize) -> Self {
         Self {
             next_poll_at_ms: AtomicU64::new(Self::INACTIVE_VAL),
@@ -178,13 +218,22 @@ impl PollKey {
         }
     }
 
+    /// Returns whether the next poll is active.
+    ///
+    /// The next poll is active if there are packets to send or a timer is set, in which case the
+    /// socket will live in the pending queue.
     pub(crate) fn is_active(&self) -> bool {
         self.next_poll_at_ms.load(Ordering::Relaxed) != Self::INACTIVE_VAL
     }
 }
 
+/// Sockets to poll in the future, sorted by poll time.
 pub(crate) struct PendingConnSet<E: Ext>(BTreeSet<PendingTcpConn<E>>);
 
+/// A TCP socket to poll in the future.
+///
+/// Note that currently only TCP sockets can set a timer to fire in the future, so a
+/// [`PendingConnSet`] contains only [`PendingTcpConn`]s.
 struct PendingTcpConn<E: Ext>(Arc<TcpConnectionBg<E>>);
 
 impl<E: Ext> PartialEq for PendingTcpConn<E> {
@@ -279,9 +328,26 @@ impl<E: Ext> PendingConnSet<E> {
     }
 }
 
+/// An extension trait for an interface context.
 pub(super) trait IsUnicast {
+    /// Returns whether the destination address is a unicast address of an interface.
+    ///
+    /// For example, if the interface is configured with the address `10.0.2.15/24`, this method
+    ///  - will return true for `10.0.2.15` and `10.0.2.254`, and
+    ///  - will return false for `10.0.2.255` and `255.255.255.255`.
+    ///
+    /// Note: This excludes broadcast addresses, link-local broadcast addresses, and multicast
+    /// addresses.
     fn is_unicast(&self, dst_addr: smoltcp::wire::IpAddress) -> bool;
 
+    /// Returns whether the destination address is a local unicast address of an interface.
+    ///
+    /// For example, if the interface is configured with the address `10.0.2.15/24`, this method
+    ///  - will return true for `10.0.2.15`, and
+    ///  - will return false for `10.0.2.14`, `10.0.2.255`, and `255.255.255.255`.
+    ///
+    /// Note: "local" means that the IP address belongs to the local interface, not to be confused
+    /// with the localhost IP (`127.0.0.1`).
     fn is_unicast_local(&self, dst_addr: smoltcp::wire::IpAddress) -> bool;
 }
 

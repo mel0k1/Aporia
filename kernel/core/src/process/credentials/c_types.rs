@@ -1,5 +1,8 @@
 use crate::{prelude::*, process::Pid};
 
+/// `struct __user_cap_header_struct` in Linux.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.18.6/source/include/uapi/linux/capability.h#L40>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(crate) struct CUserCapHeader {
@@ -7,6 +10,9 @@ pub(crate) struct CUserCapHeader {
     pub pid: Pid,
 }
 
+/// `struct __user_cap_data_struct` in Linux.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.18.6/source/include/uapi/linux/capability.h#L40>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(crate) struct CUserCapData {

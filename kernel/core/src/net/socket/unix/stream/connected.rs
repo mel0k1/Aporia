@@ -127,6 +127,7 @@ impl Connected {
         let peer_end = self.inner.peer_end();
 
         let mut reader = this_end.reader.lock();
+
         let no_aux_len = reader.len();
 
         let is_pass_cred = this_end.is_pass_cred.load(Ordering::Relaxed);
@@ -403,6 +404,7 @@ impl Drop for Connected {
 struct Inner {
     addr: Once<UnixSocketAddr>,
     state: EndpointState,
+
     reader: Mutex<RbConsumer<u8>>,
     writer: Mutex<RbProducer<u8>>,
     all_aux: Mutex<VecDeque<RangedAuxiliaryData>>,

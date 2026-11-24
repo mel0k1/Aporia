@@ -15,9 +15,17 @@ pub(crate) mod inotify;
 
 use crate::fs::vfs::{inode::Inode, inode_ext::InodeExt};
 
+/// Publishes filesystem events to subscribers.
+///
+/// Each inode has an associated `FsEventPublisher` that maintains a list of
+/// subscribers interested in filesystem events. When an event occurs, the publisher
+/// notifies all subscribers whose interesting events match the event.
 pub(crate) struct FsEventPublisher {
+    /// List of FS event subscribers.
     subscribers: RwLock<Vec<Arc<dyn FsEventSubscriber>>>,
+    /// All interesting FS event types (aggregated from all subscribers).
     all_interesting_events: AtomicFsEvents,
+    /// Whether this publisher still accepts new subscribers.
     accepts_new_subscribers: AtomicBool,
 }
 
@@ -44,6 +52,7 @@ impl FsEventPublisher {
         }
     }
 
+    /// Adds a subscriber to this publisher.
     pub(crate) fn add_subscriber(&self, subscriber: Arc<dyn FsEventSubscriber>) -> bool {
         let mut subscribers = self.subscribers.write();
 
@@ -60,6 +69,7 @@ impl FsEventPublisher {
         true
     }
 
+    /// Removes a subscriber from this publisher.
     pub(crate) fn remove_subscriber(&self, subscriber: &Arc<dyn FsEventSubscriber>) -> bool {
         let mut subscribers = self.subscribers.write();
 
@@ -74,6 +84,7 @@ impl FsEventPublisher {
         removed
     }
 
+    /// Removes all subscribers from this publisher.
     pub(crate) fn remove_all_subscribers(&self) -> usize {
         let mut subscribers = self.subscribers.write();
 
@@ -90,12 +101,15 @@ impl FsEventPublisher {
         num_subscribers
     }
 
+    /// Forbids new subscribers from attaching to this publisher and removes all existing
+    /// subscribers.
     pub(crate) fn disable_new_and_remove_subscribers(&self) -> usize {
         self.accepts_new_subscribers.store(false, Ordering::Relaxed);
 
         self.remove_all_subscribers()
     }
 
+    /// Broadcasts an event to all the subscribers of this publisher.
     pub(crate) fn publish_event(&self, events: FsEvents, name: Option<String>) {
         let interesting = self.all_interesting_events.load(Ordering::Relaxed);
         if !interesting.intersects(events) {
@@ -111,15 +125,19 @@ impl FsEventPublisher {
 
         if has_oneshot {
             let mut subscribers = self.subscribers.write();
+
             self.retain_and_recalc_events(&mut subscribers, |m| !m.is_oneshot_and_dead());
         }
     }
 
+    /// Updates the aggregated events when a subscriber's interesting events change.
     pub(crate) fn update_subscriber_events(&self) {
         let mut subscribers = self.subscribers.write();
         self.retain_and_recalc_events(&mut subscribers, |_| true);
     }
 
+    /// Retains only the subscribers specified by the predicate and recalculates the aggregated
+    /// interesting events.
     fn retain_and_recalc_events<F>(
         &self,
         subscribers: &mut Vec<Arc<dyn FsEventSubscriber>>,
@@ -140,6 +158,10 @@ impl FsEventPublisher {
             .store(new_events, Ordering::Relaxed);
     }
 
+    /// Finds a subscriber and applies an action if found.
+    ///
+    /// The matcher should return `Some(T)` if the subscriber matches and processing
+    /// should stop, or `None` to continue searching.
     #[expect(dead_code)]
     pub(crate) fn find_subscriber_and_process<F, T>(&self, mut matcher: F) -> Option<T>
     where
@@ -155,17 +177,44 @@ impl FsEventPublisher {
     }
 }
 
+/// Represents a subscriber to filesystem events on an `FsEventPublisher`.
+///
+/// A subscriber receives notifications from a publisher when filesystem events occur
+/// that match the subscriber's interesting events. The subscriber specifies which events
+/// it is interested in using `FsEvents`, which define the types of events (e.g.,
+/// read, write, modify, delete) the subscriber wants to be notified about. When an event
+/// occurs, the publisher (attached to an inode) broadcasts it to all subscribers whose
+/// interesting events match the event type.
 pub(crate) trait FsEventSubscriber: Any + Send + Sync {
+    /// Delivers a filesystem event notification to the subscriber.
+    ///
+    /// Returns whether the subscriber is a one-shot subscriber and the event has been
+    /// delivered. If there are no one-shot subscribers, simply return `false` here.
+    /// Otherwise, [`Self::is_oneshot_and_dead`] should be implemented correspondingly.
+    ///
+    /// Invariant: This method must not sleep or perform blocking operations. The publisher
+    /// may hold a spin lock when calling this method.
     fn deliver_event(&self, events: FsEvents, name: Option<String>) -> bool;
 
+    /// Returns the events that this subscriber is interested in.
     fn interesting_events(&self) -> FsEvents;
 
+    /// Returns whether the subscriber is a one-shot subscriber and an event has been
+    /// delivered.
+    ///
+    /// This method should return `true` if and only if a previous call to
+    /// [`Self::deliver_event`] has already returned `true`.
     fn is_oneshot_and_dead(&self) -> bool {
         false
     }
 }
 
 bitflags! {
+    /// Represents filesystem events that have occurred.
+    ///
+    /// These events are used to notify subscribers about specific filesystem actions.
+    /// Subscribers specify which events they are interested in to filter and receive
+    /// only the events they care about.
     #[derive(Clone, Copy, Debug)]
     pub(crate) struct FsEvents: u32 {
         const ACCESS         = 0x00000001;
@@ -212,6 +261,7 @@ define_atomic_version_of_integer_like_type!(FsEvents, {
     pub(super) struct AtomicFsEvents(AtomicU32);
 });
 
+/// Notifies that a file was accessed.
 pub(crate) fn on_access(file: &Arc<dyn FileLike>) {
     let path = file.path();
 
@@ -221,6 +271,7 @@ pub(crate) fn on_access(file: &Arc<dyn FileLike>) {
     notify_parent(path, FsEvents::ACCESS);
 }
 
+/// Notifies that a file was modified.
 pub(crate) fn on_modify(file: &Arc<dyn FileLike>) {
     let path = file.path();
 
@@ -230,6 +281,7 @@ pub(crate) fn on_modify(file: &Arc<dyn FileLike>) {
     notify_parent(path, FsEvents::MODIFY);
 }
 
+/// Notifies that a path's content was changed.
 pub(crate) fn on_change(path: &Path) {
     if !path.fs().fs_event_subscriber_stats().has_any_subscribers() {
         return;
@@ -237,6 +289,7 @@ pub(crate) fn on_change(path: &Path) {
     notify_parent(path, FsEvents::MODIFY);
 }
 
+/// Notifies that a file was deleted from a directory.
 pub(crate) fn on_delete(
     dir_inode: &Arc<dyn Inode>,
     inode: &Arc<dyn Inode>,
@@ -256,6 +309,7 @@ pub(crate) fn on_delete(
     }
 }
 
+/// Notifies that an inode's link count changed.
 pub(crate) fn on_link_count(inode: &Arc<dyn Inode>) {
     if !inode.fs().fs_event_subscriber_stats().has_any_subscribers() {
         return;
@@ -263,6 +317,7 @@ pub(crate) fn on_link_count(inode: &Arc<dyn Inode>) {
     notify_inode(inode, FsEvents::ATTRIB);
 }
 
+/// Notifies that an inode was removed (link count reached 0).
 pub(crate) fn on_inode_removed(inode: &Arc<dyn Inode>) {
     if !inode.fs().fs_event_subscriber_stats().has_any_subscribers() {
         return;
@@ -270,6 +325,7 @@ pub(crate) fn on_inode_removed(inode: &Arc<dyn Inode>) {
     notify_inode(inode, FsEvents::DELETE_SELF);
 }
 
+/// Notifies that a file was linked to a directory.
 pub(crate) fn on_link(
     dir_inode: &Arc<dyn Inode>,
     inode: &Arc<dyn Inode>,
@@ -286,6 +342,7 @@ pub(crate) fn on_link(
     notify_inode_with_name(dir_inode, FsEvents::CREATE, name);
 }
 
+/// Notifies that a directory was created.
 pub(crate) fn on_mkdir(dir_path: &Path, name: impl FnOnce() -> String) {
     if !dir_path
         .fs()
@@ -297,6 +354,7 @@ pub(crate) fn on_mkdir(dir_path: &Path, name: impl FnOnce() -> String) {
     notify_inode_with_name(dir_path.inode(), FsEvents::CREATE | FsEvents::ISDIR, name);
 }
 
+/// Notifies that a file was created.
 pub(crate) fn on_create(file_path: &Path, name: impl FnOnce() -> String) {
     if !file_path
         .fs()
@@ -308,6 +366,7 @@ pub(crate) fn on_create(file_path: &Path, name: impl FnOnce() -> String) {
     notify_inode_with_name(file_path.inode(), FsEvents::CREATE, name);
 }
 
+/// Notifies that a file was opened.
 pub(crate) fn on_open(common: &FileCommon) {
     let Some(path) = notifiable_path(common) else {
         return;
@@ -315,6 +374,7 @@ pub(crate) fn on_open(common: &FileCommon) {
     notify_parent(path, FsEvents::OPEN);
 }
 
+/// Notifies that a file was closed.
 pub(crate) fn on_close(common: &FileCommon) {
     let Some(path) = notifiable_path(common) else {
         return;
@@ -326,6 +386,11 @@ pub(crate) fn on_close(common: &FileCommon) {
     notify_parent(path, events);
 }
 
+/// Returns the file's path if open/close events should be emitted for it.
+///
+/// `O_PATH` file descriptors carry `FMODE_NONOTIFY` in Linux's `f_mode` and
+/// thus suppress all fsnotify events, so they yield `None`. `None` is also
+/// returned when the filesystem has no event subscribers.
 fn notifiable_path(common: &FileCommon) -> Option<&Path> {
     if common.status_flags().contains(StatusFlags::O_PATH) {
         return None;
@@ -337,6 +402,7 @@ fn notifiable_path(common: &FileCommon) -> Option<&Path> {
     Some(path)
 }
 
+/// Notifies that a file's attributes changed.
 pub(crate) fn on_attr_change(path: &Path) {
     if !path.fs().fs_event_subscriber_stats().has_any_subscribers() {
         return;
@@ -344,6 +410,15 @@ pub(crate) fn on_attr_change(path: &Path) {
     notify_parent(path, FsEvents::ATTRIB);
 }
 
+/// Notifies a path's parent and the path itself about filesystem events.
+///
+/// If the parent is watching or if subscribers have registered interesting events with
+/// parent and name information, notifies the parent with child name info.
+/// Otherwise, notifies only the child without name information.
+/// This function is already called after filesystem checking in the callers.
+///
+/// The child's real name (from `path.name()`) is used to notify the parent, since
+/// FS events do not cross mount boundaries.
 fn notify_parent(path: &Path, mut events: FsEvents) {
     if path.inode().type_() == InodeType::Dir {
         events |= FsEvents::ISDIR;
@@ -356,12 +431,21 @@ fn notify_parent(path: &Path, mut events: FsEvents) {
     notify_inode(path.inode(), events);
 }
 
+/// Sends a filesystem notification event to all subscribers of an inode.
+///
+/// This is the main entry point for FS event notification. The VFS layer calls hook-specific
+/// functions in `fs/notify/`, which then call this function to broadcast events
+/// to all registered subscribers through the inode's publisher.
 fn notify_inode(inode: &Arc<dyn Inode>, events: FsEvents) {
     if let Some(publisher) = inode.fs_event_publisher() {
         publisher.publish_event(events, None);
     }
 }
 
+/// Sends a filesystem notification event with a name to all subscribers of an inode.
+///
+/// Similar to `notify_inode`, but includes a name parameter for events that require
+/// child name information (e.g., CREATE, DELETE).
 fn notify_inode_with_name(inode: &Arc<dyn Inode>, events: FsEvents, name: impl FnOnce() -> String) {
     if let Some(publisher) = inode.fs_event_publisher() {
         publisher.publish_event(events, Some(name()));

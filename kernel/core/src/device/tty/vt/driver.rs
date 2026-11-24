@@ -29,6 +29,7 @@ use crate::{
     util::ioctl::RawIoctl,
 };
 
+/// The driver for VT (virtual terminal) devices.
 pub(crate) struct VtDriver {
     index: VtIndex,
     console: VtConsole,
@@ -219,6 +220,7 @@ impl TtyDriver for VtDriver {
                 let vtm = VT_MANAGER.get().expect("`VT_MANAGER` is not initialized");
                 let mut guard = vtm.lock();
                 guard.allocate_vt(vt_index);
+
                 let _ = guard.switch_vt(vt_index);
             }
             cmd @ WaitForVtActive => {
@@ -268,6 +270,7 @@ fn check_vt_ioctl_perm(tty: &Tty<VtDriver>) -> Result<()> {
 }
 
 impl VtDriver {
+    /// Creates a new VT driver with none VT console backend.
     pub(super) fn new(index: VtIndex) -> Self {
         Self {
             index,
@@ -276,14 +279,17 @@ impl VtDriver {
         }
     }
 
+    /// Gets the VT console associated with this driver.
     pub(super) fn vt_console(&self) -> &VtConsole {
         &self.console
     }
 
+    /// Gets the VT index associated with this driver.
     pub(super) fn index(&self) -> VtIndex {
         self.index
     }
 
+    /// Gets the open file counter of this VT driver.
     pub(super) fn open_file_counter(&self) -> &VtOpenFileCounter {
         &self.open_file_counter
     }

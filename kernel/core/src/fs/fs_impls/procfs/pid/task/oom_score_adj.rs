@@ -13,6 +13,7 @@ use crate::{
     thread::Thread,
 };
 
+/// Represents the inode at `/proc/[pid]/task/[tid]/oom_score_adj` (and also `/proc/[pid]/oom_score_adj`).
 pub(super) struct OomScoreAdjFileOps(TidDirOps);
 
 impl OomScoreAdjFileOps {

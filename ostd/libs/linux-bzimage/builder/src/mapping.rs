@@ -1,3 +1,8 @@
+//! In the setup, VA - SETUP32_LMA == FileOffset - LEGACY_SETUP_SEC_SIZE.
+//! And the addresses are specified in the ELF file.
+//!
+//! This module centralizes the conversion between VA and FileOffset.
+
 use std::{
     cmp::PartialOrd,
     ops::{Add, Sub},

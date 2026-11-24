@@ -7,6 +7,9 @@ use ostd::sync::SpinLock;
 pub(crate) use super::real_time::{RealTimePolicy, RealTimePriority};
 use crate::sched::nice::Nice;
 
+/// The User-chosen scheduling policy.
+///
+/// The scheduling policies are specified by the user, usually through its priority.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) enum SchedPolicy {
     #[expect(dead_code)]
@@ -25,6 +28,9 @@ impl Default for SchedPolicy {
     }
 }
 
+/// The Linux scheduling policy code.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.17.7/source/include/uapi/linux/sched.h#L112>.
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, TryFromInt)]
 pub(crate) enum LinuxSchedPolicy {
@@ -38,6 +44,10 @@ pub(crate) enum LinuxSchedPolicy {
     Ext = 7,
 }
 
+/// Projects internal scheduling policies onto Linux's user-visible policy codes.
+///
+/// This projection is many-to-one: `Stop` is reported as `Fifo`, and the
+/// kernel-only `Idle` policy is reported as `Normal`.
 impl From<SchedPolicy> for LinuxSchedPolicy {
     fn from(policy: SchedPolicy) -> Self {
         match policy {

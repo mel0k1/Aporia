@@ -24,6 +24,66 @@ use crate::{
     vm::vmar::RssType,
 };
 
+/// Represents the inode at either `/proc/[pid]/stat` or `/proc/[pid]/task/[tid]/stat`.
+///
+/// The fields are the same as the ones in `/proc/[pid]/status`, but the format is different.
+/// See <https://elixir.bootlin.com/linux/v6.16.5/source/fs/proc/array.c#L467>.
+///
+/// FIXME: Some fields are not implemented or contain placeholders yet.
+///
+/// Fields:
+/// - pid              : Process ID.
+/// - comm             : Process name.
+/// - state            : Process state (R: running, S: sleeping, Z: zombie).
+/// - ppid             : Parent process ID.
+/// - pgrp             : Process group ID.
+/// - session          : Session ID.
+/// - tty_nr           : Terminal associated with the process.
+/// - tpgid            : Foreground process group ID.
+/// - flags            : Kernel flags determining process behavior.
+/// - minflt           : Minor page faults (no I/O needed).
+/// - cminflt          : Cumulative minor faults of child processes.
+/// - majflt           : Major page faults (I/O required).
+/// - cmajflt          : Cumulative major faults of child processes.
+/// - utime            : Time spent in user mode (clock ticks).
+/// - stime            : Time spent in kernel mode (clock ticks).
+/// - cutime           : Child processes' user mode time.
+/// - cstime           : Child processes' kernel mode time.
+/// - priority         : Kernel scheduling priority.
+/// - nice             : Nice value (-20 to 19; lower is higher priority).
+/// - num_threads      : Number of threads.
+/// - itrealvalue      : Time before the next `SIGALRM`.
+/// - starttime        : Process start time since boot (clock ticks).
+/// - vsize            : Virtual memory size (bytes).
+/// - rss              : Resident Set Size (pages in real memory).
+/// - rsslim           : Soft memory limit (bytes).
+/// - startcode        : Start address of executable code.
+/// - endcode          : End address of executable code.
+/// - startstack       : Initial top address of process stack.
+/// - kstkesp          : Current stack pointer (ESP).
+/// - kstkeip          : Current instruction pointer (EIP).
+/// - signal           : Bitmap of pending signals.
+/// - blocked          : Bitmap of blocked signals.
+/// - sigignore        : Bitmap of ignored signals.
+/// - sigcatch         : Bitmap of caught signals.
+/// - wchan            : Address where the process is waiting.
+/// - nswap            : Number of pages swapped (deprecated).
+/// - cnswap           : Cumulative swapped pages of children.
+/// - exit_signal      : Signal sent to parent on termination.
+/// - processor        : Last CPU the process executed on.
+/// - rt_priority      : Real-time scheduling priority (1-99, 0 otherwise).
+/// - policy           : Scheduling policy (e.g., SCHED_NORMAL, SCHED_FIFO).
+/// - delayacct_blkio_ticks : Block I/O delays (clock ticks).
+/// - guest_time       : Time spent as a guest in virtual CPU.
+/// - cguest_time      : Guest time of child processes.
+/// - start_data       : Start address of initialized/uninitialized data.
+/// - end_data         : End address of initialized/uninitialized data.
+/// - start_brk        : Address above which the heap expands.
+/// - arg_start        : Start address of command-line arguments.
+/// - arg_end          : End address of command-line arguments.
+/// - env_start        : Start address of environment variables.
+/// - env_end          : End address of environment variables.
+/// - exit_code        : Process exit code as returned by waitpid(2).
 pub(in pid) struct StatFileOps {
     dir: TidDirOps,
     mode: StatMode,
@@ -101,6 +161,7 @@ impl ProcFileOps for StatFileOps {
         };
 
         let flags = 0;
+
         let min_flt = 0;
         let cmin_flt = 0;
         let maj_flt = 0;
@@ -273,6 +334,7 @@ impl ProcFileOps for StatFileOps {
     }
 }
 
+/// Converts a duration into kernel clock ticks.
 fn duration_to_jiffies(duration: Duration) -> u64 {
     const NSEC_PER_JIFFY: u64 = NSEC_PER_SEC as u64 / TIMER_FREQ;
     const { assert!((NSEC_PER_SEC as u64).is_multiple_of(TIMER_FREQ)) };
@@ -282,6 +344,7 @@ fn duration_to_jiffies(duration: Duration) -> u64 {
     sec_jiffies.saturating_add(subsec_jiffies)
 }
 
+/// Returns the `priority`, `rt_priority`, and `policy` values for `/proc/<pid>/stat`.
 fn sched_values(thread: &Thread) -> (i32, u8, i32) {
     const MAX_RT_PRIORITY: u8 = RealTimePriority::MAX.get();
     const RT_PRIORITY_LIMIT: u8 = MAX_RT_PRIORITY + 1;
@@ -303,6 +366,7 @@ fn sched_values(thread: &Thread) -> (i32, u8, i32) {
     (priority, rt_priority, linux_policy as i32)
 }
 
+/// Returns the ignored and caught standard-signal masks for `/proc/<pid>/stat`.
 fn signal_disposition_masks(process: &Process) -> (u64, u64) {
     let dispositions = process.sig_dispositions().lock();
     let dispositions = dispositions.lock();
@@ -317,6 +381,7 @@ fn signal_disposition_masks(process: &Process) -> (u64, u64) {
         let bit = u64::from(SigMask::from(sig_num));
         match sig_action {
             SigAction::Dfl => {}
+
             SigAction::Ign => ignored |= bit,
             SigAction::User { .. } => caught |= bit,
         }

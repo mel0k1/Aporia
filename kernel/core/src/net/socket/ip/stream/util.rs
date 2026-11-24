@@ -51,13 +51,16 @@ impl Default for TcpOptionSet {
     }
 }
 
+/// Initial RTO value
 const TCP_TIMEOUT_INIT: Duration = Duration::from_secs(1);
 const TCP_RTO_MAX: Duration = Duration::from_secs(120);
 
+/// The number of retransmits.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Retrans(u8);
 
 impl Retrans {
+    /// Converts seconds to retransmits.
     pub(super) const fn from_secs(seconds: u32) -> Self {
         if seconds == 0 {
             return Self(0);
@@ -80,6 +83,7 @@ impl Retrans {
         Self(res)
     }
 
+    /// Converts retransmits to seconds.
     pub(super) const fn to_secs(self) -> u32 {
         let mut retrans = self.0;
 

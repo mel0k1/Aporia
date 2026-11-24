@@ -13,11 +13,14 @@ pub(super) fn new_instance() -> &'static dyn Scheduler {
     Box::<FifoScheduler<Task>>::leak(fifo_scheduler)
 }
 
+/// A simple FIFO (First-In-First-Out) task scheduler.
 struct FifoScheduler<T: CommonSchedInfo> {
+    /// A thread-safe queue to hold tasks waiting to be executed.
     rq: Vec<SpinLock<FifoRunQueue<T>>>,
 }
 
 impl<T: CommonSchedInfo> FifoScheduler<T> {
+    /// Creates a new instance of `FifoScheduler`.
     fn new(nr_cpus: usize) -> Self {
         let mut rq = Vec::new();
         for _ in 0..nr_cpus {

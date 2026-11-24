@@ -2,6 +2,7 @@ use aster_bigtcp::socket::ReceiveBehavior;
 use bitflags::bitflags;
 
 bitflags! {
+    /// Flags passed to socket send operations.
     #[derive(Clone, Copy, Debug)]
     pub(crate) struct SendFlags: i32 {
         const MSG_OOB       = 0x1;
@@ -30,6 +31,7 @@ impl SendFlags {
 }
 
 bitflags! {
+    /// Flags passed to or returned from socket receive operations.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub(crate) struct RecvFlags: i32 {
         const MSG_OOB          = SendFlags::MSG_OOB.bits();
@@ -53,6 +55,7 @@ impl RecvFlags {
         Self::SUPPORTED.contains(self)
     }
 
+    /// Returns whether receive operations should consume or peek data.
     pub(crate) fn receive_behavior(self) -> ReceiveBehavior {
         if self.contains(Self::MSG_PEEK) {
             ReceiveBehavior::Peek

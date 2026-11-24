@@ -1,3 +1,5 @@
+//! Architecture kernel module.
+
 pub(super) mod acpi;
 pub(super) mod apic;
 pub(super) mod kvm_clock;

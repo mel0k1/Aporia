@@ -1,3 +1,5 @@
+//! The layer of edit journal.
+
 mod edits;
 mod journal;
 

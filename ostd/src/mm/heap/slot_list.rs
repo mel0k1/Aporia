@@ -1,9 +1,16 @@
+//! Implementation of the free heap slot list.
+
 use core::ptr::NonNull;
 
 use super::HeapSlot;
 
+/// A singly-linked list of [`HeapSlot`]s from [`super::Slab`]s.
+///
+/// The slots inside this list will have a size of `SLOT_SIZE`. They can come
+/// from different slabs.
 #[derive(Debug)]
 pub struct SlabSlotList<const SLOT_SIZE: usize> {
+    /// The head of the list.
     head: Option<NonNull<u8>>,
 }
 
@@ -17,10 +24,19 @@ impl<const SLOT_SIZE: usize> Default for SlabSlotList<SLOT_SIZE> {
 }
 
 impl<const SLOT_SIZE: usize> SlabSlotList<SLOT_SIZE> {
+    /// Creates a new empty list.
     pub const fn new() -> Self {
         Self { head: None }
     }
 
+    /// Pushes a slot to the front of the list.
+    ///
+    /// # Panics
+    ///
+    /// Panics if
+    ///  - the slot does not come from a slab
+    ///    (i.e., `!matches(slot.info(), SlotInfo::SlabSlot(_))`);
+    ///  - the size of the slot does not match `SLOT_SIZE`.
     pub fn push(&mut self, slot: HeapSlot) {
         let slot_ptr = slot.as_ptr();
         let super::SlotInfo::SlabSlot(slot_size) = slot.info() else {
@@ -33,7 +49,9 @@ impl<const SLOT_SIZE: usize> SlabSlotList<SLOT_SIZE> {
         let original_head = self.head;
 
         debug_assert!(!slot_ptr.is_null());
+
         self.head = Some(unsafe { NonNull::new_unchecked(slot_ptr) });
+
         unsafe {
             slot_ptr
                 .cast::<usize>()
@@ -41,6 +59,9 @@ impl<const SLOT_SIZE: usize> SlabSlotList<SLOT_SIZE> {
         }
     }
 
+    /// Pops a slot from the front of the list.
+    ///
+    /// It returns `None` if the list is empty.
     pub fn pop(&mut self) -> Option<HeapSlot> {
         let original_head = self.head?;
 

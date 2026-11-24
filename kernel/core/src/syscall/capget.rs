@@ -20,6 +20,7 @@ pub(super) fn sys_capget(
 
     if cap_user_header.version != LINUX_CAPABILITY_VERSION_3 {
         user_space.write_val(cap_user_header_addr, &LINUX_CAPABILITY_VERSION_3)?;
+
         if cap_user_data_addr == 0 {
             return Ok(SyscallReturn::Return(0));
         }

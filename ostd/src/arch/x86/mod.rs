@@ -1,3 +1,5 @@
+//! Platform-specific code for the x86 platform.
+
 pub(crate) mod boot;
 pub mod cpu;
 pub mod device;
@@ -47,6 +49,7 @@ pub(crate) fn init_cvm_guest(boot_params: &linux_boot_params::BootParams) {
                     );
                 }
             }
+
             write_td_metadata(metadata::NOTIFY_ENABLES, 1, 1).unwrap();
 
             crate::early_println!(
@@ -63,10 +66,21 @@ pub(crate) fn init_cvm_guest(boot_params: &linux_boot_params::BootParams) {
             );
             report_fatal_error_simple("Intel TDX not initialized, Failed to get TD info.");
         }
+
         Err(_) => {}
     }
 }
 
+/// Architecture-specific initialization on the bootstrapping processor.
+///
+/// It should be called when the heap and frame allocators are available.
+///
+/// # Safety
+///
+/// 1. This function must be called only once in the boot context of the
+///    bootstrapping processor.
+/// 2. This function must be called after the kernel page table is activated on
+///    the bootstrapping processor.
 pub(crate) unsafe fn late_init_on_bsp() {
     unsafe { trap::init_on_cpu() };
 
@@ -99,22 +113,35 @@ pub(crate) unsafe fn late_init_on_bsp() {
     power::init();
 }
 
+/// Initializes application-processor-specific state.
+///
+/// # Safety
+///
+/// 1. This function must be called only once on each application processor.
+/// 2. This function must be called after the BSP's call to [`late_init_on_bsp`]
+///    and before any other architecture-specific code in this module is called
+///    on this AP.
 pub(crate) unsafe fn init_on_ap() {
     timer::init_on_ap();
 }
 
+/// Returns the frequency of TSC. The unit is Hz.
 pub fn tsc_freq() -> u64 {
     use core::sync::atomic::Ordering;
 
     kernel::tsc::TSC_FREQ.load(Ordering::Acquire)
 }
 
+/// Reads the current value of the processor's time-stamp counter (TSC).
 pub fn read_tsc() -> u64 {
     use core::arch::x86_64::_rdtsc;
 
     unsafe { _rdtsc() }
 }
 
+/// Reads a hardware generated 64-bit random value.
+///
+/// Returns `None` if no random value was generated.
 pub fn read_random() -> Option<u64> {
     use core::arch::x86_64::_rdrand64_step;
 
@@ -148,6 +175,7 @@ pub(crate) fn enable_cpu_features() {
 
     let mut cr0 = x86_64::registers::control::Cr0::read();
     cr0 |= Cr0Flags::WRITE_PROTECT;
+
     cr0 |= Cr0Flags::NUMERIC_ERROR | Cr0Flags::MONITOR_COPROCESSOR;
     unsafe { x86_64::registers::control::Cr0::write(cr0) };
 
@@ -156,6 +184,7 @@ pub(crate) fn enable_cpu_features() {
     if has_extensions(IsaExtensions::XSAVE) {
         cr4 |= Cr4Flags::OSXSAVE;
     }
+
     if has_extensions(IsaExtensions::FSGSBASE) {
         cr4 |= Cr4Flags::FSGSBASE;
     }
@@ -178,6 +207,14 @@ pub(crate) fn enable_cpu_features() {
     mm::enable_essential_features();
 }
 
+/// Inserts a TDX-specific code block.
+///
+/// This macro conditionally executes a TDX-specific code block based on the following conditions:
+/// (1) The `cvm_guest` feature is enabled at compile time.
+/// (2) The TDX feature is detected at runtime via `::tdx_guest::tdx_is_enabled()`.
+///
+/// If both conditions are met, the `if_block` is executed. If an `else_block` is provided, it will be executed
+/// when either the `cvm_guest` feature is not enabled or the TDX feature is not detected at runtime.
 #[macro_export]
 macro_rules! if_tdx_enabled {
     ($if_block:block else $else_block:block) => {{
@@ -194,6 +231,7 @@ macro_rules! if_tdx_enabled {
             $else_block
         }
     }};
+
     ($if_block:block) => {{
         #[cfg(feature = "cvm_guest")]
         {

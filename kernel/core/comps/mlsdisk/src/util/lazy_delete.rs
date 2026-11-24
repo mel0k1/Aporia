@@ -5,6 +5,38 @@ use core::{
 
 use crate::prelude::*;
 
+/// An object that may be deleted lazily.
+///
+/// Lazy-deletion is a technique to postpone the real deletion of an object.
+/// This technique allows an object to remain usable even after a decision
+/// to delete the object has been made. Of course. After the "real" deletion
+/// is carried out, the object will no longer be usable.
+///
+/// A classic example is file deletion in UNIX file systems.
+///
+/// ```ignore
+/// int fd = open("path/to/my_file", O_RDONLY);
+/// unlink("path/to/my_file");
+/// // fd is still valid after unlink
+/// ```
+///
+/// `LazyDelete<T>` enables lazy deletion of any object of `T`.
+/// Here is a simple example.
+///
+/// ```
+/// use crate::util::LazyDelete;
+///
+/// let lazy_delete_u32 = LazyDelete::new(123_u32, |obj| {
+///     println!("the real deletion happens in this closure");
+/// });
+///
+/// // The object is still usable after it is deleted (lazily)
+/// LazyDelete::delete(&lazy_delete_u32);
+/// assert!(*lazy_delete_u32 == 123);
+///
+/// // The deletion operation will be carried out when it is dropped
+/// drop(lazy_delete_u32);
+/// ```
 #[expect(clippy::type_complexity)]
 pub(crate) struct LazyDelete<T> {
     obj: T,
@@ -22,6 +54,11 @@ impl<T: Debug> Debug for LazyDelete<T> {
 }
 
 impl<T> LazyDelete<T> {
+    /// Creates a new instance of `LazyDelete`.
+    ///
+    /// The `delete_fn` will be called only if this instance of `LazyDelete` is
+    /// marked deleted by the `delete` method and only when this instance
+    /// of `LazyDelete` is dropped.
     pub(crate) fn new<F: FnOnce(&mut T) + Send + Sync + 'static>(obj: T, delete_fn: F) -> Self {
         Self {
             obj,
@@ -30,10 +67,12 @@ impl<T> LazyDelete<T> {
         }
     }
 
+    /// Mark this instance deleted.
     pub(crate) fn delete(this: &Self) {
         this.is_deleted.store(true, Ordering::Release);
     }
 
+    /// Returns whether this instance has been marked deleted.
     pub(crate) fn is_deleted(this: &Self) -> bool {
         this.is_deleted.load(Ordering::Acquire)
     }

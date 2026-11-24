@@ -1,3 +1,8 @@
+//! Boot initramfs unpacking and init selection.
+//!
+//! This module unpacks the boot initramfs into the bootstrap VFS root and selects the initramfs
+//! init from the `rdinit` parameter or the default `/init` path.
+
 macro_rules! __log_prefix {
     () => {
         "initramfs: "
@@ -32,6 +37,9 @@ use crate::{
     prelude::*,
 };
 
+/// Unpacks the boot initramfs into the bootstrap root filesystem.
+///
+/// Returns successfully without changing the filesystem when no initramfs was supplied.
 pub(crate) fn init_in_first_kthread(path_resolver: &PathResolver) -> Result<()> {
     let Some(initramfs_buf) = boot_info().initramfs else {
         return Ok(());
@@ -57,6 +65,7 @@ pub(crate) fn init_in_first_kthread(path_resolver: &PathResolver) -> Result<()> 
     Ok(())
 }
 
+/// Unpacks every entry of a CPIO archive into the rootfs.
 fn unpack_to_rootfs<R: Read>(
     mut decoder: CpioDecoder<R>,
     path_resolver: &PathResolver,
@@ -86,6 +95,11 @@ fn ensure_dev_console(path_resolver: &PathResolver) -> Result<()> {
     }
 }
 
+/// Finds the init program to run from the initramfs.
+///
+/// Resolves the path specified by `rdinit`, or `/init` when `rdinit` is not provided, and returns
+/// the resolved path together with the original pathname. Returns an error if the pathname is
+/// invalid or cannot be resolved.
 pub(crate) fn find_init(path_resolver: &PathResolver) -> Result<(Path, &'static str)> {
     const DEFAULT_INITRAMFS_INIT_PATH: &str = "/init";
 
@@ -160,6 +174,7 @@ fn try_append_entry_to_rootfs<R: Read>(
     Ok(())
 }
 
+/// A streaming gzip decompressor over an in-memory compressed buffer.
 struct GzipReader<'a> {
     deflate_body: &'a [u8],
     state: Box<InflateState>,
@@ -167,6 +182,7 @@ struct GzipReader<'a> {
 }
 
 impl<'a> GzipReader<'a> {
+    /// Creates a decompressor, parsing and skipping the gzip header of `buf`.
     fn new(buf: &'a [u8]) -> Self {
         Self {
             deflate_body: strip_gzip_header(buf),
@@ -198,6 +214,7 @@ impl Read for GzipReader<'_> {
             if result.bytes_written > 0 {
                 return Ok(result.bytes_written);
             }
+
             if result.bytes_consumed == 0 {
                 break;
             }
@@ -207,6 +224,11 @@ impl Read for GzipReader<'_> {
     }
 }
 
+/// Parses the gzip header and returns the remaining bytes.
+///
+/// # Panics
+///
+/// Panics if `buf` contains an invalid or incomplete gzip header.
 fn strip_gzip_header(buf: &[u8]) -> &[u8] {
     const FLG_FHCRC: u8 = 0x02;
     const FLG_FEXTRA: u8 = 0x04;

@@ -1,3 +1,7 @@
+//! The core of the Asterinas kernel.
+//!
+//! This crate implements the Linux ABI and the core kernel mechanisms.
+
 #![no_std]
 #![deny(unsafe_code)]
 #![feature(alloc_io)]
@@ -52,10 +56,12 @@ mod syscall;
 mod thread;
 mod time;
 pub mod util;
+
 #[cfg(not(target_arch = "loongarch64"))]
 mod vdso;
 pub mod vm;
 
+/// Boots the Asterinas core kernel.
 pub fn boot() {
     init::main();
 }

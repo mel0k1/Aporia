@@ -13,13 +13,17 @@ use crate::{
 
 const TMPFS_MAGIC: u64 = 0x0102_1994;
 
+/// The temporary file system (tmpfs) structure.
 pub(crate) type TmpFs = RamFs;
 
 impl TmpFs {
+    /// Creates a tmpfs filesystem instance.
     pub(in crate::fs) fn new_tmpfs() -> Arc<Self> {
         Self::new_tmpfs_backing("tmpfs", RevalidationPolicy::empty())
     }
 
+    /// Creates a tmpfs-backed filesystem instance with a custom filesystem name
+    /// and directory-entry revalidation policy.
     pub(in crate::fs) fn new_tmpfs_backing(
         name: &'static str,
         revalidation_policy: RevalidationPolicy,

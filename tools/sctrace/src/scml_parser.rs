@@ -37,14 +37,18 @@ impl From<ScmlParseError> for String {
 
 impl Error for ScmlParseError {}
 
+/// Collection of syscall patterns parsed from SCML files.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Patterns<'a> {
+    /// Map from syscall names to their associated patterns.
     patterns: HashMap<&'a str, Vec<Pattern<'a>>>,
 
+    /// Parser context with variable definitions.
     ctx: ParserCtx<'a>,
 }
 
 impl<'a> Patterns<'a> {
+    /// Reads SCML file(s) and parses all pattern and variable definitions.
     pub fn from_scml_files<P: AsRef<Path>>(paths: &Vec<P>) -> Result<Self, ScmlParseError> {
         let mut all_patterns = Patterns::default();
 
@@ -57,6 +61,7 @@ impl<'a> Patterns<'a> {
                         e
                     ))
                 })?;
+
                 Self::from_scml_with_var_prefix(path.as_ref().display().to_string(), &content)?
             };
 
@@ -66,14 +71,17 @@ impl<'a> Patterns<'a> {
         Ok(all_patterns)
     }
 
+    /// Parses SCML content into patterns.
     pub fn from_scml(content: &str) -> Result<Self, ScmlParseError> {
         Self::from_scml_with_var_prefix("".to_string(), content)
     }
 
+    /// Retrieves all patterns for a specific syscall name.
     pub(crate) fn get(&self, name: &str) -> Option<&Vec<Pattern<'_>>> {
         self.patterns.get(name)
     }
 
+    /// Returns the parser context with variable definitions.
     pub(crate) fn ctx(&self) -> &ParserCtx<'_> {
         &self.ctx
     }
@@ -91,10 +99,13 @@ impl Default for Patterns<'_> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Pattern<'a> {
+    /// Name of the pattern (corresponds to syscall name).
     name: &'a str,
 
+    /// Ordered list of argument patterns for this syscall.
     args: Vec<PatternArg<'a>>,
 
+    /// Whether this pattern accepts additional unspecified arguments.
     wildcard: bool,
 }
 
@@ -162,28 +173,43 @@ impl<'a> Pattern<'a> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum PatternArg<'a> {
+    /// Matches all values (no constraint).
     None,
 
+    /// Matches integer arguments.
     Integer,
 
+    /// Matches path arguments.
     Path,
 
+    /// Matches specific flag values like `O_RDONLY`.
     Flag(&'a str),
 
+    /// Matches array arguments where each element matches the corresponding
+    /// pattern in the array.
     Array(PatternArray<'a>),
 
+    /// Matches struct arguments with specified field constraints.
     Struct(PatternStruct<'a>),
 
+    /// Matches if any of the struct patterns match. Used when a struct
+    /// variable is defined multiple times with different field combinations.
     MultipleStruct(PatternMultipleStruct<'a>),
 
+    /// Matches flag combinations like `O_RDWR | O_CREAT`.
     Flags(PatternFlagSet<'a>),
 
+    /// Contains the variable ID that resolves to a `PatternFlagSet`.
     FlagsVariable(&'a str),
 
+    /// Contains the variable ID that resolves to a `PatternStruct`
+    /// or `PatternMultipleStruct`.
     StructVariable(&'a str),
 }
 
 impl PatternArg<'_> {
+    /// Dereferences `FlagsVariable` and `StructVariable` types to
+    /// retrieve their actual pattern definitions from the parser context.
     pub(crate) fn get<'b>(&self, ctx: &'b ParserCtx) -> &'b PatternArg<'b> {
         match self {
             PatternArg::FlagsVariable(id) => ctx.flags_lookup(id).unwrap(),
@@ -197,6 +223,8 @@ impl PatternArg<'_> {
     }
 }
 
+/// An array pattern matches array arguments where each element must match
+/// one of the specified patterns in the array.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PatternArray<'a>(Vec<PatternArg<'a>>);
 
@@ -210,6 +238,7 @@ impl<'a> PatternArray<'a> {
     }
 }
 
+/// A flag set pattern matches bitwise OR combinations of flags.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PatternFlagSet<'a>(Vec<PatternArg<'a>>);
 
@@ -232,6 +261,8 @@ impl<'a> PatternFlagSet<'a> {
     }
 }
 
+/// A struct pattern matches structured data with named fields. It can specify
+/// exact field matching or allow additional fields via wildcard.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PatternStruct<'a> {
     fields: HashMap<&'a str, PatternArg<'a>>,
@@ -252,6 +283,9 @@ impl<'a> PatternStruct<'a> {
     }
 }
 
+/// A multiple struct pattern allows defining a struct variable multiple times
+/// with different field combinations. The pattern matches if any of the alternatives
+/// match.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PatternMultipleStruct<'a>(Vec<PatternArg<'a>>);
 
@@ -275,8 +309,11 @@ impl<'a> PatternMultipleStruct<'a> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ParserCtx<'a> {
+    /// Map of flags variable IDs to their pattern definitions.
     flags_variables: HashMap<&'a str, PatternArg<'a>>,
+    /// Map of struct variable IDs to their pattern definitions.
     struct_variables: HashMap<&'a str, PatternArg<'a>>,
+    /// Map of multiple struct variable IDs to their pattern definitions.
     multiple_struct_variables: HashMap<&'a str, PatternArg<'a>>,
 }
 
@@ -307,10 +344,15 @@ impl<'a> ParserCtx<'a> {
 #[derive(Debug, Clone, PartialEq)]
 struct ParserCtxBuilder<'a> {
     variable_prefix: String,
+    /// The parser context being built.
     parser_ctx: ParserCtx<'a>,
+    /// Map of named bitflags to their internal IDs.
     named_bitflags: HashMap<&'a str, &'a str>,
+    /// Map of named structs to their internal IDs.
     named_structs: HashMap<&'a str, &'a str>,
+    /// Last parsed struct definition.
     last_struct: Option<(&'a str, &'a str)>,
+    /// Counter for generating unique variable IDs.
     counter: usize,
 }
 
@@ -445,6 +487,7 @@ fn identifier(input: &str) -> IResult<&str, &str> {
 }
 
 impl Patterns<'_> {
+    /// Get patterns from SCML content with a specific variable prefix.
     fn from_scml_with_var_prefix(
         variable_prefix: String,
         content: &str,
@@ -485,6 +528,7 @@ impl Patterns<'_> {
         Ok(Self::new(patterns, ctx.build()))
     }
 
+    /// Merges another Patterns instance into self.
     fn merge(&mut self, other: Self) {
         for (syscall_name, mut other_patterns) in other.patterns {
             self.patterns
@@ -712,6 +756,7 @@ impl<'a> Pattern<'a> {
     }
 }
 
+/// Iterator that yields complete statements from SCML content.
 struct StatementIterator<'a> {
     lines: std::str::Lines<'a>,
     current_statement: String,
@@ -734,6 +779,7 @@ impl Iterator for StatementIterator<'_> {
             match self.lines.next() {
                 Some(line) => {
                     let line = line.trim();
+
                     if line.starts_with("//") || line.is_empty() {
                         continue;
                     }
@@ -744,6 +790,7 @@ impl Iterator for StatementIterator<'_> {
                     if self.current_statement.trim().ends_with(';') {
                         let statement = self.current_statement.trim().to_string();
                         self.current_statement.clear();
+
                         let leaked: &'static str = Box::leak(statement.into_boxed_str());
                         return Some(Ok(leaked));
                     }

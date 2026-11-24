@@ -8,6 +8,9 @@ use crate::{
     util::MultiRead,
 };
 
+/// Link-level attributes.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.13/source/include/uapi/linux/if_link.h#L297>.
 #[expect(non_camel_case_types)]
 #[expect(clippy::upper_case_acronyms)]
 #[repr(u16)]
@@ -24,7 +27,9 @@ pub(in route) enum LinkAttrClass {
     COST = 8,
     PRIORITY = 9,
     MASTER = 10,
+    /// Wireless Extension event
     WIRELESS = 11,
+    /// Protocol specific information for a link
     PROTINFO = 12,
     TXQLEN = 13,
     MAP = 14,
@@ -34,15 +39,19 @@ pub(in route) enum LinkAttrClass {
     LINKINFO = 18,
     NET_NS_PID = 19,
     IFALIAS = 20,
+    /// Number of VFs if device is SR-IOV PF
     NUM_VF = 21,
     VFINFO_LIST = 22,
     STATS64 = 23,
     VF_PORTS = 24,
     PORT_SELF = 25,
     AF_SPEC = 26,
+    /// Group the device belongs to
     GROUP = 27,
     NET_NS_FD = 28,
+    /// Extended info mask, VFs, etc.
     EXT_MASK = 29,
+    /// Promiscuity count: > 0 means acts PROMISC
     PROMISCUITY = 30,
     NUM_TX_QUEUES = 31,
     NUM_RX_QUEUES = 32,
@@ -66,6 +75,7 @@ pub(in route) enum LinkAttrClass {
     MIN_MTU = 50,
     MAX_MTU = 51,
     PROP_LIST = 52,
+    /// Alternative ifname
     ALT_IFNAME = 53,
     PERM_ADDRESS = 54,
     PROTO_DOWN_REASON = 55,
@@ -181,6 +191,9 @@ impl Attribute for LinkAttr {
     }
 }
 
+/// New extended info filters for [`LinkAttr::ExtMask`].
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.13/source/include/uapi/linux/rtnetlink.h#L819>.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(crate) struct RtExtFilter(u32);
@@ -195,6 +208,8 @@ bitflags! {
         const CFM_CONFIG        = 1 << 5;
         const CFM_STATUS        = 1 << 6;
         const MST               = 1 << 7;
+
+
 
         const _                 = !0;
     }

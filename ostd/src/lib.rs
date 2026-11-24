@@ -63,6 +63,14 @@ pub use ostd_macros::{
 
 pub use self::{error::Error, prelude::Result};
 
+/// Initializes OSTD.
+///
+/// This function represents the first phase booting up the system. It makes
+/// all functionalities of OSTD available after the call.
+///
+/// # Safety
+///
+/// This function should be called only once and only on the BSP.
 unsafe fn init() {
     arch::enable_cpu_features();
 
@@ -73,6 +81,7 @@ unsafe fn init() {
     #[cfg(target_arch = "x86_64")]
     arch::if_tdx_enabled!({
     } else {
+
         unsafe { arch::serial::init(&early_cmdline) };
     });
     #[cfg(not(target_arch = "x86_64"))]
@@ -83,6 +92,7 @@ unsafe fn init() {
     unsafe { cpu::init_on_bsp() };
 
     let meta_pages = unsafe { mm::frame::meta::init() };
+
     unsafe { mm::frame::allocator::init() };
 
     mm::kspace::init_kernel_page_table(meta_pages);
@@ -111,8 +121,12 @@ unsafe fn init() {
     IN_BOOTSTRAP_CONTEXT.store(false, Ordering::Relaxed);
 }
 
+/// Indicates whether the kernel is in bootstrap context.
 pub(crate) static IN_BOOTSTRAP_CONTEXT: AtomicBool = AtomicBool::new(true);
 
+/// Invoke the initialization functions defined in the FFI.
+/// The component system uses this function to call the initialization functions of
+/// the components.
 fn invoke_ffi_init_funcs() {
     unsafe extern "C" {
         fn __sinit_array();
@@ -134,6 +148,7 @@ mod feature_validation {
     );
 }
 
+/// Simple unit tests for the ktest framework.
 #[cfg(ktest)]
 mod test {
     use crate::prelude::*;
@@ -159,6 +174,11 @@ mod test {
 
 #[doc(hidden)]
 pub mod ktest {
+    //! The module re-exports everything from the [`ostd_test`] crate, as well
+    //! as the test entry point macro.
+    //!
+    //! It is rather discouraged to use the definitions here directly. The
+    //! `ktest` attribute is sufficient for all normal use cases.
 
     pub use ostd_macros::{test_main as main, test_panic_handler as panic_handler};
     pub use ostd_test::*;

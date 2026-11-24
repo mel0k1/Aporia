@@ -38,14 +38,20 @@ use crate::{
 
 static NEXT_CLIENT_ID: AtomicU64 = AtomicU64::new(1);
 
+/// Represents one open DRM file description.
+///
+/// It tracks per-open capabilities and authentication state and is passed to
+/// driver ioctl handlers to provide the calling client's context.
 #[derive(Debug)]
 pub(super) struct DrmFile {
     client_id: u64,
     client_caps: AtomicDrmClientCaps,
+    /// Authentication state present only for primary-node files.
     auth: Option<DrmPrimaryAuth>,
     minor: Arc<DrmMinor>,
 
     gem_handles: Mutex<DrmGemHandleTable>,
+    /// Framebuffers created through this open file.
     framebuffers: Mutex<Vec<Arc<DrmFramebuffer>>>,
 }
 
@@ -208,6 +214,9 @@ impl DrmFile {
         Some(framebuffers.swap_remove(position))
     }
 
+    /// Keeps tracking the ioctl caller while this file has never been master,
+    /// so fd passing can update ownership. After the file has been master once,
+    /// keeps owner identity stable to enforce same-owner master reacquisition semantics.
     fn update_owner_process(&self) {
         let Some(auth) = self.auth.as_ref() else {
             return;
@@ -221,6 +230,12 @@ impl DrmFile {
         auth_state.owner_process = Arc::downgrade(&current!());
     }
 
+    /// Checks permission to change DRM master ownership.
+    ///
+    /// `CAP_SYS_ADMIN` may always perform the operation.
+    /// Otherwise, only the same process acting through a file that
+    /// is or was master is permitted, preserving master control across
+    /// logind-style file descriptor passing.
     fn check_master_control_permission(&self) -> Result<()> {
         if has_current_sys_admin() {
             return Ok(());
@@ -340,17 +355,36 @@ impl Drop for DrmFile {
     }
 }
 
+/// Authentication and master state associated with a primary DRM file.
 #[derive(Debug)]
 struct DrmPrimaryAuth {
     state: Mutex<DrmPrimaryAuthState>,
+    /// Authentication state referenced weakly by the master magic table.
     authenticated: Arc<AtomicBool>,
 }
 
 #[derive(Debug)]
 struct DrmPrimaryAuthState {
+    /// Tracks the current owner process for this file's master-management checks.
+    ///
+    /// For files that have never been master, this owner can follow the current
+    /// ioctl caller (e.g., after fd passing). Once the file has been master,
+    /// ownership is frozen to preserve "same process can reacquire master"
+    /// semantics.
     owner_process: Weak<Process>,
+    /// Indicates whether this file has ever successfully become DRM master.
+    ///
+    /// This is sticky after the first successful `SET_MASTER` and is used to
+    /// gate non-root master reacquisition to the same owner process.
     was_master: bool,
+    /// Magic allocated from this file's retained master context.
+    ///
+    /// It remains stable across `GET_MAGIC` calls and is cleared if the file moves
+    /// to a newly created master context.
     magic: Option<u32>,
+    /// Master context retained by this file.
+    ///
+    /// This may differ from the device's current master after `DROP_MASTER`.
     master: Arc<DrmMaster>,
 }
 
@@ -391,13 +425,24 @@ impl DrmGemHandleTable {
 }
 
 bitflags::bitflags! {
+    /// KMS client capabilities enabled for this open DRM file through
+    /// `DRM_IOCTL_SET_CLIENT_CAP`.
+    ///
+    /// These bit positions are internal to Asterinas and do not correspond
+    /// to DRM UAPI capability values.
     #[derive(Clone, Copy, Debug)]
     pub(super) struct DrmClientCaps: u32 {
+        /// The client has asked us to expose stereo 3D mode flags.
         const STEREO_3D            = 1 << 0;
+        /// The client understands CRTC primary and cursor planes in the plane list.
         const UNIVERSAL_PLANES     = 1 << 1;
+        /// The client understands atomic properties.
         const ATOMIC               = 1 << 2;
+        /// The client can handle picture aspect ratios.
         const ASPECT_RATIO         = 1 << 3;
+        /// The client understands writeback connectors.
         const WRITEBACK_CONNECTORS = 1 << 4;
+        /// The client can handle cursor-plane hotspots for virtualized drivers.
         const CURSOR_PLANE_HOTSPOT = 1 << 5;
     }
 }
@@ -415,6 +460,7 @@ impl From<DrmClientCaps> for u32 {
 }
 
 define_atomic_version_of_integer_like_type!(DrmClientCaps, {
+    /// An atomic version of [`DrmClientCaps`].
     #[derive(Debug, Default)]
     struct AtomicDrmClientCaps(AtomicU32);
 });

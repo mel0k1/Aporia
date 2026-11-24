@@ -1,3 +1,5 @@
+//! The common utils for crate unit test
+
 use std::{
     ffi::OsStr,
     fs::{self, OpenOptions, create_dir_all},
@@ -96,6 +98,10 @@ pub fn add_member_to_workspace(workspace: impl AsRef<Path>, new_member: &str) {
     fs::write(&path, new_content).unwrap();
 }
 
+/// Makes crates created by `cargo ostd new` depends on ostd locally,
+/// instead of ostd from remote source(git repo/crates.io).
+///
+/// Each crate created by `cargo ostd new` should add this patch.
 pub(crate) fn depends_on_local_ostd(manifest_path: impl AsRef<Path>) {
     let crate_dir = env!("CARGO_MANIFEST_DIR");
     let ostd_dir = PathBuf::from(crate_dir)
@@ -120,6 +126,10 @@ pub(crate) fn depends_on_local_ostd(manifest_path: impl AsRef<Path>) {
     fs::write(manifest_path, manifest.to_string().as_bytes()).unwrap();
 }
 
+/// Makes crates created by `cargo ostd new` enable coverage features,
+/// adding features = ["coverage"] to ostd dependency and creating a [features] section.
+///
+/// This transforms the manifest to enable coverage support.
 pub(crate) fn depends_on_coverage(manifest_path: impl AsRef<Path>, osdk_path: impl AsRef<Path>) {
     let manifest_content = fs::read_to_string(&manifest_path).unwrap();
     let mut manifest: Table = toml::from_str(&manifest_content).unwrap();

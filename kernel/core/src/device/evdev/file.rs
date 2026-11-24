@@ -47,6 +47,7 @@ mod ioctl_defs {
     pub(super) type GetSwState    = ioc!(EVIOCGSW,      b'E', 0x1B, OutData<[u8]>);
     pub(super) type SetClockId    = ioc!(EVIOCSCLOCKID, b'E', 0xA0, InData<i32>);
 
+    /// The `EVIOCGBIT` ioctl enum.
     pub(super) type GetEventBits = IoctlEnum<b'E', 0x20, 0x1F, OutData<[u8]>>;
 }
 
@@ -108,15 +109,23 @@ impl TryFrom<ClockId> for EvdevClock {
     }
 }
 
+/// An opened file from an evdev device ([`EvdevDevice`]).
 pub(super) struct EvdevFile {
+    /// Inner data (shared with the device).
     inner: Arc<EvdevFileInner>,
+    /// Weak reference to the evdev device that owns this evdev file.
     evdev: Weak<EvdevDevice>,
 }
 
+/// An opened evdev file's inner data (shared with its [`EvdevDevice`]).
 pub(super) struct EvdevFileInner {
+    /// Consumer for reading events.
     consumer: Mutex<RbConsumer<EvdevEvent>>,
+    /// Clock ID for this opened evdev file.
     clock_id: AtomicEvdevClock,
+    /// Number of complete event packets available (ended with `SYN_REPORT`).
     packet_count: AtomicUsize,
+    /// Pollee for event notification.
     pollee: Pollee,
 }
 
@@ -171,15 +180,18 @@ impl EvdevFileInner {
         self.pollee.notify(IoEvents::IN);
     }
 
+    /// Checks if buffer has complete event packets.
     pub(self) fn has_complete_packets(&self) -> bool {
         self.packet_count.load(Ordering::Relaxed) > 0
     }
 
+    /// Increments the packet count.
     pub(super) fn increment_packet_count(&self) {
         self.packet_count.fetch_add(1, Ordering::Relaxed);
         self.pollee.notify(IoEvents::IN);
     }
 
+    /// Decrements the packet count.
     pub(self) fn decrement_packet_count(&self) {
         if self.packet_count.fetch_sub(1, Ordering::Relaxed) == 1 {
             self.pollee.invalidate();
@@ -211,6 +223,9 @@ impl EvdevFile {
         &self.inner
     }
 
+    /// Processes events and writes them to the writer.
+    ///
+    /// Returns the total number of bytes written, or [`Errno::EAGAIN`] if no events are available.
     fn process_events(&self, max_events: usize, writer: &mut VmWriter) -> Result<usize> {
         const EVENT_SIZE: usize = size_of::<EvdevEvent>();
 
@@ -269,10 +284,12 @@ impl EvdevFile {
     }
 }
 
+/// Checks if the event is a `SYN_REPORT` event.
 pub(super) fn is_syn_report_event(event: &EvdevEvent) -> bool {
     event.type_ == EventTypes::SYN.as_index() && event.code == SynEvent::Report as u16
 }
 
+/// Checks if the event is a `SYN_DROPPED` event.
 pub(super) fn is_syn_dropped_event(event: &EvdevEvent) -> bool {
     event.type_ == EventTypes::SYN.as_index() && event.code == SynEvent::Dropped as u16
 }

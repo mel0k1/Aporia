@@ -1,5 +1,15 @@
 use crate::prelude::*;
 
+/// Auxiliary Vector.
+///
+/// # What is Auxiliary Vector?
+///
+/// Here is a concise description of Auxiliary Vector from GNU's manual:
+///
+///  > When a program is executed, it receives information from the operating system
+///  > about the environment in which it is operating. The form of this information
+///  > is a table of key-value pairs, where the keys are from the set of ‘AT_’
+///  > values in elf.h.
 #[expect(non_camel_case_types)]
 #[expect(dead_code)]
 #[repr(u8)]
@@ -34,6 +44,7 @@ pub(crate) enum AuxKey {
 }
 
 impl AuxKey {
+    /// A special auxiliary key that denotes the end of the auxiliary vector.
     pub(super) const AT_NULL: u8 = 0;
 }
 

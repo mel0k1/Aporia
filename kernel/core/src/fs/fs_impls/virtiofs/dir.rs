@@ -1,3 +1,5 @@
+//! Open directory handles for `virtiofs`.
+
 use aster_fuse::{FsyncFlags, FuseOpenFlags};
 
 use super::{inode::VirtioFsInode, open_handle::VirtioFsOpenHandle};
@@ -12,6 +14,9 @@ use crate::{
     process::signal::{PollHandle, Pollable},
 };
 
+/// A per-open directory object backed by a FUSE open handle.
+///
+/// Readdir and release requests carry this handle.
 pub(super) struct VirtioFsDir {
     inode: Arc<VirtioFsInode>,
     open_handle: Arc<VirtioFsOpenHandle>,

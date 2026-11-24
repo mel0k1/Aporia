@@ -15,15 +15,25 @@ use crate::{
     },
 };
 
+/// [`DmaDirection`] limits the data flow direction of [`DmaStream`] and
+/// prevents users from reading and writing to [`DmaStream`] unexpectedly.
 pub trait DmaDirection: 'static + Debug + private::Sealed {
+    /// Whether the CPU can read data from the device.
     const CAN_READ_FROM_DEVICE: bool;
+    /// Whether the CPU can write data to the device.
     const CAN_WRITE_TO_DEVICE: bool;
 }
 
 mod private {
+    /// To avoid users implement `DmaDirection` and triggers unreachable code in
+    /// functions like [`crate::arch::mm::sync_dma_range`], or bypasses checks
+    /// in [`crate::mm::io::util::HasVmReaderWriter`].
     pub trait Sealed {}
 }
 
+/// Data flows to the device.
+///
+/// From the perspective of the kernel, this memory region is writable.
 #[derive(Debug)]
 pub enum ToDevice {}
 
@@ -33,6 +43,9 @@ impl DmaDirection for ToDevice {
     const CAN_WRITE_TO_DEVICE: bool = true;
 }
 
+/// Data flows from the device.
+///
+/// From the perspective of the kernel, this memory region is read-only.
 #[derive(Debug)]
 pub enum FromDevice {}
 
@@ -42,6 +55,7 @@ impl DmaDirection for FromDevice {
     const CAN_WRITE_TO_DEVICE: bool = false;
 }
 
+/// Data flows both from and to the device.
 #[derive(Debug)]
 pub enum FromAndToDevice {}
 
@@ -51,6 +65,16 @@ impl DmaDirection for FromAndToDevice {
     const CAN_WRITE_TO_DEVICE: bool = true;
 }
 
+/// A DMA memory object with streaming access.
+///
+/// The kernel must synchronize the data by [`sync_from_device`]/[`sync_to_device`]
+/// when interacting with the device.
+///
+/// For whether the associated methods can be used in IRQs, refer to
+/// [module-level docs](crate::mm::dma#usage-in-irqs).
+///
+/// [`sync_from_device`]: DmaStream::sync_from_device
+/// [`sync_to_device`]: DmaStream::sync_to_device
 #[derive(Debug)]
 pub struct DmaStream<D: DmaDirection = FromAndToDevice> {
     inner: Inner,
@@ -67,6 +91,27 @@ enum Inner {
 }
 
 impl<D: DmaDirection> DmaStream<D> {
+    /// Allocates a region of physical memory for streaming DMA access.
+    ///
+    /// The memory of the newly-allocated DMA buffer is initialized to zeros.
+    /// This method is only available when `D` is [`ToDevice`] or
+    /// [`FromAndToDevice`], as zeroing requires write access to the buffer.
+    ///
+    /// The `is_cache_coherent` argument specifies whether the target device
+    /// that the DMA mapping is prepared for can access the main memory in a
+    /// CPU cache coherent way or not.
+    ///
+    /// This method [requires](crate::mm::dma#usage-in-irqs) the caller to
+    /// have IRQs enabled.
+    ///
+    /// # Comparison with [`DmaStream::map`]
+    ///
+    /// This method is semantically equivalent to allocating a [`USegment`] via
+    /// [`FrameAllocOptions::alloc_segment`] and then mapping it with
+    /// [`DmaStream::map`]. However, [`DmaStream::alloc`] combines these two
+    /// operations and can be more efficient in certain scenarios, particularly
+    /// in confidential VMs, where the overhead of bounce buffers can be
+    /// avoided.
     pub fn alloc(nframes: usize, is_cache_coherent: bool) -> Result<Self, Error> {
         const { assert!(D::CAN_WRITE_TO_DEVICE) };
 
@@ -76,6 +121,14 @@ impl<D: DmaDirection> DmaStream<D> {
         })
     }
 
+    /// Allocates a region of physical memory for streaming DMA access
+    /// without initialization.
+    ///
+    /// This method is the same as [`DmaStream::alloc`]
+    /// except that it skips zeroing the memory of newly-allocated DMA region.
+    ///
+    /// This method [requires](crate::mm::dma#usage-in-irqs) the caller to
+    /// have IRQs enabled.
     pub fn alloc_uninit(nframes: usize, is_cache_coherent: bool) -> Result<Self, Error> {
         debug_assert!(irq::is_local_enabled());
 
@@ -105,6 +158,14 @@ impl<D: DmaDirection> DmaStream<D> {
         })
     }
 
+    /// Establishes DMA stream mapping for a given [`USegment`].
+    ///
+    /// The `is_cache_coherent` argument specifies whether the target device
+    /// that the DMA mapping is prepared for can access the main memory in a
+    /// CPU cache coherent way or not.
+    ///
+    /// This method [requires](crate::mm::dma#usage-in-irqs) the caller to
+    /// have IRQs enabled.
     pub fn map(segment: USegment, is_cache_coherent: bool) -> Result<Self, Error> {
         debug_assert!(irq::is_local_enabled());
 
@@ -133,12 +194,28 @@ impl<D: DmaDirection> DmaStream<D> {
         })
     }
 
+    /// Synchronizes the streaming DMA mapping data from the device.
+    ///
+    /// This method should be called when the data of the streaming DMA mapping
+    /// has been updated by the device side. Before the CPU side starts to read
+    /// (e.g., using [`read_bytes`]), it must call the [`Self::sync_from_device`]
+    /// method first.
+    ///
+    /// [`read_bytes`]: crate::mm::VmIo::read_bytes
     pub fn sync_from_device(&self, byte_range: Range<usize>) -> Result<(), Error> {
         const { assert!(D::CAN_READ_FROM_DEVICE) };
 
         self.sync_impl(byte_range, true)
     }
 
+    /// Synchronizes the streaming DMA mapping data to the device.
+    ///
+    /// This method should be called when the data of the streaming DMA mapping
+    /// has been updated by the CPU side (e.g., using [`write_bytes`]). Before
+    /// the CPU side notifies the device side to read, it must call the
+    /// [`Self::sync_to_device`] method first.
+    ///
+    /// [`write_bytes`]: crate::mm::VmIo::write_bytes
     pub fn sync_to_device(&self, byte_range: Range<usize>) -> Result<(), Error> {
         const { assert!(D::CAN_WRITE_TO_DEVICE) };
 
@@ -164,6 +241,9 @@ impl<D: DmaDirection> DmaStream<D> {
         Ok(())
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure that `byte_range` is inbound.
     unsafe fn sync_cache(&self, byte_range: Range<usize>, is_from_device: bool) {
         if self.is_cache_coherent {
             return;

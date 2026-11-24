@@ -11,16 +11,40 @@ pub use grub::*;
 mod qemu;
 pub use qemu::*;
 
+/// All the configurable fields within a scheme.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Scheme {
+    /// The working directory.
+    ///
+    /// The user is not allowed to set this field. However,
+    /// the manifest loader set this and all actions such
+    /// as running, testing, and building will use this field.
     pub work_dir: Option<PathBuf>,
     #[serde(default)]
     pub supported_archs: Vec<Arch>,
+    /// The boot configs.
+    ///
+    /// Building, running, and testing would consult on these configs.
     pub boot: Option<BootScheme>,
+    /// The GRUB configs.
+    ///
+    /// Building, running, and testing would consult on these configs.
     pub grub: Option<GrubScheme>,
+    /// The QEMU configs.
+    ///
+    /// Building, running, and testing would consult on these configs.
     pub qemu: Option<QemuScheme>,
+    /// Other build configs.
+    ///
+    /// Building, running, and testing would consult on these configs.
     pub build: Option<BuildScheme>,
+    /// Running specific configs.
+    ///
+    /// These values, if exists, overrides global boot/GRUB/QEMU/build configs.
     pub run: Option<ActionScheme>,
+    /// Testing specific configs.
+    ///
+    /// These values, if exists, overrides global boot/GRUB/QEMU/build configs.
     pub test: Option<ActionScheme>,
 }
 
@@ -57,6 +81,7 @@ impl Scheme {
         inherit_optional!(from, self, .build);
         inherit_optional!(from, self, .run);
         inherit_optional!(from, self, .test);
+
         if let Some(qemu) = &mut self.qemu {
             if let Some(from_qemu) = &from.qemu {
                 if qemu.args.is_none() {
@@ -80,6 +105,8 @@ impl Scheme {
         }
     }
 
+    /// Produces a scheme in which `run` and `test` action settings inherit
+    /// from the default settings in the provided scheme.
     pub fn run_and_test_inherit_from_global(&mut self) {
         let old_scheme = self.clone();
 

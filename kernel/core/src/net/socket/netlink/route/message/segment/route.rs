@@ -1,5 +1,8 @@
 use crate::prelude::*;
 
+/// `rtmsg` in Linux.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.13/source/include/uapi/linux/rtnetlink.h#L237>.
 #[expect(unused)]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]

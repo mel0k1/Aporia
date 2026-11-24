@@ -5,13 +5,37 @@ use ostd::{mm::vm_space::VmQueriedItem, task::disable_preempt};
 use super::{RssDelta, Vmar, util::is_intersected};
 use crate::{prelude::*, vm::vmar::is_userspace_vaddr_range};
 
+/// Controls how the old mapping is handled during a `remap` operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RemapOldMappingAction {
+    /// Remove the old mapping after moving pages.
     Unmap,
+    /// Keep the old address range mapped with its original properties.
+    /// Its physical pages are moved away, so subsequent page faults at
+    /// the old address will allocate fresh pages.
     Keep,
 }
 
 impl Vmar {
+    /// Resizes the original mapping.
+    ///
+    /// The range of the mapping goes from `map_addr..map_addr + old_size` to
+    /// `map_addr..map_addr + new_size`.
+    ///
+    /// If the new mapping size is smaller than the original mapping size, the
+    /// extra part will be unmapped. If the new mapping is larger than the old
+    /// mapping and the extra part overlaps with existing mapping, resizing
+    /// will fail and return `Err`.
+    ///
+    /// - When `check_single_mapping` is `true`, this method will check whether
+    ///   the range of the original mapping is covered by a single [`VmMapping`].
+    ///   If not, this method will return an `Err`.
+    /// - When `check_single_mapping` is `false`, The range of the original
+    ///   mapping does not have to solely map to a whole [`VmMapping`], but it
+    ///   must ensure that all existing ranges have a mapping. Otherwise, this
+    ///   method will return an `Err`.
+    ///
+    /// [`VmMapping`]: crate::vm::vmar::vm_mapping::VmMapping
     pub(crate) fn resize_mapping(
         &self,
         map_addr: Vaddr,
@@ -31,6 +55,27 @@ impl Vmar {
         inner.resize_mapping(self, map_addr, old_size, new_size, &mut rss_delta)
     }
 
+    /// Remaps the original mapping to a new address and/or size.
+    ///
+    /// If the new mapping size is smaller than the original mapping size, the
+    /// extra part will be unmapped.
+    ///
+    /// - If `new_addr` is `Some(new_addr)`, this method attempts to move the
+    ///   mapping from `old_addr..old_addr + old_size` to `new_addr..new_addr +
+    ///   new_size`. If any existing mappings lie within the target range,
+    ///   they will be unmapped before the move.
+    /// - If `new_addr` is `None`, a new range of size `new_size` will be
+    ///   allocated, and the original mapping will be moved there.
+    ///
+    /// When `action` is [`RemapOldMappingAction::Keep`], the old mapping
+    /// stays in the tree with its original properties; see
+    /// [`RemapOldMappingAction::Keep`] for details.
+    ///
+    /// # Panics
+    ///
+    /// This method panics if `new_addr` is `None` and `new_size <= old_size`
+    /// (unless `action` is [`RemapOldMappingAction::Keep`]).
+    /// Use `resize_mapping` instead in this case.
     pub(crate) fn remap(
         &self,
         old_addr: Vaddr,
@@ -51,6 +96,7 @@ impl Vmar {
                     "remap: the new range is not aligned or not in userspace"
                 ));
             }
+
             if is_intersected(
                 &(old_addr..old_addr.saturating_add(old_size)),
                 &(new_addr..new_addr + new_size),
@@ -159,6 +205,10 @@ impl Vmar {
         Ok(new_range.start)
     }
 
+    /// Moves the mapping.
+    ///
+    /// If there are associated reverse mappings, we must hold the reverse mapping lock to avoid
+    /// race conditions with unmapping from reverse mappings.
     fn move_pt(&self, old_range: Range<Vaddr>, new_range: Range<Vaddr>) {
         let preempt_guard = disable_preempt();
         let total_range = old_range.start.min(new_range.start)..old_range.end.max(new_range.end);

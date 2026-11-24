@@ -106,6 +106,7 @@ impl DrmFile {
             DrmGetCapability::Addfb2Modifiers => mode_config.supports_fb_modifiers() as u64,
             DrmGetCapability::PageFlipTarget => 0,
             DrmGetCapability::CrtcInVblankEvent => 1,
+
             DrmGetCapability::AtomicAsyncPageFlip => 0,
             _ => 0,
         };
@@ -146,6 +147,9 @@ fn copy_drm_field(
     Ok(())
 }
 
+/// `struct drm_version` in Linux.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm.h#L139>.
 #[padding_struct]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
@@ -162,6 +166,9 @@ pub(super) struct DrmVersion {
     desc: usize,
 }
 
+/// `struct drm_unique` in Linux.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm.h#L156>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(super) struct DrmUnique {
@@ -169,6 +176,9 @@ pub(super) struct DrmUnique {
     unique: usize,
 }
 
+/// DRM device capabilities accepted by `DRM_IOCTL_GET_CAP`.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm.h#L628>.
 #[repr(u64)]
 #[derive(Debug, TryFromInt)]
 enum DrmGetCapability {
@@ -189,6 +199,9 @@ enum DrmGetCapability {
     AtomicAsyncPageFlip = 0x15,
 }
 
+/// `struct drm_get_cap` in Linux.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm.h#L786>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(super) struct DrmGetCap {
@@ -196,6 +209,9 @@ pub(super) struct DrmGetCap {
     value: u64,
 }
 
+/// `struct drm_auth` in Linux.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm.h#L461>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(super) struct DrmAuth {

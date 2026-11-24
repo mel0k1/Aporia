@@ -1,3 +1,16 @@
+//! CMOS RTC.
+//!
+//! "CMOS" is a tiny bit of very low power static memory that lives on the same chip as the
+//! Real-Time Clock (RTC).
+//!
+//! According to the Linux implementation, in x86, if the CMOS/RTC is present at the legacy
+//! addresses (I/O Ports 0x70 and 0x71), then it is an MC146818 CMOS/RTC. Therefore, in this
+//! module, the register addresses and data interpretation are based on the MC146818 datasheet.
+//!
+//! Reference:
+//! <https://elixir.bootlin.com/linux/v6.17.5/source/arch/x86/kernel/rtc.c#L69>
+//! <https://www.scs.stanford.edu/23wi-cs212/pintos/specs/mc146818a.pdf>
+
 use core::num::NonZeroU8;
 
 use ostd::{
@@ -104,12 +117,14 @@ enum Register {
 
     StatusA = 0x0A,
     StatusB = 0x0B,
+
     StatusD = 0x0D,
 }
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, Debug)]
     struct StatusA: u8 {
+        /// The update in progress (UIP) bit.
         const UIP = 1 << 7;
     }
 }
@@ -117,7 +132,13 @@ bitflags::bitflags! {
 bitflags::bitflags! {
     #[derive(Clone, Copy, Debug)]
     struct StatusB: u8 {
+        /// The data mode (DM) bit.
+        ///
+        /// This bit is set when the binary format is used; otherwise, the BCD format is used.
         const DM_BINARY = 1 << 2;
+        /// The clock mode (CM) bit.
+        ///
+        /// This bit is set when the 24-hour format is used; otherwise, the 12-hour format is used.
         const CM_24HOUR = 1 << 1;
     }
 }
@@ -125,6 +146,9 @@ bitflags::bitflags! {
 bitflags::bitflags! {
     #[derive(Clone, Copy, Debug)]
     struct StatusD: u8 {
+        /// The valid RAM and time (VRT) bit.
+        ///
+        /// This bit is set when the RAM and time are valid.
         const VRT = 1 << 7;
     }
 }
@@ -173,6 +197,7 @@ impl CmosData {
         let mut access = rtc.access.lock();
 
         let mut now = Self::from_rtc_raw(&mut access);
+
         while let new = Self::from_rtc_raw(&mut access)
             && now != new
         {
@@ -216,6 +241,7 @@ impl CmosData {
         }
     }
 
+    /// Converts BCD values to binary values.
     fn convert_bcd_to_binary(&mut self) {
         fn bcd_to_binary(val: u8) -> u8 {
             (val & 0xF) + (val >> 4) * 10
@@ -235,12 +261,14 @@ impl CmosData {
 
     const HOUR_IS_AFTERNOON: u8 = 0x80;
 
+    /// Converts the 12-hour clock to the 24-hour clock.
     fn convert_12_hour_to_24_hour(&mut self) {
         if self.hour & Self::HOUR_IS_AFTERNOON != 0 {
             self.hour = (self.hour & !Self::HOUR_IS_AFTERNOON) + 12;
         }
     }
 
+    /// Converts the year without the century (e.g., 10) to the year with the century (e.g., 2010).
     fn modify_year(&mut self) {
         const DEFAULT_21_CENTURY: u8 = 20;
 

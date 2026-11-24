@@ -1,3 +1,6 @@
+//! The Linux 64-bit Boot Protocol supporting module.
+//!
+
 use linux_boot_params::{BootParams, E820Type, EfiInfo, LINUX_BOOT_HEADER_MAGIC};
 
 use super::ToEarlyBootInfo;
@@ -29,6 +32,7 @@ impl From<E820Type> for MemoryRegionType {
             E820Type::ACPI => Self::Reclaimable,
             E820Type::NVS => Self::NonVolatileSleep,
             E820Type::UNUSABLE => Self::BadMemory,
+
             _ => Self::Reserved,
         }
     }
@@ -95,6 +99,7 @@ impl ToEarlyBootInfo for BootParams {
 
         let initramfs_ptr = paddr_to_vaddr(self.hdr.ramdisk_image as usize);
         let initramfs_len = self.hdr.ramdisk_size as usize;
+
         let initramfs =
             unsafe { core::slice::from_raw_parts(initramfs_ptr as *const u8, initramfs_len) };
 
@@ -176,6 +181,13 @@ impl ToEarlyBootInfo for BootParams {
     }
 }
 
+/// The entry point of the Rust code portion of Asterinas (with Linux boot parameters).
+///
+/// # Safety
+///
+/// - This function must be called only once at a proper timing in the BSP's boot assembly code.
+/// - The caller must follow C calling conventions and put the right arguments in registers.
+/// - If this function is called, entry points of other boot protocols must never be called.
 #[unsafe(no_mangle)]
 unsafe extern "sysv64" fn __linux_boot(params_ptr: *const BootParams) -> ! {
     let params = unsafe { &*params_ptr };

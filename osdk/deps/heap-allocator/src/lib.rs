@@ -27,9 +27,11 @@ cpu_local! {
     static LOCAL_TOTAL_SLAB_ALLOCATED: AtomicIsize = AtomicIsize::new(0);
 }
 
+/// Total size (in bytes) of physical memory committed to the slab caches.
 pub(crate) static TOTAL_SLAB_ALLOCATED: slab_counter::SlabCounter =
     slab_counter::SlabCounter::new(&LOCAL_TOTAL_SLAB_ALLOCATED);
 
+/// Returns the total size (in bytes) of memory committed to the slab caches.
 pub fn load_total_slab_size() -> usize {
     TOTAL_SLAB_ALLOCATED.get()
 }

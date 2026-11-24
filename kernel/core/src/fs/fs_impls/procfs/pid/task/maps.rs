@@ -18,6 +18,7 @@ use crate::{
     vm::vmar::{VMAR_CAP_ADDR, VMAR_LOWEST_ADDR},
 };
 
+/// Represents the inode at `/proc/[pid]/task/[tid]/maps` (and also `/proc/[pid]/maps`).
 pub(super) struct MapsFileOps(TidDirOps);
 
 impl MapsFileOps {
@@ -39,6 +40,7 @@ impl ProcFileOpsByHandle for MapsFileOps {
         let Some(process) = self.0.process() else {
             return Err(errno!(ESRCH, "the process does not exist"));
         };
+
         let vmar_guard = process.lock_vmar();
 
         process
@@ -56,6 +58,7 @@ impl ProcFileOpsByHandle for MapsFileOps {
     }
 }
 
+/// A file handle opened from `/proc/[pid]/task/[tid]/maps` (and also `/proc/[pid]/maps`).
 struct MapsFileHandle(TidDirOps, VmarSnapshot);
 
 impl Pollable for MapsFileHandle {

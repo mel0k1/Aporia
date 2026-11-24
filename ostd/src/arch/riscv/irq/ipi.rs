@@ -1,7 +1,10 @@
+//! Inter-processor interrupts.
+
 use spin::Once;
 
 use crate::{cpu::PinCurrentCpu, error::Error, irq::IrqLine, prelude::Result};
 
+/// Hardware-specific, architecture-dependent CPU ID.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct HwCpuId(u32);
 
@@ -13,18 +16,32 @@ impl HwCpuId {
 
 pub(in crate::arch) static IPI_IRQ: Once<IrqLine> = Once::new();
 
+/// Initializes the global IPI-related state and local state on the BSP.
+///
+/// # Safety
+///
+/// This function can only be called on the BSP and before any other
+/// IPI-related function is called.
 pub(in crate::arch) unsafe fn init_on_bsp() {
     let mut irq = IrqLine::alloc().unwrap();
+
     irq.on_active(|f| unsafe { crate::smp::do_inter_processor_call(f) });
     IPI_IRQ.call_once(|| irq);
 
     unsafe { riscv::register::sie::set_ssoft() };
 }
 
+/// Initializes the IPI-related state on this AP.
+///
+/// # Safety
+///
+/// This function can only be called before any other harts can send IPIs to
+/// this application hart.
 pub(in crate::arch) unsafe fn init_on_ap() {
     unsafe { riscv::register::sie::set_ssoft() };
 }
 
+/// Sends a general inter-processor interrupt (IPI) to the specified CPU.
 pub(crate) fn send_ipi(hw_cpu_id: HwCpuId, _guard: &dyn PinCurrentCpu) -> Result<()> {
     const XLEN: usize = usize::BITS as usize;
     const XLEN_MASK: usize = XLEN - 1;

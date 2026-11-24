@@ -1,3 +1,22 @@
+//! Core `Ext2` filesystem state for a mounted ext2 volume.
+//!
+//! This module owns `Ext2`, the top-level handle for a mounted ext2 volume.
+//! It is the filesystem-wide coordination point for mount state, inode
+//! routing, block allocation, and writeback. Group-local metadata and inode
+//! caches remain owned by the corresponding `BlockGroup`.
+//!
+//! # Locking
+//!
+//! `Ext2` uses an `RwMutex` around the `SuperBlock` for filesystem-wide
+//! state: read mode for queries, write mode for allocation, deallocation,
+//! and sync. The `block_groups` vector itself is immutable after mount;
+//! each `BlockGroup` carries its own internal locks (see `block_group`
+//! module documentation). The `group_descriptors_segment` has no dedicated
+//! lock — it is loaded once at mount and updated during `sync` under each
+//! group's metadata write guard, with disjoint descriptor offsets ensuring
+//! no two writers touch the same bytes. `next_generation` is an `AtomicU32`
+//! incremented once per newly allocated inode.
+
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use aster_block::bio::BioCompleteFn;
@@ -19,26 +38,51 @@ use crate::{
     thread::Thread,
 };
 
+/// The root inode number defined by the ext2 on-disk format.
 pub(super) const ROOT_INO: u32 = 2;
 
+/// Top-level handle for a mounted ext2 filesystem.
+///
+/// Owns the superblock, block group array, and group descriptor table.
+/// Filesystem-wide operations are routed through the block group selected by
+/// the target inode or block address.
 #[derive(Debug)]
 pub(crate) struct Ext2 {
+    /// Backing block device.
     block_device: Arc<dyn BlockDevice>,
+    /// Superblock with dirty tracking.
     super_block: RwMutex<Dirty<SuperBlock>>,
+    /// Block group descriptors and caches.
     block_groups: Vec<BlockGroup>,
+    /// Inodes per group.
     nr_inodes_per_group: u32,
+    /// Group descriptor table segment.
     group_descriptors_segment: USegment,
+    /// Runtime mount options that affect block-count reporting.
     mount_options: Ext2MountOptions,
+    /// Recorded VFS filesystem flags.
     flags: AtomicFsFlags,
+    /// FS event stats for VFS.
     fs_event_subscriber_stats: FsEventSubscriberStats,
+    /// Per-filesystem inode generation counter.
     next_generation: AtomicU32,
+    /// Weak self reference for inode back-pointers.
     self_ref: Weak<Ext2>,
 }
 
+/// Policy for how `statfs` reports the total block count.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum StatBlockAccounting {
+    /// Excludes filesystem overhead (superblock, group descriptors, bitmaps,
+    /// inode tables) from the reported total.
+    ///
+    /// This is the default and corresponds to Linux's `bsddf` mount option.
     #[default]
     ExcludeOverhead,
+    /// Includes all blocks on the device in the reported total, regardless of
+    /// whether they hold metadata.
+    ///
+    /// This corresponds to Linux's `minixdf` mount option.
     IncludeOverhead,
 }
 
@@ -48,6 +92,7 @@ struct Ext2MountOptions {
 }
 
 impl Ext2MountOptions {
+    /// Parses ext2 mount options that control block-count reporting.
     fn parse(data: Option<&str>) -> Self {
         let mut options = Self::default();
         let Some(data) = data else {
@@ -67,6 +112,7 @@ impl Ext2MountOptions {
 }
 
 impl Ext2 {
+    /// Opens and loads an Ext2 filesystem from a block device.
     pub(super) fn open(
         device: Arc<dyn BlockDevice>,
         flags: FsFlags,
@@ -140,14 +186,17 @@ impl Ext2 {
         Ok(ext2)
     }
 
+    /// Returns the block device.
     pub(super) fn block_device(&self) -> &dyn BlockDevice {
         self.block_device.as_ref()
     }
 
+    /// Returns the maximum regular file size supported by this ext2 instance.
     pub(super) fn max_file_size(&self) -> usize {
         self.super_block.read().max_file_size()
     }
 
+    /// Returns whether Minix-style total blocks should be reported.
     pub(super) fn uses_minix_df(&self) -> bool {
         matches!(
             self.mount_options.stat_block_accounting,
@@ -155,34 +204,42 @@ impl Ext2 {
         )
     }
 
+    /// Returns the per file system flags.
     pub(super) fn fs_flags(&self) -> FsFlags {
         self.flags.load(Ordering::Relaxed)
     }
 
+    /// Sets the per file system flags.
     pub(super) fn set_fs_flags(&self, flags: FsFlags) {
         self.flags.store(flags, Ordering::Relaxed);
     }
 
+    /// Returns a reference to the block group at `group_idx`.
     pub(super) fn block_group(&self, group_idx: usize) -> &BlockGroup {
         &self.block_groups[group_idx]
     }
 
+    /// Returns a read guard of the superblock.
     pub(super) fn super_block(&self) -> RwMutexReadGuard<'_, Dirty<SuperBlock>> {
         self.super_block.read()
     }
 
+    /// Returns the device ID of the underlying block device.
     pub(super) fn container_device_id(&self) -> DeviceId {
         self.block_device.id()
     }
 
+    /// Returns the fs event subscriber stats.
     pub(super) fn fs_event_subscriber_stats(&self) -> &FsEventSubscriberStats {
         &self.fs_event_subscriber_stats
     }
 
+    /// Returns the root inode.
     pub(super) fn root_inode(&self) -> Result<Arc<Inode>> {
         self.read_inode(ROOT_INO)
     }
 
+    /// Reads an inode via per-block-group inode cache.
     pub(super) fn read_inode(&self, ino: Ext2Ino) -> Result<Arc<Inode>> {
         if ino == 0 {
             return Err(errno!(ENOENT, "inode 0 is not valid in ext2"));
@@ -193,6 +250,7 @@ impl Ext2 {
         group.lookup_inode(ino, self.self_ref.clone())
     }
 
+    /// Inserts a newly created inode into the corresponding block-group cache.
     pub(super) fn insert_inode(&self, inode: Arc<Inode>) {
         let ino = inode.ino();
         if ino == 0 {
@@ -203,6 +261,7 @@ impl Ext2 {
         }
     }
 
+    /// Removes one inode from the live block-group cache.
     pub(super) fn remove_inode(&self, ino: Ext2Ino) -> Option<Arc<Inode>> {
         if ino == 0 {
             return None;
@@ -211,9 +270,11 @@ impl Ext2 {
             .and_then(|group| group.remove_inode(ino))
     }
 
+    /// Writes an inode descriptor to the group's `PageCache`.
     pub(super) fn write_back_inode_desc(&self, ino: Ext2Ino, raw_inode: &RawInode) -> Result<()> {
         {
             let sb = self.super_block.read();
+
             if (ino != ROOT_INO && ino < sb.first_ino()) || ino > sb.total_inodes() {
                 return Err(errno!(EINVAL, "inode number out of valid range"));
             }
@@ -226,6 +287,7 @@ impl Ext2 {
         group.write_back_inode_desc(ino, raw_inode)
     }
 
+    /// Allocates up to `count` contiguous blocks.
     pub(super) fn alloc_blocks(&self, count: u32, goal: Ext2Bid) -> Result<Range<Ext2Bid>> {
         if count == 0 {
             return Err(errno!(EINVAL, "zero block allocation requested"));
@@ -274,6 +336,7 @@ impl Ext2 {
         Err(errno!(ENOSPC, "no free blocks available in any group"))
     }
 
+    /// Frees a range of blocks starting at `start`.
     pub(super) fn free_blocks(&self, start: Ext2Bid, count: u32) -> Result<()> {
         if count == 0 {
             return Ok(());
@@ -310,6 +373,7 @@ impl Ext2 {
         Ok(())
     }
 
+    /// Allocates and initializes a new inode.
     pub(super) fn create_inode(
         &self,
         parent_ino: Ext2Ino,
@@ -364,6 +428,7 @@ impl Ext2 {
         ))
     }
 
+    /// Frees an inode by number.
     pub(super) fn free_inode(&self, ino: Ext2Ino, inode_type: InodeType) -> Result<()> {
         let mut sb = self.super_block.write();
         let total_inodes = sb.total_inodes();
@@ -384,6 +449,7 @@ impl Ext2 {
         Ok(())
     }
 
+    /// Submits an asynchronous block read starting at `bid`.
     pub(super) fn read_blocks_async(
         &self,
         bid: Ext2Bid,
@@ -400,6 +466,7 @@ impl Ext2 {
         Ok(())
     }
 
+    /// Reads blocks synchronously starting at `bid`.
     pub(super) fn read_blocks(&self, bid: Ext2Bid, bio_segment: BioSegment) -> Result<()> {
         let bio_status = self
             .block_device
@@ -410,6 +477,7 @@ impl Ext2 {
         }
     }
 
+    /// Submits an asynchronous block write starting at `bid`.
     pub(super) fn write_blocks_async(
         &self,
         bid: Ext2Bid,
@@ -426,6 +494,7 @@ impl Ext2 {
         Ok(())
     }
 
+    /// Writes blocks synchronously starting at `bid`.
     pub(super) fn write_blocks(&self, bid: Ext2Bid, bio_segment: BioSegment) -> Result<()> {
         let bio_status = self
             .block_device
@@ -436,6 +505,7 @@ impl Ext2 {
         }
     }
 
+    /// Syncs cached inodes and block-group-local metadata in all groups.
     pub(super) fn sync_all(&self) -> Result<()> {
         for group in &self.block_groups {
             group.sync_all(&self.group_descriptors_segment)?;
@@ -443,6 +513,7 @@ impl Ext2 {
         self.sync_metadata()
     }
 
+    /// Allocates a new inode number.
     fn alloc_ino(&self, parent_ino: Ext2Ino, inode_type: InodeType) -> Result<Ext2Ino> {
         let mut sb = self.super_block.write();
         let nr_block_groups = sb.nr_block_groups() as usize;
@@ -475,12 +546,17 @@ impl Ext2 {
         Err(errno!(ENOSPC, "no free inodes available in any group"))
     }
 
+    /// Finds the block group that owns an inode number.
     fn find_group(&self, ino: Ext2Ino) -> Option<&BlockGroup> {
         debug_assert!(ino > 0);
         let group_idx = ((ino - 1) / self.nr_inodes_per_group) as usize;
         self.block_groups.get(group_idx)
     }
 
+    /// Checks whether the current caller may allocate blocks.
+    ///
+    /// Non-privileged users are denied when free blocks fall below the reserved
+    /// threshold, unless they have `CAP_SYS_RESOURCE` or match `s_resuid`/`s_resgid`.
     fn can_alloc(
         free_blocks: u32,
         reserved_blocks: u32,
@@ -526,6 +602,7 @@ impl Ext2 {
         false
     }
 
+    /// Flushes the superblock and all dirty group descriptors to the device.
     fn sync_metadata(&self) -> Result<()> {
         let mut sb_guard = self.super_block.write();
 
@@ -569,6 +646,7 @@ impl Ext2 {
         Ok(())
     }
 
+    /// Persists one copy of the superblock and group descriptor table into the given block group.
     fn write_sb_and_group_descs(
         &self,
         raw_sb: &RawSuperBlock,
@@ -949,6 +1027,7 @@ mod test {
         let first = f.sb.group_first_block_no(0);
 
         let metadata = group.metadata();
+
         let bb = (f.descs[0].block_bitmap_bid - first) as u16;
         let ib = (f.descs[0].inode_bitmap_bid - first) as u16;
         let it = (f.descs[0].inode_table_bid - first) as u16;

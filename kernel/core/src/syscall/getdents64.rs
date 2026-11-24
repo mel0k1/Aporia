@@ -67,12 +67,18 @@ pub(super) fn sys_getdents64(
     Ok(SyscallReturn::Return(read_len as _))
 }
 
+/// The DirentSerializer can decide how to serialize the data.
 trait DirentSerializer {
+    /// Create a DirentSerializer.
     fn new(ino: u64, offset: u64, type_: InodeType, name: CString) -> Self;
+    /// Get the length of a directory entry.
     fn len(&self) -> usize;
+    /// Try to serialize a directory entry into buffer.
     fn serialize(&self, writer: &mut VmWriter) -> Result<()>;
 }
 
+/// The Buffered DirentReader to visit the dir entry.
+/// The DirentSerializer T decides how to serialize the data.
 struct DirentBufferReader<'a, T: DirentSerializer> {
     writer: VmWriter<'a>,
     read_len: usize,

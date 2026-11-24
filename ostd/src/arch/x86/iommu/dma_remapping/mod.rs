@@ -19,10 +19,14 @@ pub(crate) fn has_dma_remapping() -> bool {
     PAGE_TABLE.get().is_some()
 }
 
+/// PCI device Location
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) struct PciDeviceLocation {
+    /// Bus number
     pub bus: u8,
+    /// Device number with max 31
     pub device: u8,
+    /// Device number with max 7
     pub function: u8,
 }
 
@@ -36,6 +40,7 @@ impl PciDeviceLocation {
     const MIN_FUNCTION: u8 = 0;
     const MAX_FUNCTION: u8 = 7;
 
+    /// Returns an iterator that enumerates all possible PCI device locations.
     fn all() -> impl Iterator<Item = PciDeviceLocation> {
         let all_bus = Self::MIN_BUS..=Self::MAX_BUS;
         let all_dev = Self::MIN_DEVICE..=Self::MAX_DEVICE;
@@ -51,6 +56,7 @@ impl PciDeviceLocation {
             })
     }
 
+    /// Returns the zero PCI device location.
     fn zero() -> Self {
         Self {
             bus: 0,
@@ -60,12 +66,23 @@ impl PciDeviceLocation {
     }
 }
 
+/// Maps a device address to a physical address.
+///
+/// The physical address should point to a page containing untyped, non-sensitive data that can be
+/// accessed by the device.
+///
+/// # Safety
+///
+/// While the physical address is mapped as the device address (i.e. from calling this method to
+/// calling [`unmap`]), it must point to an untyped memory page. Otherwise, the device may corrupt
+/// kernel data, which could lead to memory safety issues.
 pub(crate) unsafe fn map(daddr: Daddr, paddr: Paddr) -> Result<(), IommuError> {
     let Some(table) = PAGE_TABLE.get() else {
         return Err(IommuError::NoIommu);
     };
 
     let mut locked_table = table.lock();
+
     let res = unsafe { locked_table.map(PciDeviceLocation::zero(), daddr, paddr) };
 
     match res {
@@ -77,6 +94,9 @@ pub(crate) unsafe fn map(daddr: Daddr, paddr: Paddr) -> Result<(), IommuError> {
     }
 }
 
+/// Unmaps a device address.
+///
+/// This method will fail if the device address is not mapped (by [`map`]) before.
 pub(crate) fn unmap(daddr: Daddr) -> Result<(), IommuError> {
     let Some(table) = PAGE_TABLE.get() else {
         return Err(IommuError::NoIommu);
@@ -108,6 +128,7 @@ pub(super) fn init() {
     }
 
     let mut root_table = RootTable::new();
+
     let page_table = PageTable::<IommuPtConfig>::empty();
     for table in PciDeviceLocation::all() {
         root_table.specify_device_page_table(table, unsafe { page_table.shallow_copy() })

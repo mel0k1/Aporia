@@ -1,3 +1,11 @@
+//! Virtual memory space management.
+//!
+//! The [`VmSpace`] struct is provided to manage the virtual memory space of a
+//! user. Cursors are used to traverse and modify over the virtual memory space
+//! concurrently. The VM space cursor [`self::Cursor`] is just a wrapper over
+//! the page table cursor, providing efficient, powerful concurrent accesses
+//! to the page table.
+
 use core::{ops::Range, sync::atomic::Ordering};
 
 use super::{AnyUFrameMeta, PagingLevel, page_table::PageTableConfig};
@@ -22,6 +30,41 @@ use crate::{
     task::{DisabledPreemptGuard, atomic_mode::AsAtomicModeGuard, disable_preempt},
 };
 
+/// A virtual address space for user-mode tasks, enabling safe manipulation of user-space memory.
+///
+/// The `VmSpace` type provides memory isolation guarantees between user-space and
+/// kernel-space. For example, given an arbitrary user-space pointer, one can read and
+/// write the memory location referred to by the user-space pointer without the risk of
+/// breaking the memory safety of the kernel space.
+///
+/// # Task Association Semantics
+///
+/// As far as OSTD is concerned, a `VmSpace` is not necessarily associated with a task. Once a
+/// `VmSpace` is activated (see [`VmSpace::activate`]), it remains activated until another
+/// `VmSpace` is activated **possibly by another task running on the same CPU**.
+///
+/// This means that it's up to the kernel to ensure that a task's `VmSpace` is always activated
+/// while the task is running. This can be done by using the injected post schedule handler
+/// (see [`inject_post_schedule_handler`]) to always activate the correct `VmSpace` after each
+/// context switch.
+///
+/// If the kernel otherwise decides not to ensure that the running task's `VmSpace` is always
+/// activated, the kernel must deal with race conditions when calling methods that require the
+/// `VmSpace` to be activated, e.g., [`UserMode::execute`], [`VmSpace::reader`],
+/// [`VmSpace::writer`]. Otherwise, the behavior is unspecified, though it's guaranteed _not_ to
+/// compromise the kernel's memory safety.
+///
+/// # Memory Backing
+///
+/// A newly-created `VmSpace` is not backed by any physical memory pages. To
+/// provide memory pages for a `VmSpace`, one can allocate and map physical
+/// memory ([`UFrame`]s) to the `VmSpace` using the cursor.
+///
+/// A `VmSpace` can also attach a page fault handler, which will be invoked to
+/// handle page faults generated from user space.
+///
+/// [`inject_post_schedule_handler`]: crate::task::inject_post_schedule_handler
+/// [`UserMode::execute`]: crate::user::UserMode::execute
 #[derive(Debug)]
 pub struct VmSpace {
     pt: PageTable<UserPtConfig>,
@@ -30,6 +73,7 @@ pub struct VmSpace {
 }
 
 impl VmSpace {
+    /// Creates a new VM address space.
     pub fn new() -> Self {
         Self {
             pt: KERNEL_PAGE_TABLE.get().unwrap().create_user_page_table(),
@@ -38,6 +82,14 @@ impl VmSpace {
         }
     }
 
+    /// Gets an immutable cursor in the virtual address range.
+    ///
+    /// The cursor behaves like a lock guard, exclusively owning a sub-tree of
+    /// the page table, preventing others from creating a cursor in it. So be
+    /// sure to drop the cursor as soon as possible.
+    ///
+    /// The creation of the cursor may block if another cursor having an
+    /// overlapping range is alive.
     pub fn cursor<'a, G: AsAtomicModeGuard>(
         &'a self,
         guard: &'a G,
@@ -46,6 +98,16 @@ impl VmSpace {
         Ok(Cursor(self.pt.cursor(guard, va)?))
     }
 
+    /// Gets an mutable cursor in the virtual address range.
+    ///
+    /// The same as [`Self::cursor`], the cursor behaves like a lock guard,
+    /// exclusively owning a sub-tree of the page table, preventing others
+    /// from creating a cursor in it. So be sure to drop the cursor as soon as
+    /// possible.
+    ///
+    /// The creation of the cursor may block if another cursor having an
+    /// overlapping range is alive. The modification to the mapping by the
+    /// cursor may also block or be overridden the mapping of another cursor.
     pub fn cursor_mut<'a, G: AsAtomicModeGuard>(
         &'a self,
         guard: &'a G,
@@ -58,6 +120,7 @@ impl VmSpace {
         })
     }
 
+    /// Activates the page table on the current CPU.
     pub fn activate(self: &Arc<Self>) {
         let preempt_guard = disable_preempt();
         let cpu = preempt_guard.current_cpu();
@@ -81,6 +144,13 @@ impl VmSpace {
         self.pt.activate();
     }
 
+    /// Creates a reader to read data from the user space of the current task.
+    ///
+    /// Returns `Err` if this `VmSpace` doesn't belong to the user space of the current task
+    /// or the `vaddr` and `len` do not represent a user space memory range.
+    ///
+    /// Users must ensure that no other page table is activated in the current task during the
+    /// lifetime of the created `VmReader`. This guarantees that the `VmReader` can operate correctly.
     pub fn reader(&self, vaddr: Vaddr, len: usize) -> Result<VmReader<'_, Fallible>> {
         if current_page_table_paddr() != self.pt.root_paddr()
             || !super::is_in_user_space(vaddr, len)
@@ -91,6 +161,13 @@ impl VmSpace {
         Ok(unsafe { VmReader::<Fallible>::from_user_space(vaddr as *const u8, len) })
     }
 
+    /// Creates a writer to write data into the user space.
+    ///
+    /// Returns `Err` if this `VmSpace` doesn't belong to the user space of the current task
+    /// or the `vaddr` and `len` do not represent a user space memory range.
+    ///
+    /// Users must ensure that no other page table is activated in the current task during the
+    /// lifetime of the created `VmWriter`. This guarantees that the `VmWriter` can operate correctly.
     pub fn writer(&self, vaddr: Vaddr, len: usize) -> Result<VmWriter<'_, Fallible>> {
         if current_page_table_paddr() != self.pt.root_paddr()
             || !super::is_in_user_space(vaddr, len)
@@ -101,6 +178,17 @@ impl VmSpace {
         Ok(unsafe { VmWriter::<Fallible>::from_user_space(vaddr as *mut u8, len) })
     }
 
+    /// Creates a reader/writer pair to read data from and write data into the user space.
+    ///
+    /// Returns `Err` if this `VmSpace` doesn't belong to the user space of the current task
+    /// or the `vaddr` and `len` do not represent a user space memory range.
+    ///
+    /// Users must ensure that no other page table is activated in the current task during the
+    /// lifetime of the created `VmReader` and `VmWriter`. This guarantees that the `VmReader`
+    /// and the `VmWriter` can operate correctly.
+    ///
+    /// This method is semantically equivalent to calling [`Self::reader`] and [`Self::writer`]
+    /// separately, but it avoids double checking the validity of the memory region.
     pub fn reader_writer(
         &self,
         vaddr: Vaddr,
@@ -127,6 +215,10 @@ impl Default for VmSpace {
 }
 
 impl VmSpace {
+    /// Finds the [`IoMem`] that contains the given physical address.
+    ///
+    /// It is a private method for internal use only. Please refer to
+    /// [`CursorMut::find_iomem_by_paddr`] for more details.
     fn find_iomem_by_paddr(&self, paddr: Paddr) -> Option<(IoMem, usize)> {
         let iomems = self.iomems.lock();
         for iomem in iomems.iter() {
@@ -141,63 +233,147 @@ impl VmSpace {
     }
 }
 
+/// The cursor for querying over the VM space without modifying it.
+///
+/// It exclusively owns a sub-tree of the page table, preventing others from
+/// reading or modifying the same sub-tree. Two read-only cursors can not be
+/// created from the same virtual address range either.
 pub struct Cursor<'a>(page_table::Cursor<'a, UserPtConfig>);
 
 impl Cursor<'_> {
+    /// Queries the mapping at the current virtual address.
+    ///
+    /// If the cursor is pointing to a valid virtual address that is locked,
+    /// it will return the virtual address range and the mapped item.
     pub fn query(&mut self) -> Result<(Range<Vaddr>, Option<VmQueriedItem<'_>>)> {
         let (range, item) = self.0.query()?;
         Ok((range, item.map(VmQueriedItem::from)))
     }
 
+    /// Moves the cursor forward to the next mapped virtual address.
+    ///
+    /// If there is mapped virtual address following the current address within
+    /// next `len` bytes, it will return that mapped address. In this case,
+    /// the cursor will stop at the mapped address.
+    ///
+    /// Otherwise, it will return `None`. And the cursor may stop at any
+    /// address after `len` bytes.
+    ///
+    /// # Panics
+    ///
+    /// Panics if:
+    ///  - the length is longer than the remaining range of the cursor;
+    ///  - the length is not page-aligned.
     pub fn find_next(&mut self, len: usize) -> Option<Vaddr> {
         self.0.find_next(len)
     }
 
+    /// Jumps to the virtual address.
+    ///
+    /// If the target address is out of the range, this method will return `Err`.
+    ///
+    /// # Panics
+    ///
+    /// This method panics if the address has bad alignment.
     pub fn jump(&mut self, va: Vaddr) -> Result<()> {
         self.0.jump(va)?;
         Ok(())
     }
 
+    /// Gets the virtual address of the current slot.
     pub fn virt_addr(&self) -> Vaddr {
         self.0.virt_addr()
     }
 }
 
+/// The cursor for modifying the mappings in VM space.
+///
+/// It exclusively owns a sub-tree of the page table, preventing others from
+/// reading or modifying the same sub-tree.
 pub struct CursorMut<'a> {
     pt_cursor: page_table::CursorMut<'a, UserPtConfig>,
+
     flusher: TlbFlusher<'a, DisabledPreemptGuard>,
+
     vmspace: &'a VmSpace,
 }
 
 impl<'a> CursorMut<'a> {
+    /// Queries the mapping at the current virtual address.
+    ///
+    /// This is the same as [`Cursor::query`].
+    ///
+    /// If the cursor is pointing to a valid virtual address that is locked,
+    /// it will return the virtual address range and the mapped item.
     pub fn query(&mut self) -> Result<(Range<Vaddr>, Option<VmQueriedItem<'_>>)> {
         let (range, item) = self.pt_cursor.query()?;
         Ok((range, item.map(VmQueriedItem::from)))
     }
 
+    /// Moves the cursor forward to the next mapped virtual address.
+    ///
+    /// This is the same as [`Cursor::find_next`].
     pub fn find_next(&mut self, len: usize) -> Option<Vaddr> {
         self.pt_cursor.find_next(len)
     }
 
+    /// Jumps to the virtual address.
+    ///
+    /// This is the same as [`Cursor::jump`].
+    ///
+    /// # Panics
+    ///
+    /// This method panics if the address has bad alignment.
     pub fn jump(&mut self, va: Vaddr) -> Result<()> {
         self.pt_cursor.jump(va)?;
         Ok(())
     }
 
+    /// Gets the virtual address of the current slot.
     pub fn virt_addr(&self) -> Vaddr {
         self.pt_cursor.virt_addr()
     }
 
+    /// Gets the dedicated TLB flusher for this cursor.
     pub fn flusher(&mut self) -> &mut TlbFlusher<'a, DisabledPreemptGuard> {
         &mut self.flusher
     }
 
+    /// Maps a frame into the current slot.
+    ///
+    /// This method will bring the cursor to the next slot after the modification.
+    ///
+    /// # Panics
+    ///
+    /// Panics if:
+    ///  - the current virtual address is already mapped;
+    ///  - the current virtual address is outside the cursor's range.
     pub fn map(&mut self, frame: UFrame, prop: PageProperty) {
         let item = VmItem::new_tracked(frame, prop);
 
         unsafe { self.pt_cursor.map(item) };
     }
 
+    /// Maps a range of [`IoMem`] into the current slot.
+    ///
+    /// The memory region to be mapped is the [`IoMem`] range starting at
+    /// `offset` and extending to `offset + len`, or to the end of [`IoMem`],
+    /// whichever comes first. This method will bring the cursor to the next
+    /// slot after the modification.
+    ///
+    /// # Limitations
+    ///
+    /// Once an instance of `IoMem` is mapped to a `VmSpace`,
+    /// then the `IoMem` instance will only be dropped when the `VmSpace` is
+    /// dropped, not when all the mappings backed by the `IoMem` are destroyed
+    /// with the `unmap` method.
+    ///
+    /// # Panics
+    ///
+    /// Panics if
+    ///  - `len`, `offset`, or the address range of the `IoMem` instance is
+    ///    not aligned to the page size;
+    ///  - the current virtual address is already mapped.
     pub fn map_iomem(&mut self, io_mem: IoMem, prop: PageProperty, len: usize, offset: usize) {
         assert_eq!(len % PAGE_SIZE, 0);
         assert_eq!(offset % PAGE_SIZE, 0);
@@ -236,10 +412,40 @@ impl<'a> CursorMut<'a> {
         }
     }
 
+    /// Finds an [`IoMem`] that was previously mapped to by [`Self::map_iomem`] and contains the
+    /// physical address.
+    ///
+    /// This method can recover the originally mapped `IoMem` from the physical address returned by
+    /// [`Self::query`]. If the query returns a [`VmQueriedItem::MappedIoMem`], this method is
+    /// guaranteed to succeed with the specific physical address. However, if the corresponding
+    /// mapping is subsequently unmapped, it is unspecified whether this method will still succeed
+    /// or not.
+    ///
+    /// On success, this method returns the `IoMem` and the offset from the `IoMem` start to the
+    /// given physical address. Otherwise, this method returns `None`.
     pub fn find_iomem_by_paddr(&self, paddr: Paddr) -> Option<(IoMem, usize)> {
         self.vmspace.find_iomem_by_paddr(paddr)
     }
 
+    /// Clears the mapping starting from the current slot,
+    /// and returns the number of unmapped pages.
+    ///
+    /// This method will bring the cursor forward by at least `len` bytes
+    /// in the virtual address space, but not past the end of the cursor's range.
+    ///
+    /// Already-absent mappings encountered by the cursor will be skipped. It
+    /// is valid to unmap a range that is not mapped.
+    ///
+    /// It must issue and dispatch a TLB flush after the operation. Otherwise,
+    /// the memory safety will be compromised. Please call this function less
+    /// to avoid the overhead of TLB flush. Using a large `len` is wiser than
+    /// splitting the operation into multiple small ones.
+    ///
+    /// # Panics
+    ///
+    /// Panics if:
+    ///  - the length is longer than the remaining range of the cursor;
+    ///  - the length is not page-aligned.
     pub fn unmap(&mut self, len: usize) -> usize {
         let end_va = self.virt_addr() + len;
         let mut num_unmapped: usize = 0;
@@ -297,6 +503,28 @@ impl<'a> CursorMut<'a> {
         num_unmapped
     }
 
+    /// Applies the operation to the next slot of mapping within the range.
+    ///
+    /// The range to be found in is the current virtual address with the
+    /// provided length.
+    ///
+    /// The function stops and yields the actually protected range if it has
+    /// actually protected a page, no matter if the following pages are also
+    /// required to be protected.
+    ///
+    /// It also makes the cursor moves forward to the next page after the
+    /// protected one. If no mapped pages exist in the following range, the
+    /// cursor will stop at the end of the range and return [`None`].
+    ///
+    /// Note that it will **NOT** flush the TLB after the operation. Please
+    /// make the decision yourself on when and how to flush the TLB using
+    /// [`Self::flusher`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if:
+    ///  - the length is longer than the remaining range of the cursor;
+    ///  - the length is not page-aligned.
     pub fn protect_next(
         &mut self,
         len: usize,
@@ -311,6 +539,9 @@ impl<'a> CursorMut<'a> {
 }
 
 cpu_local_cell! {
+    /// The `Arc` pointer to the activated VM space on this CPU. If the pointer
+    /// is NULL, it means that the activated page table is merely the kernel
+    /// page table.
     static ACTIVATED_VM_SPACE: CpuLocalPtr<VmSpace> = CpuLocalPtr::null();
 }
 
@@ -319,18 +550,28 @@ pub(super) fn get_activated_vm_space() -> *const VmSpace {
     ACTIVATED_VM_SPACE.load().as_ptr()
 }
 
+/// The result of a query over the VM space.
 pub enum VmQueriedItem<'a> {
+    /// The current slot is mapped, the frame within is allocated from the
+    /// physical memory.
     MappedRam {
+        /// The mapped frame.
         frame: FrameRef<'a, dyn AnyUFrameMeta>,
+        /// The property of the slot.
         prop: PageProperty,
     },
+    /// The current slot is mapped, the frame within is allocated from the
+    /// MMIO memory.
     MappedIoMem {
+        /// The physical address of the corresponding I/O memory.
         paddr: Paddr,
+        /// The property of the slot.
         prop: PageProperty,
     },
 }
 
 impl VmQueriedItem<'_> {
+    /// Returns the page property of the mapped item.
     pub fn prop(&self) -> &PageProperty {
         match self {
             Self::MappedRam { prop, .. } => prop,
@@ -339,12 +580,17 @@ impl VmQueriedItem<'_> {
     }
 }
 
+/// Internal representation of a VM item.
+///
+/// This is kept private to ensure memory safety. The public interface
+/// should use `VmQueriedItem` for querying mapping information.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct VmItem {
     prop: PageProperty,
     mapped_item: MappedItem,
 }
 
+/// A reference to a VM item.
 #[derive(Debug)]
 pub(crate) struct VmItemRef<'a> {
     prop: PageProperty,
@@ -364,6 +610,7 @@ enum MappedItemRef<'a> {
 }
 
 impl VmItem {
+    /// Creates a new `VmItem` that maps a tracked frame.
     pub(super) fn new_tracked(frame: UFrame, prop: PageProperty) -> Self {
         Self {
             prop,
@@ -371,6 +618,7 @@ impl VmItem {
         }
     }
 
+    /// Creates a new `VmItem` that maps an untracked I/O memory.
     fn new_untracked_io(paddr: Paddr, prop: PageProperty) -> Self {
         Self {
             prop,

@@ -14,6 +14,19 @@ use crate::{
     time::wait::TimeoutExt,
 };
 
+/// A pollee represents any I/O object (e.g., a file or socket) that can be polled.
+///
+/// `Pollee` provides a standard mechanism to allow
+/// 1. An I/O object to maintain its I/O readiness; and
+/// 2. An interested part to poll the object's I/O readiness.
+///
+/// To use the pollee correctly, you must follow the rules below carefully:
+///  * [`Pollee::notify`] needs to be called whenever a new event arrives.
+///  * [`Pollee::invalidate`] needs to be called whenever an old event disappears and no new event
+///    arrives.
+///
+/// Then, [`Pollee::poll_with`] can allow you to register a [`Poller`] to wait for certain events,
+/// or register a [`PollAdaptor`] to be notified when certain events occur.
 #[derive(Clone)]
 pub(crate) struct Pollee {
     inner: Arc<PolleeInner>,
@@ -22,7 +35,24 @@ pub(crate) struct Pollee {
 const INV_STATE: isize = -1;
 
 struct PolleeInner {
+    /// A subject which is monitored with pollers.
     subject: SyncSubject<IoEvents, IoEvents>,
+    /// A state that describes how events are cached in the pollee.
+    ///
+    /// The meaning of this field depends on its value:
+    ///
+    /// * A non-negative value represents cached events. The events are guaranteed to be
+    ///   up-to-date, i.e., no one has called [`Pollee::notify`] or [`Pollee::invalidate`] since we
+    ///   started checking the events.
+    ///
+    /// * A value of [`INV_STATE`] means no cached events. We may have previously cached some
+    ///   events, but they are no longer valid due to calls of [`Pollee::notify`] or
+    ///   [`Pollee::invalidate`].
+    ///
+    /// * A negative value other than [`INV_STATE`] represents a [`Task`] that is currently
+    ///   checking events. When the task has finished checking and the state is neither invalidated
+    ///   nor overwritten by another task checking events, the state can be used to cache the
+    ///   checked events.
     state: AtomicIsize,
 }
 
@@ -33,6 +63,7 @@ impl Default for Pollee {
 }
 
 impl Pollee {
+    /// Creates a new pollee.
     pub(crate) fn new() -> Self {
         let inner = PolleeInner {
             subject: SyncSubject::new(),
@@ -43,6 +74,17 @@ impl Pollee {
         }
     }
 
+    /// Returns the current events filtered by the given event mask.
+    ///
+    /// If a poller is provided, the poller will start monitoring the pollee and receive event
+    /// notification when the pollee receives interesting events.
+    ///
+    /// This operation is _atomic_ in the sense that if there are interesting events, either the
+    /// events are returned or the poller is notified.
+    ///
+    /// The above statement about atomicity is true even if `check` contains race conditions (and
+    /// in fact it always will, because even if it holds a lock, the lock will be released when
+    /// `check` returns).
     pub(crate) fn poll_with<F>(
         &self,
         mask: IoEvents,
@@ -87,6 +129,11 @@ impl Pollee {
         new_events & mask
     }
 
+    /// Registers a poller to listen notification for new events.
+    ///
+    /// The functionality of this method is a subset of calling [`Self::poll_with`] and providing
+    /// the same poller. Unlike [`Self::poll_with`], this method performs poller registration
+    /// without checking (and perhaps caching) the current events.
     pub(crate) fn register_poller(&self, poller: &mut PollHandle, mask: IoEvents) {
         self.inner
             .subject
@@ -95,23 +142,48 @@ impl Pollee {
         poller.pollees.push(Arc::downgrade(&self.inner));
     }
 
+    /// Notifies pollers of some events.
+    ///
+    /// This method invalidates the (internal) cached events and wakes up all registered pollers
+    /// that are interested in the events.
+    ///
+    /// This method should be called whenever new events arrive. The events can be spurious. This
+    /// way, the caller can avoid expensive calculations and simply add all possible ones.
     pub(crate) fn notify(&self, events: IoEvents) {
         self.invalidate();
 
         self.inner.subject.notify_observers(&events);
     }
 
+    /// Invalidates the (internal) cached events.
+    ///
+    /// This method should be called whenever old events disappear but no new events arrive. The
+    /// invalidation can be spurious, so the caller can avoid complex calculations and simply
+    /// invalidate even if no events disappear.
     pub(crate) fn invalidate(&self) {
         self.inner.state.store(INV_STATE, Ordering::Release);
     }
 }
 
+/// An opaque handle that can be used as an argument of the [`Pollable::poll`] method.
+///
+/// This type can represent an entity of [`PollAdaptor`] or [`Poller`], which is done via the
+/// [`PollAdaptor::as_handle_mut`] and [`Poller::as_handle_mut`] methods.
+///
+/// When this handle is dropped or reset (via [`PollHandle::reset`]), the entity will no longer be
+/// notified of the events from the pollee.
 pub struct PollHandle {
     observer: Weak<dyn Observer<IoEvents>>,
+
     pollees: Vec<Weak<PolleeInner>>,
 }
 
 impl PollHandle {
+    /// Constructs a new handle with the observer.
+    ///
+    /// Note: It is a *logic error* to construct the multiple handles with the same observer (where
+    /// "same" means [`Weak::ptr_eq`]). If possible, consider using [`PollAdaptor::with_observer`]
+    /// instead.
     pub(crate) fn new(observer: Weak<dyn Observer<IoEvents>>) -> Self {
         Self {
             observer,
@@ -119,6 +191,9 @@ impl PollHandle {
         }
     }
 
+    /// Resets the handle.
+    ///
+    /// The observer will be unregistered and will no longer receive events.
     pub(crate) fn reset(&mut self) {
         let observer = &self.observer;
 
@@ -137,12 +212,19 @@ impl Drop for PollHandle {
     }
 }
 
+/// An adaptor to make an [`Observer`] usable for [`Pollable::poll`].
+///
+/// Normally, [`Pollable::poll`] accepts a [`Poller`] which is used to wait for events. By using
+/// this adaptor, it is possible to use any [`Observer`] with [`Pollable::poll`]. The observer will
+/// be notified whenever there are new events.
 pub(crate) struct PollAdaptor<O> {
     observer: Arc<O>,
+
     inner: PollHandle,
 }
 
 impl<O: Observer<IoEvents> + 'static> PollAdaptor<O> {
+    /// Constructs a new adaptor with the specified observer.
     pub(crate) fn with_observer(observer: O) -> Self {
         let observer = Arc::new(observer);
         let inner = PollHandle::new(Arc::downgrade(&observer) as _);
@@ -152,16 +234,19 @@ impl<O: Observer<IoEvents> + 'static> PollAdaptor<O> {
 }
 
 impl<O> PollAdaptor<O> {
+    /// Gets a reference to the observer.
     #[expect(dead_code, reason = "Keep this `Arc` to avoid dropping the observer")]
     pub(crate) fn observer(&self) -> &Arc<O> {
         &self.observer
     }
 
+    /// Returns a mutable reference of [`PollHandle`].
     pub(crate) fn as_handle_mut(&mut self) -> &mut PollHandle {
         &mut self.inner
     }
 }
 
+/// A poller that can be used to wait for some events.
 pub(crate) struct Poller {
     poller: PollHandle,
     waiter: Waiter,
@@ -169,6 +254,12 @@ pub(crate) struct Poller {
 }
 
 impl Poller {
+    /// Constructs a new poller to wait for interesting events.
+    ///
+    /// If `timeout` is specified, [`Self::wait`] will fail with [`ETIME`] after the specified
+    /// timeout is expired.
+    ///
+    /// [`ETIME`]: crate::error::Errno::ETIME
     pub(crate) fn new(timeout: Option<&Duration>) -> Self {
         let (waiter, waker) = Waiter::new_pair();
 
@@ -182,10 +273,17 @@ impl Poller {
         }
     }
 
+    /// Returns a mutable reference of [`PollHandle`].
     pub(crate) fn as_handle_mut(&mut self) -> &mut PollHandle {
         &mut self.poller
     }
 
+    /// Waits until some interesting events happen since the last wait.
+    ///
+    /// This method will fail with [`EINTR`] if interrupted by signals or [`ETIME`] on timeout.
+    ///
+    /// [`EINTR`]: crate::error::Errno::EINTR
+    /// [`ETIME`]: crate::error::Errno::ETIME
     pub(crate) fn wait(&self) -> Result<()> {
         self.waiter.pause_timeout(&self.timeout)
     }
@@ -197,9 +295,35 @@ impl Observer<IoEvents> for Waker {
     }
 }
 
+/// The `Pollable` trait allows for waiting for events and performing event-based operations.
+///
+/// Implementors are required to provide a method, [`Pollable::poll`], which is usually implemented
+/// by simply calling [`Pollable::poll`] on the internal [`Pollee`]. This trait provides another
+/// method, [`Pollable::wait_events`], to allow waiting for events and performing operations
+/// according to the events.
+///
+/// This trait is added instead of creating a new method in [`Pollee`] because sometimes we do not
+/// have access to the internal [`Pollee`], but there is a method that provides the same semantics
+/// as [`Pollable::poll`] and we need to perform event-based operations using that method.
 pub trait Pollable {
+    /// Returns the interesting events now and monitors their occurrence in the future if the
+    /// poller is provided.
+    ///
+    /// This method has the same semantics as [`Pollee::poll_with`].
     fn poll(&self, mask: IoEvents, poller: Option<&mut PollHandle>) -> IoEvents;
 
+    /// Waits for events and performs event-based operations.
+    ///
+    /// If a call to `try_op()` succeeds or fails with an error code other than `EAGAIN`, the
+    /// method will return whatever the call to `try_op()` returns. Otherwise, the method will wait
+    /// for some interesting events specified in `mask` to happen and try again.
+    ///
+    /// This method will fail with `ETIME` if the timeout is specified and the event does not occur
+    /// before the timeout expires.
+    ///
+    /// The user must ensure that a call to `try_op()` does not fail with `EAGAIN` when the
+    /// interesting events occur. However, it is allowed to have spurious `EAGAIN` failures due to
+    /// race options where the events are consumed by another thread.
     #[track_caller]
     fn wait_events<F, R>(
         &self,

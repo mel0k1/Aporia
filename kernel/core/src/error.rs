@@ -2,6 +2,7 @@ use core::panic::Location;
 
 use int_to_c_enum::TryFromInt;
 
+/// Error number.
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, TryFromInt)]
 pub enum Errno {
@@ -43,9 +44,11 @@ pub enum Errno {
     EDEADLK = 35,
     ENAMETOOLONG = 36,
     ENOLCK = 37,
+
     ENOSYS = 38,
     ENOTEMPTY = 39,
     ELOOP = 40,
+
     ENOMSG = 42,
     EIDRM = 43,
     ECHRNG = 44,
@@ -62,6 +65,7 @@ pub enum Errno {
     ENOANO = 55,
     EBADRQC = 56,
     EBADSLT = 57,
+
     EBFONT = 59,
     ENOSTR = 60,
     ENODATA = 61,
@@ -133,6 +137,7 @@ pub enum Errno {
     EKEYEXPIRED = 127,
     EKEYREVOKED = 128,
     EKEYREJECTED = 129,
+
     EOWNERDEAD = 130,
     ENOTRECOVERABLE = 131,
 
@@ -143,6 +148,11 @@ pub enum Errno {
     ERESTARTSYS = 512,
 }
 
+/// An error with an error number and a source location.
+///
+/// The location identifies where this error was constructed,
+/// including where an external error was converted into this type.
+/// Propagating an existing error preserves its original location.
 #[derive(Clone, Copy, Debug)]
 pub struct Error {
     errno: Errno,
@@ -150,6 +160,10 @@ pub struct Error {
 }
 
 impl Error {
+    /// Creates an error with the given error number and the caller's source location.
+    ///
+    /// Use [`errno!`](crate::errno) when the error number is a known variant.
+    /// Call this method directly when the error number is computed at runtime.
     #[track_caller]
     pub const fn new(errno: Errno) -> Self {
         Error {
@@ -158,15 +172,23 @@ impl Error {
         }
     }
 
+    /// Returns the location where this error was constructed.
+    ///
+    /// Propagating the error preserves this location.
     pub const fn location(&self) -> &'static Location<'static> {
         self.location
     }
 
+    /// Returns the error number.
     pub const fn error(&self) -> Errno {
         self.errno
     }
 }
 
+/// Constructs a kernel error at the call site from an `Errno` variant name.
+///
+/// The optional message documents the error in the source; it is neither
+/// evaluated nor stored in the error.
 #[macro_export]
 macro_rules! errno {
     ($errno:ident $(, $message:expr)? $(,)?) => {

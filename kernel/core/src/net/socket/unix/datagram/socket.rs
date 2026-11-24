@@ -31,6 +31,7 @@ pub(crate) struct UnixDatagramSocket {
     remote_queue: RwLock<Option<Arc<MessageQueue>>>,
     options: RwLock<OptionSet>,
     timeouts: SocketTimeouts,
+
     peer_cred: Option<SocketCred>,
 
     is_write_shutdown: AtomicBool,
@@ -116,6 +117,7 @@ impl UnixDatagramSocket {
 
         if remote.is_none() && res.is_err_and(|err| err.error() == Errno::ECONNREFUSED) {
             let mut remote_queue = self.remote_queue.write();
+
             if remote_queue
                 .as_ref()
                 .is_some_and(|remote| Arc::ptr_eq(remote, &queue))

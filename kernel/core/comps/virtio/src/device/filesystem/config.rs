@@ -1,3 +1,5 @@
+//! Virtio-fs device configuration layout and feature bits.
+
 use core::mem::offset_of;
 
 use aster_util::safe_ptr::SafePtr;
@@ -6,6 +8,7 @@ use ostd_pod::FromZeros;
 use crate::transport::{ConfigManager, VirtioTransport};
 
 bitflags::bitflags! {
+    /// The virtio-fs feature bits supported by the driver.
     #[derive(Clone, Copy, Debug)]
     pub(super) struct FileSystemFeatures: u64 {
         const NOTIFICATION = 1 << 0;
@@ -13,11 +16,13 @@ bitflags::bitflags! {
 }
 
 impl FileSystemFeatures {
+    /// Returns the virtio-fs feature bits supported by this driver.
     pub(super) fn supported_features() -> Self {
         Self::empty()
     }
 }
 
+/// The virtio-fs device configuration layout.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(super) struct VirtioFsConfig {
@@ -26,6 +31,7 @@ pub(super) struct VirtioFsConfig {
 }
 
 impl VirtioFsConfig {
+    /// Returns the UTF-8 mount tag advertised by the device.
     pub(super) fn parse_tag(&self) -> &str {
         let len = self
             .tag
@@ -39,10 +45,12 @@ impl VirtioFsConfig {
         }
     }
 
+    /// Returns the number of request queues advertised by the device.
     pub(super) fn num_request_queues(&self) -> u32 {
         self.num_request_queues
     }
 
+    /// Creates a config-space manager for the virtio-fs device config.
     pub(super) fn new_manager(transport: &dyn VirtioTransport) -> ConfigManager<Self> {
         let safe_ptr = transport
             .device_config_mem()
@@ -54,6 +62,7 @@ impl VirtioFsConfig {
 }
 
 impl ConfigManager<VirtioFsConfig> {
+    /// Reads the virtio-fs device configuration from config space.
     pub(super) fn read_config(&self) -> VirtioFsConfig {
         let mut config = VirtioFsConfig::new_zeroed();
 

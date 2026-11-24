@@ -17,6 +17,7 @@ use crate::{
     security::lsm::yama,
 };
 
+/// Represents the inode at `/proc/sys/kernel/yama`.
 pub(super) struct YamaDirOps;
 
 impl YamaDirOps {
@@ -54,6 +55,7 @@ impl ProcDirOps for YamaDirOps {
     }
 }
 
+/// Represents the inode at `/proc/sys/kernel/yama/ptrace_scope`.
 struct PtraceScopeFileOps;
 
 impl PtraceScopeFileOps {

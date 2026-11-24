@@ -1,3 +1,10 @@
+//! The PCI bus in the device model.
+//!
+//! [`PciBus`] uses [`PciCommonDevice`] as its device payload.
+//! Drivers registered on this bus must provide a slice of [`PciMatch`] rules for device matching.
+//! The bus exposes read-only `vendor`, `device`, `class`, and `revision` sysfs attributes on each [`PciDevice`].
+//! Its uevent environment includes `PCI_CLASS`, `PCI_ID`, and `PCI_SLOT_NAME`.
+
 use alloc::sync::Arc;
 
 use aster_device::{
@@ -9,11 +16,26 @@ use ostd::Result;
 
 use crate::{capability::msix::CapabilityMsixData, common_device::PciCommonDevice};
 
+/// The PCI bus.
 pub struct PciBus;
 
+/// A device on the PCI bus.
 pub type PciDevice = BusDevice<PciBus>;
 
+/// PCI-specific operations on a device handle.
 pub trait PciDeviceExt {
+    /// Acquires necessary resources to build the MSI-X capability data, if the capability exists.
+    ///
+    /// Returns `Ok(None)` if the device has no MSI-X capability.
+    /// Dropping the returned capability disables its interrupts, releases its IRQ lines,
+    /// and allows it to be acquired again.
+    ///
+    /// # Errors
+    ///
+    /// - [`InvalidArgs`](ostd::Error::InvalidArgs) if the MSI-X table or pending bit array
+    ///   references a missing BAR or an I/O BAR instead of a memory BAR.
+    /// - [`AccessDenied`](ostd::Error::AccessDenied) if the required BAR I/O memory cannot
+    ///   be acquired, or the MSI-X capability is already acquired.
     fn acquire_msix_capability(self: &Arc<Self>) -> Result<Option<CapabilityMsixData>>;
 }
 
@@ -23,13 +45,12 @@ impl PciDeviceExt for PciDevice {
     }
 }
 
+/// Matching criteria for PCI drivers.
 #[derive(Clone, Copy, Debug)]
 pub enum PciMatch {
-    Device {
-        vendor: u16,
-        first: u16,
-        last: u16,
-    },
+    /// Matches a vendor and device IDs from `first` to `last`, both inclusive.
+    Device { vendor: u16, first: u16, last: u16 },
+    /// Matches a class, subclass, and programming interface.
     Class {
         class: u8,
         subclass: u8,

@@ -1,3 +1,8 @@
+//! `FUSE_MKNOD` creates a special node under the parent directory.
+//!
+//! The request body contains [`MknodReq`] followed by the null-terminated child
+//! name. The reply body contains [`EntryReply`] for the created inode.
+
 use ostd::mm::{Infallible, VmReader, VmWriter};
 
 use super::util;
@@ -6,8 +11,11 @@ use crate::{EntryReply, FuseError, FuseOpcode, FuseOperation, FuseResult, ReplyE
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub struct MknodReq {
+    /// File type and permission bits for the new inode.
     mode: u32,
+    /// Device number for special files.
     rdev: u32,
+    /// Process umask of the requesting client, applied by the server when creating the inode.
     umask: u32,
     padding: u32,
 }

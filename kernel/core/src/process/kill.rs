@@ -10,6 +10,13 @@ use crate::{
     thread::Tid,
 };
 
+/// Sends a signal to a process, using the current process as the sender.
+///
+/// The credentials of the current process will be checked to determine
+/// if it is authorized to send the signal to this particular target process.
+///
+/// If `signal` is `None`, this method will only check permission without sending
+/// any signal.
 pub(crate) fn kill(pid: Pid, signal: Option<Box<dyn Signal>>, ctx: &Context) -> Result<()> {
     if pid == ctx.process.pid() {
         let Some(signal) = signal else {
@@ -31,6 +38,14 @@ pub(crate) fn kill(pid: Pid, signal: Option<Box<dyn Signal>>, ctx: &Context) -> 
     kill_process(&process, signal, ctx)
 }
 
+/// Sends a signal to all processes in a group, using the current process
+/// as the sender.
+///
+/// The credentials of the current process will be checked to determine
+/// if it is authorized to send the signal to the target group.
+///
+/// If `signal` is `None`, this method will only check permission without sending
+/// any signal.
 pub(crate) fn kill_group<S: Signal + Clone>(
     pgid: Pgid,
     signal: Option<S>,
@@ -57,6 +72,13 @@ pub(crate) fn kill_group<S: Signal + Clone>(
     result
 }
 
+/// Sends a signal to a target thread, using the current process
+/// as the sender.
+///
+/// Checks the target thread belongs to the target process if `tgid` is provided.
+///
+/// If `signal` is `None`, this method will only check permission without sending
+/// any signal.
 pub(crate) fn tgkill(
     tid: Tid,
     tgid: Option<Pid>,
@@ -92,6 +114,11 @@ pub(crate) fn tgkill(
     Ok(())
 }
 
+/// Sends a signal to all processes except current process and init process, using
+/// the current process as the sender.
+///
+/// The credentials of the current process will be checked to determine
+/// if it is authorized to send the signal to the target group.
 pub(crate) fn kill_all<S: Signal + Clone>(signal: Option<S>, ctx: &Context) -> Result<()> {
     let mut result = Ok(());
 

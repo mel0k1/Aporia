@@ -61,8 +61,11 @@ pub(super) fn init_on_each_cpu() {
     cpuinfo::init_on_each_cpu();
 }
 
+/// Magic number.
 const PROC_MAGIC: u64 = 0x9fa0;
+/// Root Inode ID.
 const PROC_ROOT_INO: u64 = 1;
+/// Block size.
 const BLOCK_SIZE: usize = 1024;
 
 struct ProcFs {
@@ -139,6 +142,7 @@ impl FsType for ProcFsType {
     }
 }
 
+/// Represents the inode at `/proc`.
 struct RootDirOps;
 
 impl RootDirOps {

@@ -1,3 +1,5 @@
+//! Devices enumerated on a bus.
+
 use alloc::{
     sync::{Arc, Weak},
     vec::Vec,
@@ -17,19 +19,25 @@ use crate::{
     uevent::UeventVars,
 };
 
+/// A device enumerated on bus `B`.
+///
+/// Dereferences to the bus-specific payload `B::Device`.
 pub struct BusDevice<B: Bus> {
     base: DeviceBase,
     bus: Arc<BusHandle<B>>,
     payload: B::Device,
     declared: DeclaredParts<Self>,
     driver: RwMutex<Option<Arc<DriverHandle<B>>>>,
+    /// Serializes binding, unbinding, and driver attribute callbacks.
     bind_lock: Mutex<()>,
     weak: Weak<Self>,
 }
 
+/// A builder for a [`BusDevice`].
 pub type BusDeviceBuilder<B> = DeviceBuilder<Arc<BusHandle<B>>, <B as Bus>::Device, BusDevice<B>>;
 
 impl<B: Bus> BusDevice<B> {
+    /// Starts building a device on `bus`.
     pub fn builder(
         bus: &Arc<BusHandle<B>>,
         name: impl Into<SysStr>,
@@ -38,40 +46,49 @@ impl<B: Bus> BusDevice<B> {
         DeviceBuilder::new(bus.clone(), name.into(), payload)
     }
 
+    /// Returns the bus this device is on.
     pub fn bus(&self) -> &Arc<BusHandle<B>> {
         &self.bus
     }
 
+    /// Returns the bus-specific payload.
     pub fn payload(&self) -> &B::Device {
         &self.payload
     }
 
+    /// Returns the driver currently bound, if any.
     pub fn driver(&self) -> Option<Arc<DriverHandle<B>>> {
         self.driver.read().clone()
     }
 
+    /// Returns the lock that serializes binding, unbinding, and driver attributes.
     pub(crate) fn bind_lock(&self) -> &Mutex<()> {
         &self.bind_lock
     }
 
+    /// Clears and returns the bound driver.
     pub(crate) fn take_driver(&self) -> Option<Arc<DriverHandle<B>>> {
         self.driver.write().take()
     }
 
+    /// Records the bound driver.
     pub(crate) fn set_driver(&self, driver: Arc<DriverHandle<B>>) {
         *self.driver.write() = Some(driver);
     }
 
+    /// Returns a strong reference to this device.
     pub(crate) fn this(&self) -> Arc<Self> {
         self.weak
             .upgrade()
             .expect("a device is only reachable through an `Arc`")
     }
 
+    /// Adds a driver's attributes at bind time.
     pub(crate) fn add_driver_attrs(&self, driver: &Arc<DriverHandle<B>>) -> Result<()> {
         self.base.attrs().add(TyErasedAttr::from_driver(driver))
     }
 
+    /// Removes a driver's attributes at unbind time.
     pub(crate) fn remove_attrs(&self, attrs: &[Attr<Self>]) {
         let names: Vec<&'static str> = attrs.iter().map(Attr::name).collect();
         self.base.attrs().remove(&names);
@@ -79,6 +96,15 @@ impl<B: Bus> BusDevice<B> {
 }
 
 impl<B: Bus> BusDeviceBuilder<B> {
+    /// Builds the device.
+    ///
+    /// The device is not registered until [`add_device`] is called.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the device name is not a valid `SysTree` node name.
+    ///
+    /// [`add_device`]: crate::add_device
     pub fn build(self) -> Arc<BusDevice<B>> {
         let declared = self.declared_parts();
         Arc::new_cyclic(|weak: &Weak<BusDevice<B>>| {

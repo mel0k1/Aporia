@@ -1,3 +1,10 @@
+//! Event device (evdev) support.
+//!
+//! Character device with major number 13. The minor numbers are dynamically allocated.
+//! Devices appear as `/dev/input/eventX` where X is the minor number.
+//!
+//! Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/linux/major.h>
+
 mod file;
 
 use alloc::format;
@@ -28,15 +35,27 @@ use crate::{
     util::ring_buffer::RbProducer,
 };
 
+/// Major device number for evdev devices.
 const EVDEV_MAJOR_ID: u16 = 13;
 
+/// Global minor number allocator for evdev devices.
 static EVDEV_MINOR_COUNTER: AtomicU32 = AtomicU32::new(0);
 
+/// Global registry of evdev devices.
 static EVDEV_DEVICES: Mutex<BTreeMap<MinorId, Arc<EvdevDevice>>> = Mutex::new(BTreeMap::new());
 
 struct EvdevDevice {
+    /// Input device associated with this evdev.
     device: Arc<dyn InputDevice>,
+    /// List of opened evdev files with their producers.
+    ///
+    /// # Deadlock Prevention
+    ///
+    /// This lock is acquired in both the task and interrupt contexts.
+    /// We must make sure that this lock is taken with the local IRQs disabled.
+    /// Otherwise, we would be vulnerable to deadlock.
     opened_files: SpinLock<Vec<(Arc<EvdevFileInner>, RbProducer<EvdevEvent>)>>,
+    /// Device ID.
     id: DeviceId,
 }
 
@@ -65,15 +84,18 @@ impl EvdevDevice {
         }
     }
 
+    /// Checks if this evdev device is associated with the given input device.
     pub(self) fn matches_input_device(&self, input_device: &Arc<dyn InputDevice>) -> bool {
         Arc::ptr_eq(&self.device, input_device)
     }
 
+    /// Adds an opened evdev file to this evdev device.
     fn attach_file(&self, file: Arc<EvdevFileInner>, producer: RbProducer<EvdevEvent>) {
         let mut opened_files = self.opened_files.disable_irq().lock();
         opened_files.push((file, producer));
     }
 
+    /// Removes the closed evdev file from this evdev device.
     pub(self) fn detach_closed_file(&self, file: &Arc<EvdevFileInner>) {
         let mut opened_files = self.opened_files.disable_irq().lock();
         let pos = opened_files
@@ -95,6 +117,7 @@ impl EvdevDevice {
         f(&mut opened_files[pos].1)
     }
 
+    /// Distributes events to all opened evdev files.
     fn pass_events(&self, events: &[InputEvent]) {
         let mut opened_files = self.opened_files.lock();
 
@@ -109,6 +132,7 @@ impl EvdevDevice {
                         &InputEvent::from_sync_event(SynEvent::Dropped),
                         time,
                     );
+
                     if producer.push(dropped_event).is_some() {
                         file.increment_packet_count();
                     }
@@ -129,6 +153,7 @@ impl EvdevDevice {
         }
     }
 
+    /// Creates a new opened evdev file for this evdev device.
     fn create_file(self: &Arc<Self>, buffer_size: usize) -> Result<Box<EvdevFile>> {
         let (file, producer) = EvdevFile::new(buffer_size, Arc::downgrade(self));
 
@@ -171,6 +196,7 @@ impl Device for EvdevDevice {
     }
 }
 
+/// The evdev handler class that creates device nodes for input devices.
 #[derive(Debug)]
 struct EvdevHandlerClass;
 

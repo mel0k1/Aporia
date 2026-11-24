@@ -19,12 +19,21 @@ use crate::{
     sync::{LocalIrqDisabled, SpinLock},
 };
 
+/// The Generic Interrupt Controller (GIC) for ARM.
 pub(super) struct Gic {
     phandle: u32,
     inner: SpinLock<Inner, LocalIrqDisabled>,
+    /// Per-GIC interrupt-source-to-IRQ-number mappings.
     interrupt_number_mappings: Box<[AtomicU8]>,
 }
 
+/// GIC implementation.
+///
+/// A GIC consists of two parts: a distributor and a set of redistributors for each processing
+/// element (PE).
+///  - The distributor routes a shared peripheral interrupt (SPI) to one of the PEs that are
+///    configured to handle it.
+///  - Redistributors route private peripheral interrupts (PPIs) that belong to a specific PE.
 struct Inner {
     distributor: Distributor,
     redistributor: Redistributor,
@@ -74,6 +83,9 @@ impl Gic {
         })
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure that `node` is a GICv3 node from the device tree.
     unsafe fn find_distributor_and_redistrbutors(
         node: FdtNode,
         io_mem_allocator_builder: &mut IoMemAllocatorBuilder,
@@ -256,6 +268,7 @@ impl Gic {
 
     fn read_affinity() -> u64 {
         let mpidr: u64;
+
         unsafe {
             asm!(
                 "mrs {mpidr}, mpidr_el1",
@@ -281,10 +294,14 @@ impl Gic {
     }
 
     pub(super) fn claim_interrupt(&self) -> Option<HwIrqLine> {
+        /// The INTIDs that the GIC architecture reserves for special purposes.
+        ///
+        /// These INTIDs do not require an end of interrupt or deactivation.
         const RESERVED_INTIDS: Range<usize> = 1020..1024;
 
         let (irq_num, iar1) = loop {
             let iar1: usize;
+
             unsafe { asm!("mrs {}, icc_iar1_el1", out(reg) iar1) };
 
             if RESERVED_INTIDS.contains(&iar1) {
@@ -320,6 +337,11 @@ impl Gic {
     }
 }
 
+/// A common part shared by the distributor and the redistributors.
+///
+/// This contains registers defined for both the distributor and the redistributors. Note that these
+/// start at different offsets from the beginning of the MMIO region: [`Distributor::BASE_OFFSET`]
+/// and [`Redistributor::BASE_OFFSET`].
 struct DistributorBase {
     io_mem: IoMem<Sensitive>,
 }
@@ -334,6 +356,7 @@ impl DistributorBase {
     unsafe fn set_priority(&mut self, base_offset: usize, intid: u32, prio: u8) {
         let offset = base_offset + Self::GICD_IPRIORITYR + (intid as usize & !3);
         let shift = (intid & 3) * 8;
+
         unsafe {
             let mut val = self.io_mem.read_once::<u32>(offset);
             val &= !(0xff << shift);
@@ -345,6 +368,7 @@ impl DistributorBase {
     unsafe fn set_group1(&mut self, base_offset: usize, intid: u32) {
         let offset = base_offset + Self::GICD_IGROUPR + (intid as usize / 32) * 4;
         let bit = 1u32 << (intid % 32);
+
         unsafe {
             let mut val = self.io_mem.read_once::<u32>(offset);
             val |= bit;
@@ -355,6 +379,7 @@ impl DistributorBase {
     unsafe fn set_edge_or_level(&mut self, base_offset: usize, intid: u32, is_edge: bool) {
         let offset = base_offset + Self::GICD_ICFGR + (intid as usize / 16) * 4;
         let bit = 1u32 << ((intid % 16) * 2 + 1);
+
         unsafe {
             let mut val = self.io_mem.read_once::<u32>(offset);
             if is_edge {
@@ -373,6 +398,7 @@ impl DistributorBase {
             base_offset + Self::GICD_ICENABLER + (intid as usize / 32) * 4
         };
         let bit = 1u32 << (intid % 32);
+
         unsafe { self.io_mem.write_once(offset, &bit) };
     }
 }
@@ -420,6 +446,7 @@ impl Distributor {
 
     fn read_interrupt_count(&self) -> usize {
         let typ = unsafe { self.0.io_mem.read_once::<u32>(Self::GICD_TYPER) };
+
         let cnt = ((typ & 31) + 1) * 32;
         cnt.min(Self::MAX_SPI + 1) as usize
     }
@@ -429,6 +456,7 @@ impl Distributor {
 
         assert!(intid <= Self::MAX_SPI);
         let offset = Self::GICD_IROUTER + intid as usize * 8;
+
         unsafe {
             self.0.io_mem.write_once::<u32>(offset, &(affinity as u32));
             self.0
@@ -439,21 +467,25 @@ impl Distributor {
 
     fn set_priority(&mut self, intid: u32, prio: u8) {
         assert!(intid <= Self::MAX_SPI);
+
         unsafe { self.0.set_priority(Self::BASE_OFFSET, intid, prio) };
     }
 
     fn set_group1(&mut self, intid: u32) {
         assert!(intid <= Self::MAX_SPI);
+
         unsafe { self.0.set_group1(Self::BASE_OFFSET, intid) };
     }
 
     fn set_edge_or_level(&mut self, intid: u32, is_edge: bool) {
         assert!(intid <= Self::MAX_SPI);
+
         unsafe { self.0.set_edge_or_level(Self::BASE_OFFSET, intid, is_edge) };
     }
 
     fn set_enabled(&mut self, intid: u32, is_enabled: bool) {
         assert!(intid <= Self::MAX_SPI);
+
         unsafe { self.0.set_enabled(Self::BASE_OFFSET, intid, is_enabled) };
     }
 }
@@ -490,6 +522,7 @@ impl Redistributor {
 
     fn read_is_last(&self) -> bool {
         let typ = unsafe { self.0.io_mem.read_once::<u32>(Self::GICR_TYPER) };
+
         typ & (1 << 4) != 0
     }
 
@@ -499,21 +532,25 @@ impl Redistributor {
 
     fn set_priority(&mut self, intid: u32, prio: u8) {
         assert!(intid <= Self::MAX_PPI);
+
         unsafe { self.0.set_priority(Self::BASE_OFFSET, intid, prio) };
     }
 
     fn set_group1(&mut self, intid: u32) {
         assert!(intid <= Self::MAX_PPI);
+
         unsafe { self.0.set_group1(Self::BASE_OFFSET, intid) };
     }
 
     fn set_edge_or_level(&mut self, intid: u32, is_edge: bool) {
         assert!(intid <= Self::MAX_PPI);
+
         unsafe { self.0.set_edge_or_level(Self::BASE_OFFSET, intid, is_edge) };
     }
 
     fn set_enabled(&mut self, intid: u32, is_enabled: bool) {
         assert!(intid <= Self::MAX_PPI);
+
         unsafe { self.0.set_enabled(Self::BASE_OFFSET, intid, is_enabled) };
     }
 }

@@ -1,3 +1,5 @@
+//! VMCS execution controls and host/guest state synchronization.
+
 use ::x86::{
     msr, segmentation,
     vmx::vmcs::{
@@ -25,6 +27,7 @@ use crate::{
     prelude::*,
 };
 
+/// A VMCS control field and its capability requirements.
 pub(super) struct VmcsControl {
     field: u32,
     msr: u32,
@@ -35,6 +38,7 @@ pub(super) struct VmcsControl {
 }
 
 impl VmcsControl {
+    /// Selects the capability MSR using the current CPU's `IA32_VMX_BASIC` value.
     pub(super) fn capability_msr(&self, vmx_basic: u64) -> u32 {
         if vmx_basic & (1 << 55) != 0 {
             self.msr_with_true_controls
@@ -114,6 +118,7 @@ macro_rules! read_vmcs_fields {
 }
 
 impl CurrentVmcs<'_> {
+    /// Initializes the fixed execution controls.
     pub(super) fn setup_fixed_controls(&self, _vmx_guard: &VmxGuard) -> Result<()> {
         let vmx_basic = unsafe { msr::rdmsr(msr::IA32_VMX_BASIC) };
 
@@ -138,6 +143,12 @@ impl CurrentVmcs<'_> {
         }
     }
 
+    /// Synchronizes the guest execution mode and EPT pointer.
+    ///
+    /// # Safety
+    ///
+    /// `eptp` must identify a valid EPT that isolates guest memory from the host.
+    /// Page-table and backing frames must remain alive while the guest can access them.
     pub(super) unsafe fn sync_controls(&self, eptp: u64, guest_efer: u64) -> Result<()> {
         const EPT_MEM_TYPE_WB: u64 = 6;
         const EPT_PAGE_WALK_LENGTH_4_LEVELS: u64 = 3 << 3;
@@ -158,6 +169,7 @@ impl CurrentVmcs<'_> {
         }
     }
 
+    /// Initializes host state that is stable on this CPU.
     pub(super) fn setup_fixed_host(&self) -> Result<()> {
         use x86_64::registers::segmentation::{GS, Segment64};
 
@@ -182,6 +194,7 @@ impl CurrentVmcs<'_> {
         }
     }
 
+    /// Refreshes host state for a VM exit on the current task.
     pub(super) fn sync_host(&self) -> Result<()> {
         use x86_64::registers::segmentation::{FS, Segment64};
 
@@ -201,6 +214,7 @@ impl CurrentVmcs<'_> {
         }
     }
 
+    /// Loads guest architectural state into the VMCS.
     pub(super) fn load_guest_context(
         &self,
         arch: &VcpuArchState,
@@ -249,12 +263,14 @@ impl CurrentVmcs<'_> {
                 [guest::IA32_SYSENTER_ESP, arch.msrs.sysenter_esp],
                 [guest::IA32_SYSENTER_EIP, arch.msrs.sysenter_eip],
 
+
                 [guest::ACTIVITY_STATE, 0],
                 [guest::LINK_PTR_FULL, usize::MAX],
             )
         }
     }
 
+    /// Saves VMCS guest state into the architectural context.
     pub(super) fn save_guest_context(&self, arch: &mut VcpuArchState) -> Result<()> {
         let (sregs, regs) = (&mut arch.sregs, &mut arch.regs);
 
@@ -282,6 +298,12 @@ impl CurrentVmcs<'_> {
         Ok(())
     }
 
+    /// Writes a guest segment's VMCS fields.
+    ///
+    /// # Safety
+    ///
+    /// The caller should supply guest segment fields, which
+    /// do not affect the host state restored on VM exit.
     unsafe fn write_segment(
         &self,
         segment: &VcpuSegment,
@@ -297,6 +319,7 @@ impl CurrentVmcs<'_> {
         }
     }
 
+    /// Reads a guest segment's VMCS fields.
     fn read_segment(&self, [selector, base, limit, rights]: [u32; 4]) -> Result<VcpuSegment> {
         let mut segment = VcpuSegment::default();
         let access: usize;
@@ -347,6 +370,7 @@ fn fix_guest_cr0(cr0: u64, _vmx_guard: &VmxGuard, _irq_guard: &DisabledLocalIrqG
             msr::rdmsr(msr::IA32_VMX_CR0_FIXED1),
         )
     };
+
     let fixed0 = fixed0 & !(Cr0Flags::PROTECTED_MODE_ENABLE | Cr0Flags::PAGING).bits();
     (cr0 | fixed0) & fixed1
 }

@@ -7,6 +7,14 @@ use crate::{
     mm::HasPaddr,
 };
 
+/// I/O Advanced Programmable Interrupt Controller (APIC).
+///
+/// It is used to distribute external interrupts in a more advanced manner than that of the
+/// standard 8259 PIC. With the I/O APIC, interrupts can be distributed to physical or logical
+/// (clusters of) processors and can be prioritized. Each I/O APIC typically handles 24 external
+/// interrupts.
+///
+/// See also <https://wiki.osdev.org/IOAPIC>.
 pub(super) struct IoApic {
     access: IoApicAccess,
     interrupt_base: u32,
@@ -14,6 +22,9 @@ pub(super) struct IoApic {
 }
 
 impl IoApic {
+    /// # Safety
+    ///
+    /// The caller must ensure that the base address is a valid I/O APIC base address.
     pub(super) unsafe fn new(
         base_address: usize,
         base_interrupt: u32,
@@ -22,7 +33,9 @@ impl IoApic {
         let mut access = unsafe { IoApicAccess::new(base_address, io_mem_builder) };
 
         let reg_id = unsafe { access.read(IoApicAccess::IOAPICID) };
+
         let reg_ver = unsafe { access.read(IoApicAccess::IOAPICVER) };
+
         let reg_arb = unsafe { access.read(IoApicAccess::IOAPICARB) };
         if reg_id == u32::MAX && reg_ver == u32::MAX && reg_arb == u32::MAX {
             crate::warn!(
@@ -68,6 +81,15 @@ impl IoApic {
         Some(ioapic)
     }
 
+    /// Enables an entry.
+    ///
+    /// The caller should ensure that the IRQ line is not released before the entry is disabled.
+    /// Otherwise, it will be considered a logical error.
+    ///
+    /// # Errors
+    ///
+    /// This method will fail if the index exceeds the I/O APIC's maximum redirection entry, or if
+    /// the entry is in use.
     pub(super) fn enable(&mut self, index: u8, irq: &IrqLine) -> Result<()> {
         if index > self.max_redirection_entry {
             return Err(Error::InvalidArgs);
@@ -105,6 +127,12 @@ impl IoApic {
         Ok(())
     }
 
+    /// Disables an entry.
+    ///
+    /// # Errors
+    ///
+    /// This method will fail if the index exceeds the I/O APIC's maximum redirection entry, or if
+    /// the entry is not in use.
     pub(super) fn disable(&mut self, index: u8) -> Result<()> {
         if index > self.max_redirection_entry {
             return Err(Error::InvalidArgs);
@@ -119,14 +147,17 @@ impl IoApic {
         Ok(())
     }
 
+    /// Returns the base number of the global system interrupts controlled by the I/O APIC.
     pub(super) fn interrupt_base(&self) -> u32 {
         self.interrupt_base
     }
 
+    /// Returns the last number of the global system interrupts controlled by the I/O APIC.
     pub(super) fn interrupt_end(&self) -> u32 {
         self.interrupt_base + self.max_redirection_entry as u32
     }
 
+    /// Returns the base address of the I/O APIC.
     pub(super) fn address(&self) -> usize {
         self.access.io_mem.paddr()
     }
@@ -137,15 +168,29 @@ struct IoApicAccess {
 }
 
 impl IoApicAccess {
+    /// I/O Register Select (index).
     const MMIO_REGSEL: usize = 0x00;
+    /// I/O Window (data).
     const MMIO_WIN: usize = 0x10;
+    /// The size of the MMIO region.
+    ///
+    /// I/O APICs only have two MMIO registers, at offsets 0x00 and 0x10. Therefore, the size of
+    /// the MMIO region may be 0x20. However, we use a page here because (1) multiple I/O APICs
+    /// typically use different MMIO pages and (2) TD guests do not support sub-page MMIO regions.
     const MMIO_SIZE: usize = crate::mm::PAGE_SIZE;
 
+    /// IOAPIC ID.
     pub(self) const IOAPICID: u8 = 0x00;
+    /// IOAPIC Version.
     pub(self) const IOAPICVER: u8 = 0x01;
+    /// IOAPIC Arbitration.
     pub(self) const IOAPICARB: u8 = 0x02;
+    /// Redirection Table.
     pub(self) const IOREDTBL: u8 = 0x10;
 
+    /// # Safety
+    ///
+    /// The caller must ensure that the base address is a valid I/O APIC base address.
     pub(self) unsafe fn new(base_address: usize, io_mem_builder: &IoMemAllocatorBuilder) -> Self {
         let io_mem = io_mem_builder.reserve(
             base_address..(base_address + Self::MMIO_SIZE),

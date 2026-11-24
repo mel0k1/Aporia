@@ -10,6 +10,10 @@ use crate::{
     prelude::*,
 };
 
+/// Socket options for IP socket.
+///
+/// The raw definitions can be found at:
+/// <https://elixir.bootlin.com/linux/v6.0.19/source/include/uapi/linux/in.h#L94>.
 #[expect(non_camel_case_types)]
 #[expect(clippy::upper_case_acronyms)]
 #[repr(i32)]

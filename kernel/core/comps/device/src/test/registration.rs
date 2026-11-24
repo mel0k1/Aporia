@@ -1,3 +1,5 @@
+//! Device registration tests.
+
 use alloc::{boxed::Box, sync::Arc};
 use core::sync::atomic::{AtomicUsize, Ordering};
 

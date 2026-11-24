@@ -10,11 +10,19 @@ pub(crate) struct Uid(u32);
 
 const ROOT_UID: u32 = 0;
 
+/// The default overflow UID, which is the `nobody` user (`65534`).
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.15/source/include/linux/highuid.h#L41>.
 const DEFAULT_OVERFLOW_UID: u32 = 65534;
 
+/// The overflow UID, typically used to indicate that user mappings between namespaces fail.
+/// The value can be configured via `/proc/sys/kernel/overflowuid`.
 static OVERFLOW_UID: AtomicU32 = AtomicU32::new(DEFAULT_OVERFLOW_UID);
 
 impl Uid {
+    /// The invalid UID, typically used to indicate that no valid UID is found when returning to user space.
+    ///
+    /// Reference: <https://elixir.bootlin.com/linux/v6.15/source/include/linux/uidgid.h#L50>.
     pub(crate) const INVALID: Uid = Self::new(u32::MAX);
 
     pub(crate) const fn new(uid: u32) -> Self {

@@ -107,12 +107,15 @@ impl TryFrom<RawExfatDentry> for ExfatDentry {
             )),
 
             EXFAT_UNUSED => Ok(ExfatDentry::UnUsed),
+
             0x01..0x80 => Ok(ExfatDentry::Deleted(ExfatDeletedDentry::from_bytes(
                 dentry_bytes,
             ))),
+
             0x80..0xC0 => Ok(ExfatDentry::GenericPrimary(
                 ExfatGenericPrimaryDentry::from_bytes(dentry_bytes),
             )),
+
             0xC0..=0xFF => Ok(ExfatDentry::GenericSecondary(
                 ExfatGenericSecondaryDentry::from_bytes(dentry_bytes),
             )),
@@ -124,6 +127,7 @@ enum ExfatValidateDentryMode {
     Started,
     GetFile,
     GetStream,
+
     GetName(usize),
     GetBenignSecondary,
 }
@@ -184,13 +188,19 @@ pub(crate) trait Checksum {
     fn update_checksum(&mut self);
 }
 
+/// A set of dentries that collectively describe a file or folder.
+/// Root directory cannot be represented as an ordinal dentryset.
 pub(super) struct ExfatDentrySet {
     dentries: Vec<ExfatDentry>,
 }
 
 impl ExfatDentrySet {
+    /// Entry set indexes
+    /// File dentry index.
     const ES_IDX_FILE: usize = 0;
+    /// Stream dentry index.
     const ES_IDX_STREAM: usize = 1;
+    /// Name dentry index.
     #[expect(dead_code)]
     const ES_IDX_FIRST_FILENAME: usize = 2;
 
@@ -386,6 +396,7 @@ impl ExfatDentrySet {
         Ok(name)
     }
 
+    /// Name dentries are not permitted to modify. We should create a new dentry set for renaming.
     fn calculate_checksum(&self) -> u16 {
         const CHECKSUM_BYTES_RANGE: Range<usize> = 2..4;
         const EMPTY_RANGE: Range<usize> = 0..0;
@@ -419,8 +430,11 @@ impl Checksum for ExfatDentrySet {
 }
 
 pub(super) struct ExfatDentryIterator<'a> {
+    /// The dentry position in current inode.
     entry: u32,
+    /// The page cache of the iterated inode.
     page_cache: &'a PageCache,
+    /// Remaining size that can be iterated. If none, iterate through the whole cluster chain.
     size: Option<usize>,
 }
 
@@ -478,11 +492,15 @@ impl Iterator for ExfatDentryIterator<'_> {
     }
 }
 
+/// On-disk dentry formats
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
+
 pub(super) struct ExfatFileDentry {
     pub(super) dentry_type: u8,
+
     pub(super) num_secondary: u8,
+
     pub(super) checksum: u16,
 
     pub(super) attribute: u16,
@@ -509,6 +527,7 @@ pub(super) struct ExfatFileDentry {
 
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
+
 pub(super) struct ExfatStreamDentry {
     pub(super) dentry_type: u8,
     pub(super) flags: u8,
@@ -526,6 +545,7 @@ pub(crate) type UTF16Char = u16;
 
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
+
 pub(super) struct ExfatNameDentry {
     pub(super) dentry_type: u8,
     pub(super) flags: u8,
@@ -631,23 +651,15 @@ impl ExfatName {
             return Err(errno!(EINVAL, "not a valid char"));
         }
         self.0.push(value);
+
         Ok(())
     }
 
     fn is_valid_char(value: UTF16Char) -> bool {
-        match value {
-            0..0x20 => false,
-            0x22 => false,
-            0x2A => false,
-            0x2F => false,
-            0x3A => false,
-            0x3C => false,
-            0x3E => false,
-            0x3F => false,
-            0x5C => false,
-            0x7C => false,
-            _ => true,
-        }
+        !matches!(
+            value,
+            0..0x20 | 0x22 | 0x2A | 0x2F | 0x3A | 0x3C | 0x3E | 0x3F | 0x5C | 0x7C
+        )
     }
 
     pub(crate) fn checksum(&self) -> u16 {
@@ -665,6 +677,7 @@ impl ExfatName {
         _upcase_table: Arc<SpinLock<ExfatUpcaseTable>>,
     ) -> Result<Self> {
         let name = ExfatName(name.encode_utf16().collect());
+
         name.verify()?;
         Ok(name)
     }
@@ -698,6 +711,7 @@ impl ExfatName {
         {
             return Err(errno!(EINVAL, "invalid file name"));
         }
+
         Ok(())
     }
 }

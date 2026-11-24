@@ -1,15 +1,55 @@
+//! The implementation of CPU-local variables that have inner mutability.
+
 use core::{cell::UnsafeCell, fmt};
 
 use super::{__cpu_local_end, __cpu_local_start, single_instr::*};
 use crate::{arch, mm::PAGE_SIZE};
 
+/// Defines an inner-mutable CPU-local variable.
+///
+/// The accessors of the CPU-local variables are defined with [`CpuLocalCell`].
+///
+/// It should be noted that if the interrupts or preemption is enabled, two
+/// operations on the same CPU-local cell variable may access different objects
+/// since the task may live on different CPUs.
+///
+/// The alignment of the type of each variable must not exceed
+/// [`PAGE_SIZE`](crate::mm::PAGE_SIZE). Otherwise, the definition does not
+/// compile.
+///
+/// # Example
+///
+/// ```rust
+/// use ostd::cpu_local_cell;
+///
+/// cpu_local_cell! {
+///     static FOO: u32 = 1;
+///     pub static BAR: usize = 0;
+/// }
+///
+/// fn not_an_atomic_function() {
+///     BAR.store(1);
+///     // Note that the value of `BAR` here doesn't necessarily equal to `1`,
+///     // since the task may be preempted and moved to another CPU.
+///     // You can avoid this by disabling interrupts (and preemption, if needed).
+///     println!("BAR VAL: {:?}", BAR.load());
+///
+///     let _irq_guard = ostd::irq::disable_local();
+///     let first_foo = FOO.load();
+///     // No surprises here, the two accesses must result in the same value.
+///     assert_eq!(FOO.load(), first_foo);
+/// }
+/// ```
 #[macro_export]
 macro_rules! cpu_local_cell {
     ($( $(#[$attr:meta])* $vis:vis static $name:ident: $t:ty = $init:expr; )*) => {
         $(
+
             #[unsafe(link_section = ".cpu_local")]
             $(#[$attr])* $vis static $name: $crate::cpu::local::CpuLocalCell<$t> = {
                 let val = $init;
+
+
                 unsafe {
                     $crate::cpu::local::CpuLocalCell::__new(val)
                 }
@@ -18,21 +58,67 @@ macro_rules! cpu_local_cell {
     };
 }
 
+/// Inner mutable CPU-local objects.
+///
+/// CPU-local cell objects are only accessible from the current CPU. When
+/// accessing an underlying object using the same `CpuLocalCell` instance, the
+/// actually accessed object is always on the current CPU. So in a preemptive
+/// kernel task, the operated object may change if interrupts are enabled.
+///
+/// The inner mutability is provided by single instruction operations, and the
+/// CPU-local cell objects will not ever be shared between CPUs. So it is safe
+/// to modify the inner value without any locks.
+///
+/// You should only create the CPU-local cell object using the macro
+/// [`cpu_local_cell!`].
+///
+/// Please exercise extreme caution when using `CpuLocalCell`. In most cases,
+/// it is necessary to disable interrupts or preemption when using it to prevent
+/// the operated object from being changed, which can lead to race conditions.
+///
+/// For the difference between [`super::CpuLocal`] and [`CpuLocalCell`], see
+/// [`super`].
 pub struct CpuLocalCell<T: 'static>(UnsafeCell<T>);
 
 impl<T: 'static> CpuLocalCell<T> {
+    /// Initializes a CPU-local object.
+    ///
+    /// Please do not call this function directly. Instead, use the
+    /// `cpu_local!` macro.
+    ///
+    /// # Safety
+    ///
+    /// The caller should ensure that the object initialized by this
+    /// function resides in the `.cpu_local` section. Otherwise the
+    /// behavior is undefined.
     #[doc(hidden)]
     pub const unsafe fn __new(val: T) -> Self {
         const { assert!(align_of::<T>() <= PAGE_SIZE) };
         Self(UnsafeCell::new(val))
     }
 
+    /// Gets access to the underlying value through a raw pointer.
+    ///
+    /// This function calculates the virtual address of the CPU-local object
+    /// based on the CPU-local base address and the offset in the BSP.
+    ///
+    /// This method is safe, but using the returned pointer will be unsafe.
+    /// Specifically,
+    /// - Preemption should be disabled from the time this method is called
+    ///   to the time the pointer is used. Otherwise, the pointer may point
+    ///   to the variable on another CPU, making it difficult or impossible
+    ///   to determine if the data can be borrowed.
+    /// - If the variable can be used in interrupt handlers, borrowing the
+    ///   data should be done with interrupts disabled. Otherwise, more care
+    ///   must be taken to ensure that the borrowing rules are correctly
+    ///   enforced, since the interrupts may come asynchronously.
     pub fn as_mut_ptr(&'static self) -> *mut T {
         super::is_used::debug_set_true();
 
         let offset = {
             let bsp_va = self as *const _ as usize;
             let bsp_base = __cpu_local_start as *const () as usize;
+
             debug_assert!(bsp_va + size_of::<T>() <= __cpu_local_end as *const () as usize);
 
             bsp_va - bsp_base
@@ -55,8 +141,15 @@ impl<T: 'static> !Clone for CpuLocalCell<T> {}
 impl<T: 'static> !Send for CpuLocalCell<T> {}
 
 impl<T: 'static + SingleInstructionAddAssign<T>> CpuLocalCell<T> {
+    /// Adds a value to the per-CPU object in a single instruction.
+    ///
+    /// This operation wraps on overflow/underflow.
+    ///
+    /// Note that this memory operation will not be elided or reordered by the
+    /// compiler since it is a black-box.
     pub fn add_assign(&'static self, rhs: T) {
         let offset = self as *const _ as usize - __cpu_local_start as *const () as usize;
+
         unsafe {
             T::add_assign(offset, rhs);
         }
@@ -64,8 +157,15 @@ impl<T: 'static + SingleInstructionAddAssign<T>> CpuLocalCell<T> {
 }
 
 impl<T: 'static + SingleInstructionSubAssign<T>> CpuLocalCell<T> {
+    /// Subtracts a value to the per-CPU object in a single instruction.
+    ///
+    /// This operation wraps on overflow/underflow.
+    ///
+    /// Note that this memory operation will not be elided or reordered by the
+    /// compiler since it is a black-box.
     pub fn sub_assign(&'static self, rhs: T) {
         let offset = self as *const _ as usize - __cpu_local_start as *const () as usize;
+
         unsafe {
             T::sub_assign(offset, rhs);
         }
@@ -73,8 +173,13 @@ impl<T: 'static + SingleInstructionSubAssign<T>> CpuLocalCell<T> {
 }
 
 impl<T: 'static + SingleInstructionBitAndAssign<T>> CpuLocalCell<T> {
+    /// Bitwise ANDs a value to the per-CPU object in a single instruction.
+    ///
+    /// Note that this memory operation will not be elided or reordered by the
+    /// compiler since it is a black-box.
     pub fn bitand_assign(&'static self, rhs: T) {
         let offset = self as *const _ as usize - __cpu_local_start as *const () as usize;
+
         unsafe {
             T::bitand_assign(offset, rhs);
         }
@@ -82,8 +187,13 @@ impl<T: 'static + SingleInstructionBitAndAssign<T>> CpuLocalCell<T> {
 }
 
 impl<T: 'static + SingleInstructionBitOrAssign<T>> CpuLocalCell<T> {
+    /// Bitwise ORs a value to the per-CPU object in a single instruction.
+    ///
+    /// Note that this memory operation will not be elided or reordered by the
+    /// compiler since it is a black-box.
     pub fn bitor_assign(&'static self, rhs: T) {
         let offset = self as *const _ as usize - __cpu_local_start as *const () as usize;
+
         unsafe {
             T::bitor_assign(offset, rhs);
         }
@@ -91,8 +201,13 @@ impl<T: 'static + SingleInstructionBitOrAssign<T>> CpuLocalCell<T> {
 }
 
 impl<T: 'static + SingleInstructionBitXorAssign<T>> CpuLocalCell<T> {
+    /// Bitwise XORs a value to the per-CPU object in a single instruction.
+    ///
+    /// Note that this memory operation will not be elided or reordered by the
+    /// compiler since it is a black-box.
     pub fn bitxor_assign(&'static self, rhs: T) {
         let offset = self as *const _ as usize - __cpu_local_start as *const () as usize;
+
         unsafe {
             T::bitxor_assign(offset, rhs);
         }
@@ -100,33 +215,51 @@ impl<T: 'static + SingleInstructionBitXorAssign<T>> CpuLocalCell<T> {
 }
 
 impl<T: 'static + SingleInstructionLoad> CpuLocalCell<T> {
+    /// Gets the value of the per-CPU object in a single instruction.
+    ///
+    /// Note that this memory operation will not be elided or reordered by the
+    /// compiler since it is a black-box.
     pub fn load(&'static self) -> T {
         let offset = self as *const _ as usize - __cpu_local_start as *const () as usize;
+
         unsafe { T::load(offset) }
     }
 }
 
 impl<T: 'static + SingleInstructionStore> CpuLocalCell<T> {
+    /// Writes a value to the per-CPU object in a single instruction.
+    ///
+    /// Note that this memory operation will not be elided or reordered by the
+    /// compiler since it is a black-box.
     pub fn store(&'static self, val: T) {
         let offset = self as *const _ as usize - __cpu_local_start as *const () as usize;
+
         unsafe {
             T::store(offset, val);
         }
     }
 }
 
+/// A raw pointer that can be stored in a [`CpuLocalCell`].
+///
+/// Raw pointers are not `Send`, so they cannot be the inner value of a
+/// [`CpuLocalCell`] directly. This wrapper retains their single-instruction
+/// load and store operations.
 #[repr(transparent)]
 pub(crate) struct CpuLocalPtr<T>(*const T);
 
 impl<T> CpuLocalPtr<T> {
+    /// Creates a new instance from a raw pointer.
     pub(crate) const fn new(ptr: *const T) -> Self {
         Self(ptr)
     }
 
+    /// Creates a new instance with a null pointer.
     pub(crate) const fn null() -> Self {
         Self(core::ptr::null())
     }
 
+    /// Returns the raw pointer.
     pub(crate) const fn as_ptr(self) -> *const T {
         self.0
     }

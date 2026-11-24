@@ -1,6 +1,17 @@
+
+
+//! The test suite for system core applications on Asterinas NixOS.
+//!
+//! See `test/nixos/README.md#documentation-maintenance` for sync requirements
+//! between this test suite and the corresponding "Verified Usage" book section.
+
 use nixos_test_framework::*;
 
 nixos_test_main!();
+
+
+
+
 
 #[nixos_test]
 fn bash_run_script(nixos_shell: &mut Session) -> Result<(), Error> {
@@ -44,6 +55,10 @@ fn zsh_run_script(nixos_shell: &mut Session) -> Result<(), Error> {
     Ok(())
 }
 
+
+
+
+
 #[nixos_test]
 fn busybox_run_applets(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd_and_expect("busybox | head -1", "BusyBox")?;
@@ -66,6 +81,10 @@ fn systemctl_list_units(nixos_shell: &mut Session) -> Result<(), Error> {
     )?;
     Ok(())
 }
+
+
+
+
 
 #[nixos_test]
 fn fastfetch_show_system_info(nixos_shell: &mut Session) -> Result<(), Error> {
@@ -109,6 +128,10 @@ fn procps_uptime(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd_and_expect("uptime", "load average")?;
     Ok(())
 }
+
+
+
+
 
 #[nixos_test]
 fn coreutils_b2sum(nixos_shell: &mut Session) -> Result<(), Error> {
@@ -267,6 +290,10 @@ fn coreutils_sync(nixos_shell: &mut Session) -> Result<(), Error> {
     Ok(())
 }
 
+
+
+
+
 #[nixos_test]
 fn diff_files(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd("echo 'diff' > /tmp/diff.txt")?;
@@ -279,6 +306,10 @@ fn diff_files(nixos_shell: &mut Session) -> Result<(), Error> {
     )?;
     Ok(())
 }
+
+
+
+
 
 #[nixos_test]
 fn findutils_find(nixos_shell: &mut Session) -> Result<(), Error> {
@@ -313,6 +344,10 @@ fn findutils_xargs(nixos_shell: &mut Session) -> Result<(), Error> {
     Ok(())
 }
 
+
+
+
+
 #[nixos_test]
 fn grep_search_text(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd("mkdir -p /tmp/grep_dir")?;
@@ -329,6 +364,10 @@ fn grep_search_text(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd_and_expect("grep -E 'apple|cherry' /tmp/grep_test.txt", "apple")?;
     Ok(())
 }
+
+
+
+
 
 #[nixos_test]
 fn hostname_configure_names(nixos_shell: &mut Session) -> Result<(), Error> {
@@ -347,6 +386,10 @@ fn hostname_configure_names(nixos_shell: &mut Session) -> Result<(), Error> {
     result
 }
 
+
+
+
+
 #[nixos_test]
 fn less_display_file(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd("echo 'less' > /tmp/less_test.txt")?;
@@ -354,11 +397,19 @@ fn less_display_file(nixos_shell: &mut Session) -> Result<(), Error> {
     Ok(())
 }
 
+
+
+
+
 #[nixos_test]
 fn man_show_manual(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd_and_expect("man -P cat ls", "list directory contents")?;
     Ok(())
 }
+
+
+
+
 
 #[nixos_test]
 fn util_linux_uname(nixos_shell: &mut Session) -> Result<(), Error> {
@@ -403,6 +454,10 @@ fn util_linux_whereis(nixos_shell: &mut Session) -> Result<(), Error> {
     nixos_shell.run_cmd_and_expect("whereis ls", "/bin/ls")?;
     Ok(())
 }
+
+
+
+
 
 #[nixos_test]
 fn which_locate_binary(nixos_shell: &mut Session) -> Result<(), Error> {

@@ -9,6 +9,7 @@ use ostd::{
     sync::{LocalIrqDisabled, SpinLock},
 };
 
+/// A UART console.
 pub(super) struct UartConsole<U: Uart> {
     uart: U,
     callbacks: SpinLock<Vec<&'static ConsoleCallback>, LocalIrqDisabled>,
@@ -21,6 +22,7 @@ impl<U: Uart> Debug for UartConsole<U> {
 }
 
 impl<U: Uart> UartConsole<U> {
+    /// Creates a new UART console.
     pub(super) fn new(uart: U) -> Arc<Self> {
         Arc::new(Self {
             uart,
@@ -28,6 +30,7 @@ impl<U: Uart> UartConsole<U> {
         })
     }
 
+    /// Returns a reference to the UART instance.
     #[cfg_attr(not(target_arch = "riscv64"), expect(dead_code))]
     pub(super) fn uart(&self) -> &U {
         &self.uart
@@ -64,18 +67,28 @@ impl<U: Uart + Send + Sync + 'static> AnyConsoleDevice for UartConsole<U> {
     }
 }
 
+/// A trait that abstracts UART devices.
 pub(super) trait Uart {
+    /// Sends a sequence of bytes to UART.
     fn send(&self, buf: &[u8]);
 
+    /// Receives a sequence of bytes from UART and returns the number of received bytes.
     #[must_use]
     fn recv(&self, buf: &mut [u8]) -> usize;
 
+    /// Flushes the received buffer.
+    ///
+    /// This method should be called after setting up the IRQ handlers to ensure new received data
+    /// will trigger IRQs.
     fn flush(&self);
 }
 
+/// A trait that abstracts byte-wise UART device operations.
 pub(super) trait UartMut {
+    /// Sends one byte to UART.
     fn send_byte(&mut self, byte: u8);
 
+    /// Receives one byte from UART.
     fn recv_byte(&mut self) -> Option<u8>;
 }
 

@@ -7,6 +7,7 @@ use syn::{
     punctuated::Punctuated, spanned::Spanned,
 };
 
+/// Checks if the struct has a `#[repr(C)]` attribute (possibly with other `repr` options)
 fn has_repr_c(attrs: &[Attribute]) -> bool {
     attrs.iter().any(|attr| {
         if attr.path().is_ident("repr") {
@@ -25,6 +26,7 @@ fn has_repr_c(attrs: &[Attribute]) -> bool {
     })
 }
 
+/// Extracts all `#[repr(...)]` attributes from the given attributes
 fn extract_repr_attrs(attrs: &[Attribute]) -> Vec<&Attribute> {
     attrs
         .iter()
@@ -32,6 +34,56 @@ fn extract_repr_attrs(attrs: &[Attribute]) -> Vec<&Attribute> {
         .collect()
 }
 
+/// Procedural macro to automatically add padding fields to a `#[repr(C)]` struct.
+///
+/// This macro generates two structs:
+/// 1. A reference struct (prefixed and suffixed with `__`) containing the original fields without padding.
+/// 2. A padded struct (using the original name) with `__padN` padding fields after each original field.
+///
+/// # Padding Calculation Rules
+///
+/// - For non-last fields: padding size = next field's offset - current field's offset - current field's size.
+/// - For the last field: padding size = struct total size - current field's offset - current field's size.
+///
+/// # Requirements
+///
+/// - The struct must have a `#[repr(C)]` attribute.
+/// - The struct must have named fields.
+///
+/// # Examples
+///
+/// ```rust
+/// use padding_struct::padding_struct;
+///
+/// #[repr(C)]
+/// #[padding_struct]
+/// struct MyStruct {
+///     a: u8,
+///     b: u32,
+/// }
+/// ```
+///
+/// This generates code equivalent to:
+///
+/// ```rust
+/// use core::mem::offset_of;
+///
+/// #[repr(C)]
+/// struct __MyStruct__ {
+///     a: u8,
+///     b: u32,
+/// }
+///
+/// #[repr(C)]
+/// struct MyStruct {
+///     a: u8,
+///     pub __pad1:
+///         [u8; const { offset_of!(__MyStruct__, b) - offset_of!(__MyStruct__, a) - size_of::<u8>() }],
+///     b: u32,
+///     pub __pad2:
+///         [u8; const { size_of::<__MyStruct__>() - offset_of!(__MyStruct__, b) - size_of::<u32>() }],
+/// }
+/// ```
 #[proc_macro_attribute]
 pub fn padding_struct(args: TokenStream, input: TokenStream) -> TokenStream {
     if !args.is_empty() {
@@ -124,8 +176,10 @@ pub fn padding_struct(args: TokenStream, input: TokenStream) -> TokenStream {
 
     let size_align_check = quote! {
         const _: () = {
+
             const _: [(); ::core::mem::size_of::<#ref_name #ty_generics>()] =
                 [(); ::core::mem::size_of::<#name #ty_generics>()];
+
 
             const _: [(); ::core::mem::align_of::<#ref_name #ty_generics>()] =
                 [(); ::core::mem::align_of::<#name #ty_generics>()];

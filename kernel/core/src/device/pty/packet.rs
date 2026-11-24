@@ -2,6 +2,9 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::prelude::*;
 
+/// Control states related to packet mode.
+///
+/// Reference: <https://man7.org/linux/man-pages/man2/TIOCPKT.2const.html>.
 pub(super) struct PacketCtrl {
     mode: AtomicBool,
     status: SpinLock<PacketStatus>,
@@ -15,10 +18,12 @@ impl PacketCtrl {
         }
     }
 
+    /// Returns whether packet mode is enabled.
     pub(super) fn mode(&self) -> bool {
         self.mode.load(Ordering::Relaxed)
     }
 
+    /// Sets whether packet mode is enabled.
     pub(super) fn set_mode(&self, mode: bool) {
         let mut status = self.status.lock();
 
@@ -30,6 +35,7 @@ impl PacketCtrl {
         }
     }
 
+    /// Sets packet status if packet mode is enabled.
     pub(super) fn set_status(&self, set_packet_status: impl FnOnce(&mut PacketStatus)) -> bool {
         if !self.mode.load(Ordering::Relaxed) {
             return false;
@@ -40,6 +46,7 @@ impl PacketCtrl {
         true
     }
 
+    /// Checks if packet mode is enabled and there is pending packet status.
     pub(super) fn has_status(&self) -> bool {
         if !self.mode.load(Ordering::Relaxed) {
             return false;
@@ -48,6 +55,7 @@ impl PacketCtrl {
         !self.status.lock().is_empty()
     }
 
+    /// Takes out packet status if packet mode is enabled.
     pub(super) fn take_status(&self) -> Option<PacketStatus> {
         if !self.mode.load(Ordering::Relaxed) {
             return None;
@@ -61,6 +69,7 @@ impl PacketCtrl {
 }
 
 bitflags! {
+    /// Reference: <https://elixir.bootlin.com/linux/v6.18/source/include/uapi/asm-generic/ioctls.h#L110>.
     #[derive(Clone, Copy, Debug)]
     pub(super) struct PacketStatus: u8 {
         const DATA       = 0;

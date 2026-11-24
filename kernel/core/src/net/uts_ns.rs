@@ -9,6 +9,7 @@ use crate::{
     security::lsm::hooks as lsm_hooks,
 };
 
+/// The UTS namespace.
 pub(crate) struct UtsNamespace {
     uts_name: RwMutex<UtsName>,
     owner: Arc<UserNamespace>,
@@ -16,16 +17,19 @@ pub(crate) struct UtsNamespace {
 }
 
 impl UtsNamespace {
+    /// Returns a reference to the singleton initial UTS namespace.
     pub(crate) fn get_init_singleton() -> &'static Arc<UtsNamespace> {
         static INIT: Once<Arc<UtsNamespace>> = Once::new();
 
         INIT.call_once(|| {
             let uts_name = UtsName {
                 sysname: UtsField::from_bytes_until_nul(UtsName::SYSNAME.as_bytes()),
+
                 nodename: UtsField::from_bytes_until_nul(b"(none)"),
                 release: UtsField::from_bytes_until_nul(UtsName::RELEASE.as_bytes()),
                 version: UtsField::from_bytes_until_nul(UtsName::VERSION.as_bytes()),
                 machine: UtsField::from_bytes_until_nul(UtsName::MACHINE.as_bytes()),
+
                 domainname: UtsField::from_bytes_until_nul(b"(none)"),
             };
 
@@ -43,6 +47,7 @@ impl UtsNamespace {
         })
     }
 
+    /// Clones a new UTS namespace from `self`.
     pub(crate) fn new_clone(
         &self,
         owner: Arc<UserNamespace>,
@@ -56,10 +61,15 @@ impl UtsNamespace {
         Ok(Self::new(*self.uts_name.read(), owner))
     }
 
+    /// Returns a read-only lock guard for accessing the UTS name.
     pub(crate) fn uts_name(&self) -> RwMutexReadGuard<'_, UtsName> {
         self.uts_name.read()
     }
 
+    /// Sets a new hostname for the UTS namespace.
+    ///
+    /// This method will fail with `EPERM` if the POSIX thread does not have the
+    /// SYS_ADMIN capability in the owner user namespace.
     pub(crate) fn set_hostname(
         &self,
         new_host_name: UtsField,
@@ -70,6 +80,10 @@ impl UtsNamespace {
         Ok(())
     }
 
+    /// Sets a new domain name for the UTS namespace.
+    ///
+    /// This method will fail with `EPERM` if the POSIX thread does not have the
+    /// SYS_ADMIN capability in the owner user namespace.
     pub(crate) fn set_domainname(
         &self,
         new_domain_name: UtsField,
@@ -111,10 +125,13 @@ pub(crate) struct UtsName {
 }
 
 impl UtsName {
+    /// The system name.
     pub(crate) const SYSNAME: &str = "Linux";
 
+    /// The release name.
     pub(crate) const RELEASE: &str = "5.13.0";
 
+    /// The version name.
     pub(crate) const VERSION: &str = {
         const BUILD_TIMESTAMP: &str = if let Some(timestamp) = option_env!("ASTER_BUILD_TIMESTAMP")
         {
@@ -133,6 +150,7 @@ impl UtsName {
         VERSION
     };
 
+    /// The machine name.
     pub(crate) const MACHINE: &str = cfg_select! {
         target_arch = "x86_64" => "x86_64",
         target_arch = "riscv64" => "riscv64",
@@ -141,17 +159,21 @@ impl UtsName {
         _ => compile_error!("unsupported target"),
     };
 
+    /// Returns the hostname.
     pub(crate) fn nodename(&self) -> &UtsField {
         &self.nodename
     }
 
+    /// Returns the NIS domain name.
     pub(crate) fn domainname(&self) -> &UtsField {
         &self.domainname
     }
 }
 
+/// The storage byte length of a UTS field, including the trailing nul.
 const UTS_FIELD_LEN: usize = 65;
 
+/// A nul-terminated UTS field.
 pub(crate) type UtsField = FixedCStr<UTS_FIELD_LEN>;
 
 impl NsCommonOps for UtsNamespace {

@@ -1,10 +1,14 @@
+//! Type level bools
+
 pub use core::ops::{BitAnd as And, BitOr as Or, Not};
 use core::unimplemented;
 
 pub trait Bool {}
 
+/// Type-level "true".
 pub struct True;
 
+/// Type-level "false".
 pub struct False;
 
 impl Bool for True {}

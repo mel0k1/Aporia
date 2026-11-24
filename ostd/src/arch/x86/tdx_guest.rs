@@ -7,6 +7,20 @@ use tdx_guest::{
 use super::trap::TrapFrame;
 use crate::{mm::PAGE_SIZE, prelude::Paddr};
 
+/// Converts physical pages to Intel TDX shared pages.
+///
+/// It invokes the [`map_gpa`] TDVMCALL to convert those pages into Intel TDX
+/// shared pages. Due to the conversion, any existing data on the pages will
+/// be lost.
+///
+/// # Safety
+///
+/// The caller must ensure that:
+///  - The provided physical address is page aligned.
+///  - The provided physical address range is in bounds, i.e., it should fall
+///    within the maximum Guest Physical Address (GPA) limit.
+///  - All of the physical pages are untyped memory. Therefore, converting and
+///    erasing the data will not cause memory safety issues.
 pub(crate) unsafe fn unprotect_gpa_tdvm_call(
     gpa: Paddr,
     size: usize,
@@ -17,6 +31,20 @@ pub(crate) unsafe fn unprotect_gpa_tdvm_call(
     unsafe { convert_gpa_range(gpa as u64, (gpa + size) as u64, TargetPageState::Shared) }
 }
 
+/// Converts physical pages to Intel TDX private pages.
+///
+/// It invokes the [`map_gpa`] TDVMCALL and the [`accept_page`] TDCALL to
+/// convert those pages into Intel TDX private pages. Due to the conversion,
+/// any existing data on the pages will be zeroed.
+///
+/// # Safety
+///
+/// The caller must ensure that:
+///  - The provided physical address is page aligned.
+///  - The provided physical address range is in bounds, i.e., it should fall
+///    within the maximum Guest Physical Address (GPA) limit.
+///  - All of the physical pages are untyped memory. Therefore, converting and
+///    erasing the data will not cause memory safety issues.
 pub(crate) unsafe fn protect_gpa_tdvm_call(
     gpa: Paddr,
     size: usize,
@@ -59,6 +87,10 @@ impl TargetPageState {
     }
 }
 
+/// # Safety
+///
+/// The caller must ensure that `start_gpa..end_gpa` represents a valid GPA
+/// region that can be safely converted to `target_state`.
 unsafe fn convert_gpa_range(
     start_gpa: u64,
     end_gpa: u64,

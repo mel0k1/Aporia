@@ -1,3 +1,11 @@
+//! The overlay filesystem object and its VFS-facing superblock surface.
+//!
+//! [`OverlayFs`] is the per-mount overlay filesystem object. Its [`FileSystem`]
+//! impl forwards the superblock surface to the underlying real filesystem.
+//!
+//! The `overlay` registration and the mount requests answered under it live in
+//! [`fs_type`].
+
 mod fs_type;
 pub(super) mod mount;
 
@@ -22,6 +30,7 @@ use crate::{
     prelude::*,
 };
 
+/// Holds one mount's overlay state: what construction settled and what every VFS entry reads.
 pub(super) struct OverlayFs {
     layer_stack: LayerStack,
     policy: MountPolicy,
@@ -34,6 +43,7 @@ pub(super) struct OverlayFs {
 }
 
 impl OverlayFs {
+    /// Returns the upper and workdir this mount holds in use; only a mount given both has one.
     pub(super) fn upper_workdir_inuse(&self) -> &UpperWorkdirInuse {
         self.upper_workdir_inuse
             .as_ref()
@@ -66,6 +76,7 @@ impl FileSystem for OverlayFs {
         OVERLAY_FS_NAME
     }
 
+    /// Syncs the upper layer; a mount without an upper has nothing to sync.
     fn sync(&self) -> Result<()> {
         match self.layer_stack.upper_layer().ok() {
             Some(upper) => upper.fs().sync(),
@@ -89,6 +100,7 @@ impl FileSystem for OverlayFs {
             })
             .collect();
         let facts = RealObjectStack::new(upper, lowers);
+
         self.project_inode(facts)
             .expect("the mount root is a directory, so its projection reads no hard-link count")
     }

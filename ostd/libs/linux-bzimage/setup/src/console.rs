@@ -1,3 +1,5 @@
+//! A serial console.
+
 use core::fmt::{self, Write};
 
 use uart_16550::SerialPort;
@@ -26,6 +28,7 @@ impl Write for Stdout {
 
 static STDOUT: Mutex<Option<Stdout>> = Mutex::new(None);
 
+/// Prints a format string and its arguments to the standard output.
 pub(crate) fn print_fmt(args: fmt::Arguments) {
     let mut stdout = STDOUT.lock();
 
@@ -39,6 +42,7 @@ pub(crate) fn print_fmt(args: fmt::Arguments) {
     *stdout = Some(inner);
 }
 
+/// Prints to the standard output, with a newline.
 #[macro_export]
 macro_rules! println {
     ($fmt:literal $($arg:tt)*) => {

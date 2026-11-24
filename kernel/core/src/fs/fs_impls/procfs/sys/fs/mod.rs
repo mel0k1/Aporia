@@ -16,6 +16,7 @@ use crate::{
 
 mod nr_open;
 
+/// Represents the inode at `/proc/sys/fs`.
 pub(super) struct FsDirOps;
 
 impl FsDirOps {

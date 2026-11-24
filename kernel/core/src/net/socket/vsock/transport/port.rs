@@ -14,6 +14,7 @@ use crate::{
     process::signal::Pollee,
 };
 
+/// An owned lease on a bound local vsock port; dropping the value releases the lease.
 #[derive(Debug)]
 pub(in vsock) struct BoundPort {
     port: u32,
@@ -48,6 +49,7 @@ impl PortTable {
 }
 
 impl BoundPort {
+    /// Binds exclusively to `addr` and returns the resulting port lease.
     pub(in vsock) fn new_exclusive(addr: VsockSocketAddr) -> Result<Self> {
         let vsock_space = vsock_space()?;
 
@@ -69,6 +71,7 @@ impl BoundPort {
         Ok(Self { port: addr.port })
     }
 
+    /// Allocates and returns a fresh ephemeral port lease.
     pub(in vsock) fn new_ephemeral() -> Result<Self> {
         let vsock_space = vsock_space()?;
         let mut ports = vsock_space.lock_ports();
@@ -102,6 +105,10 @@ impl BoundPort {
         }
     }
 
+    /// Starts a connection attempt to `remote_addr`.
+    ///
+    /// On success, ownership of the lease moves into the returned `Connection`. On failure, the
+    /// error is returned together with the original lease.
     pub(in vsock) fn connect(
         self,
         remote_addr: VsockSocketAddr,
@@ -111,6 +118,10 @@ impl BoundPort {
         vsock_space.new_connection(self, remote_addr, pollee)
     }
 
+    /// Starts listening on the leased port.
+    ///
+    /// On success, ownership of the lease moves into the returned `Listener`. On failure, the
+    /// error is returned together with the original lease.
     pub(in vsock) fn listen(
         self,
         backlog: usize,
@@ -120,6 +131,7 @@ impl BoundPort {
         vsock_space.new_listener(self, backlog, pollee)
     }
 
+    /// Returns the local address described by this lease.
     pub(in vsock) fn local_addr(&self) -> VsockSocketAddr {
         VsockSocketAddr {
             cid: self.vsock_space().guest_cid() as u32,

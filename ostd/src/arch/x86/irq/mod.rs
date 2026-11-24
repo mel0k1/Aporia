@@ -1,3 +1,5 @@
+//! Interrupts.
+
 macro_rules! __log_prefix {
     () => {
         "irq: "
@@ -21,6 +23,12 @@ use crate::arch::{cpu, kernel};
 pub(crate) const IRQ_NUM_MIN: u8 = 32;
 pub(crate) const IRQ_NUM_MAX: u8 = 255;
 
+/// An IRQ line with additional information that helps acknowledge the interrupt
+/// on hardware.
+///
+/// On x86-64, it's the hardware (i.e., the I/O APIC and local APIC) that routes
+/// the interrupt to the IRQ line. Therefore, the software does not need to
+/// maintain additional information about the original hardware interrupt.
 pub(crate) struct HwIrqLine {
     irq_num: u8,
 }
@@ -38,6 +46,7 @@ impl HwIrqLine {
         debug_assert!(!cpu::context::CpuException::is_cpu_exception(
             self.irq_num as usize
         ));
+
         kernel::apic::get_or_init(&crate::task::disable_preempt() as _).eoi();
     }
 }

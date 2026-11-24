@@ -10,17 +10,21 @@ use crate::{
     vm::vmar::Vmar,
 };
 
+/// The inner data of a kernel thread.
 pub(super) struct KernelThread {
     vmar: Option<Arc<Vmar>>,
 }
 
 impl KernelThread {
+    /// Returns the VMAR associated with the kernel thread.
     pub(super) fn vmar(&self) -> Option<&Arc<Vmar>> {
         self.vmar.as_ref()
     }
 }
 
+/// A trait to provide the `as_kernel_thread` method for tasks and threads.
 pub(super) trait AsKernelThread {
+    /// Returns the associated [`KernelThread`].
     fn as_kernel_thread(&self) -> Option<&KernelThread>;
 }
 
@@ -36,6 +40,7 @@ impl AsKernelThread for Task {
     }
 }
 
+/// Options to create or spawn a new kernel thread.
 pub(crate) struct ThreadOptions {
     func: Option<Box<dyn FnOnce() + Send>>,
     cpu_affinity: CpuSet,
@@ -44,6 +49,7 @@ pub(crate) struct ThreadOptions {
 }
 
 impl ThreadOptions {
+    /// Creates the thread options with the thread function.
     pub(crate) fn new<F>(func: F) -> Self
     where
         F: FnOnce() + Send + 'static,
@@ -58,16 +64,27 @@ impl ThreadOptions {
         }
     }
 
+    /// Sets the CPU affinity of the new thread.
     pub(crate) fn cpu_affinity(mut self, cpu_affinity: CpuSet) -> Self {
         self.cpu_affinity = cpu_affinity;
         self
     }
 
+    /// Sets the scheduling policy.
     pub(crate) fn sched_policy(mut self, sched_policy: SchedPolicy) -> Self {
         self.sched_policy = sched_policy;
         self
     }
 
+    /// Associates a VMAR with the kernel thread.
+    ///
+    /// The VMAR is activated whenever the thread is scheduled, allowing fallible userspace memory
+    /// operations to access it directly and handle page faults against it. The association cannot
+    /// be changed after the thread is built.
+    ///
+    /// The `Arc` keeps the VMAR object alive, but does not prevent its mappings from being cleared
+    /// after the last [`VmarHandle`](crate::vm::vmar::VmarHandle) is dropped. A caller that needs
+    /// the mappings to outlive their userspace owner must hold a separate owner-memory lease.
     #[cfg_attr(not(ktest), expect(dead_code))]
     pub(crate) fn vmar(mut self, vmar: Arc<Vmar>) -> Self {
         self.vmar = Some(vmar);
@@ -76,10 +93,12 @@ impl ThreadOptions {
 }
 
 impl ThreadOptions {
+    /// Builds a new kernel thread without running it immediately.
     pub(crate) fn build(mut self) -> Arc<Task> {
         let task_fn = self.func.take().unwrap();
         let thread_fn = move || {
             let _ = oops::catch_panics_as_oops(task_fn);
+
             current_thread!().exit();
         };
 
@@ -100,6 +119,7 @@ impl ThreadOptions {
         })
     }
 
+    /// Builds a new kernel thread and runs it immediately.
     #[track_caller]
     pub(crate) fn spawn(self) -> Arc<Thread> {
         let task = self.build();

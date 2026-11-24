@@ -45,7 +45,9 @@ impl From<FatValue> for ClusterID {
 bitflags! {
     #[derive(Clone, Copy, Debug, Default)]
     pub(crate) struct FatChainFlags: u8 {
+
         const ALLOC_POSSIBLE       = 0x01;
+
         const FAT_CHAIN_NOT_IN_USE = 0x03;
     }
 }
@@ -54,6 +56,7 @@ bitflags! {
 pub(crate) struct ExfatChain {
     current: ClusterID,
     num_clusters: u32,
+
     flags: FatChainFlags,
     fs: Weak<ExfatFs>,
 }

@@ -13,6 +13,9 @@ use crate::{
     util::MultiRead,
 };
 
+/// Address-related attributes.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.13/source/include/uapi/linux/if_addr.h#L26>.
 #[expect(non_camel_case_types)]
 #[expect(clippy::upper_case_acronyms)]
 #[repr(u16)]
@@ -32,14 +35,21 @@ pub(in route) enum AddrAttrClass {
     PROTO = 11,
 }
 
+/// The source protocol of an interface address.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v7.1/source/include/uapi/linux/if_addr.h#L73>.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Immutable, IntoBytes)]
 pub(crate) enum AddrProtocol {
+    /// An unspecified address source.
     #[expect(dead_code)]
     Unspecified = 0,
+    /// A loopback address configured by the kernel.
     KernelLoopback = 1,
+    /// An address configured by the kernel from a Router Advertisement.
     #[expect(dead_code)]
     KernelRouterAdvertisement = 2,
+    /// A link-local address configured by the kernel.
     #[expect(dead_code)]
     KernelLinkLocal = 3,
 }

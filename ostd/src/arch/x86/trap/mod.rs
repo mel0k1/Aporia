@@ -1,3 +1,5 @@
+//! Handles trap.
+
 pub(super) mod gdt;
 pub(super) mod idt;
 pub(super) mod syscall;
@@ -21,6 +23,25 @@ cfg_select! {
     }
 }
 
+/// Trap frame of kernel interrupt
+///
+/// # Trap handler
+///
+/// You need to define a handler function like this:
+///
+/// ```
+/// // SAFETY: The name does not collide with other symbols.
+/// #[unsafe(no_mangle)]
+/// extern "sysv64" fn trap_handler(tf: &mut TrapFrame) {
+///     match tf.trap_num {
+///         3 => {
+///             println!("TRAP: BreakPoint");
+///             tf.rip += 1;
+///         }
+///         _ => panic!("TRAP: {:#x?}", tf),
+///     }
+/// }
+/// ```
 #[expect(missing_docs)]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
@@ -63,6 +84,24 @@ impl TrapFrameApi for TrapFrame {
     }
 }
 
+/// Initializes interrupt handling on x86_64.
+///
+/// This function will:
+/// - Switch to a new, CPU-local [GDT].
+/// - Switch to a new, CPU-local [TSS].
+/// - Switch to a new, global [IDT].
+/// - Enable the [`syscall`] instruction.
+///
+/// [GDT]: https://wiki.osdev.org/GDT
+/// [IDT]: https://wiki.osdev.org/IDT
+/// [TSS]: https://wiki.osdev.org/Task_State_Segment
+/// [`syscall`]: https://www.felixcloutier.com/x86/syscall
+///
+/// # Safety
+///
+/// On the current CPU, this function must be called
+/// - only once and
+/// - before any trap can occur.
 pub(crate) unsafe fn init_on_cpu() {
     unsafe { gdt::init_on_cpu() };
 
@@ -71,6 +110,7 @@ pub(crate) unsafe fn init_on_cpu() {
     unsafe { syscall::init_on_cpu() };
 }
 
+/// Userspace context.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(super) struct RawUserContext {
@@ -80,6 +120,7 @@ pub(super) struct RawUserContext {
     pub(super) error_code: usize,
 }
 
+/// Handle traps (only from kernel).
 #[unsafe(no_mangle)]
 unsafe extern "sysv64" fn trap_handler(f: &mut TrapFrame) {
     fn enable_local_if(cond: bool) {
@@ -102,6 +143,7 @@ unsafe extern "sysv64" fn trap_handler(f: &mut TrapFrame) {
         #[cfg(feature = "cvm_guest")]
         Some(CpuException::VirtualizationException) => {
             let ve_info = tdcall::get_veinfo().expect("#VE handler: fail to get VE info\n");
+
             enable_local_if(was_irq_enabled);
             let mut trapframe_wrapper = TrapFrameWrapper(&mut *f);
             handle_virtual_exception(&mut trapframe_wrapper, &ve_info);
@@ -130,5 +172,7 @@ unsafe extern "sysv64" fn trap_handler(f: &mut TrapFrame) {
     }
 }
 
+/// User-space code segment selector value.
 pub const USER_CS_VALUE: usize = gdt::USER_CS.0 as usize;
+/// User-space stack segment selector value.
 pub const USER_SS_VALUE: usize = gdt::USER_SS.0 as usize;

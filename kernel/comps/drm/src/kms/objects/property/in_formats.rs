@@ -6,6 +6,7 @@ use crate::kms::pixel_format::DrmPixelFormat;
 
 const FORMAT_BLOB_CURRENT: u32 = 1;
 
+/// The pixel formats and format modifiers advertised by a plane's `IN_FORMATS` property.
 #[derive(Debug)]
 pub(crate) struct DrmInFormats {
     formats: Box<[DrmPixelFormat]>,
@@ -20,6 +21,7 @@ impl DrmInFormats {
         &self.formats
     }
 
+    /// Encodes the `IN_FORMATS` blob as a header followed by the format and modifier arrays.
     pub(crate) fn encode_blob(&self) -> Box<[u8]> {
         let formats_offset = size_of::<DrmFormatModifierBlobHeader>();
         let modifiers_offset = formats_offset + self.formats.len() * size_of::<u32>();
@@ -43,6 +45,9 @@ impl DrmInFormats {
     }
 }
 
+/// `struct drm_format_modifier_blob` in Linux.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm_mode.h#L1163-L1185>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 struct DrmFormatModifierBlobHeader {

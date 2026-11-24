@@ -1,3 +1,5 @@
+//! Device attribute tests.
+
 use alloc::{boxed::Box, sync::Arc};
 
 use device_id::{DeviceId, MajorId, MinorId};
@@ -13,6 +15,11 @@ use crate::{
     common::{Attr, DevNum, Error},
 };
 
+/// A driver's attributes come and go, and the published attribute set is rebuilt each time.
+/// The attributes that survive must keep their IDs,
+/// because sysfs derives an inode number from `(node id, attribute id)`:
+/// renumbering them would give every file in a device's directory a new inode
+/// whenever a driver bound beside it.
 #[ktest]
 fn attribute_ids_survive_bind_and_unbind() {
     let (class, bus) = toy::register_toy_subsystems();
@@ -77,6 +84,10 @@ fn attribute_ids_survive_bind_and_unbind() {
     bus.unregister_driver(&driver).unwrap();
 }
 
+/// Registration hands the core, subsystem, device type, and own attributes over as one batch,
+/// so a layer that reuses a name the core already took must be rejected there.
+/// Otherwise its callback would quietly replace the core's while sysfs went on showing the core's
+/// entry.
 #[ktest]
 fn an_attribute_may_not_shadow_a_core_one() {
     const SHADOWING: &[Attr<BusDevice<ToyBus>>] = &[Attr::ro("dev", |_dev, w| {

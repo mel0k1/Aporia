@@ -1,3 +1,4 @@
+//! The util of Asterinas.
 #![no_std]
 #![deny(unsafe_code)]
 

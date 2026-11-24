@@ -2,7 +2,20 @@ use ostd::mm::VmIo;
 
 use crate::prelude::*;
 
+/// A trait providing the ability to read a specified number of bytes.
 pub(crate) trait ReadWithLen {
+    /// Reads exactly `len` bytes at the specified offset into the given writer.
+    ///
+    /// Returns `Ok(())` without reading if `len` is zero.
+    /// Otherwise, this has the same no-short-read contract as [`VmIo::read`].
+    ///
+    /// On success, advances the writer by `len` without changing its end boundary.
+    /// On error, leaves the writer's cursor and boundary unchanged, but bytes in
+    /// the destination may already have been modified.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `len` exceeds the writer's available space.
     fn read_with_len(&self, offset: usize, writer: &mut VmWriter, len: usize) -> Result<()>;
 }
 
@@ -32,6 +45,7 @@ mod test {
 
     fn init_writer(buffer: &mut [u8]) -> (VmWriter<'_>, *mut u8) {
         let mut writer = VmWriter::from(buffer).to_fallible();
+
         writer.skip(1);
         let cursor = writer.cursor();
         (writer, cursor)

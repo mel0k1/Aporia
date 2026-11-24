@@ -72,6 +72,11 @@ impl SigAction {
         }
     }
 
+    /// Returns whether signals will be ignored.
+    ///
+    /// Signals will be ignored because either
+    ///  * the signal action is explicitly set to ignore the signals, or
+    ///  * the signal action is default and the default action is to ignore the signals.
     pub(crate) fn will_ignore(&self, signum: SigNum) -> bool {
         match self {
             SigAction::Dfl => {
@@ -118,6 +123,7 @@ impl SigActionFlags {
     }
 }
 
+/// The default action to signals
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SigDefaultAction {
     Term,

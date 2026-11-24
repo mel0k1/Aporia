@@ -10,6 +10,7 @@ use crate::{
     thread::Thread,
 };
 
+/// Represents the inode at `/proc/[pid]/task/[tid]/comm` (and also `/proc/[pid]/comm`).
 pub(super) struct CommFileOps(TidDirOps);
 
 impl CommFileOps {

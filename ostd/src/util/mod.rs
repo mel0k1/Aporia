@@ -1,3 +1,5 @@
+//! Utility types and methods.
+
 mod either;
 pub mod id_set;
 mod macros;

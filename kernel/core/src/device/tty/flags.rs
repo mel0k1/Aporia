@@ -1,5 +1,6 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 
+/// TTY flags.
 pub(crate) struct TtyFlags {
     is_other_closed: AtomicBool,
     is_pty_locked: AtomicBool,

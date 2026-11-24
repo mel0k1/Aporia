@@ -1,6 +1,8 @@
+
+
 use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 
-use component::{InitStage, init_component};
+use component::{init_component, InitStage};
 
 pub static INIT_BOOTSTRAP: AtomicBool = AtomicBool::new(false);
 pub static INIT_KTHREAD: AtomicBool = AtomicBool::new(false);

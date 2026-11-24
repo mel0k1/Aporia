@@ -6,6 +6,7 @@ use crate::{
     syscall::SyscallReturn,
 };
 
+/// Exit all thread in a process.
 pub(super) fn sys_exit_group(
     exit_code: u64,
     ctx: &Context,

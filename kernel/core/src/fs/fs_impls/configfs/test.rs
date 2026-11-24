@@ -1,3 +1,20 @@
+//! Testing configfs by adding to it a top-level directory called `demo_set`,
+//! whose structure is illustrated as follows:
+//!
+//! ```
+//! configfs/
+//!     demo_set/
+//!         demo_foo/
+//!              attr_a
+//!              attr_b
+//!         demo_bar/
+//!              attr_a
+//!              attr_b
+//! ```
+//!
+//! The `demo_set` is initially empty. One can create directories to trigger creating an in-kernel object
+//! that represents a new demo. Each demo has two attributes called `attr_a` and `attr_b`.
+
 use alloc::{string::ToString, sync::Arc};
 use core::{
     fmt::Debug,
@@ -25,6 +42,7 @@ use crate::{
     time::clocks::init_for_ktest as time_init_for_ktest,
 };
 
+/// A demo subsystem for testing configfs functionality.
 #[derive(Debug)]
 struct DemoSet {
     fields: BranchNodeFields<DemoObject, Self>,
@@ -57,6 +75,9 @@ inherit_sys_branch_node!(DemoSet, fields, {
     }
 });
 
+/// A demo object that can be created dynamically in the configfs.
+///
+/// Each demo object has two configurable attributes: `attr_a` and `attr_b`.
 #[derive(Debug)]
 struct DemoObject {
     fields: NormalNodeFields<Self>,

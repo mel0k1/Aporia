@@ -1,9 +1,13 @@
+//! This module contains utilities for manipulating common Unix command-line arguments.
+
 use std::process;
 
 use indexmap::{IndexMap, IndexSet};
 
 use crate::{error::Errno, error_msg};
 
+/// Split a string of Unix arguments into an array of key-value strings or switches.
+/// Positional arguments are not supported.
 pub fn split_to_kv_array(args: &str) -> Vec<String> {
     let target = match shlex::split(args) {
         Some(v) => v,
@@ -33,6 +37,10 @@ pub fn split_to_kv_array(args: &str) -> Vec<String> {
     joined
 }
 
+/// Apply key-value pairs to an array of strings.
+///
+/// The provided arguments will be appended to the array if the key is not already present or if the key is a multi-value key.
+/// Otherwise, the value will be updated.
 pub fn apply_kv_array(
     array: &mut Vec<String>,
     args: &Vec<String>,
@@ -66,6 +74,7 @@ pub fn apply_kv_array(
             key_strings.insert(key, item);
             continue;
         }
+
         key_strings.insert(item.clone(), item);
     }
 

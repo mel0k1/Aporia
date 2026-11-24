@@ -1,3 +1,23 @@
+//! The infrastructure of pseudo FSes along with some naive implementations of pseudo FSes.
+//!
+//! Pseudo FSes are those that have no physical storage.
+//! Some pseudo FSes are trivial,
+//! e.g., [`PipeFs`], [`SockFs`], [`PidfdFs`], and [`AnonInodeFs`].
+//! Such trivial pseudo FSes are directly implemented in this module
+//! using a generic pseudo FS implementation called [`NaivePseudoFs`].
+//!
+//! On the other hand, some pseudo FSes are quite complex,
+//! including `RamFs`, `ProcFs`, and `SysFs`. Just to name a few.
+//! They are implemented in their own modules.
+//!
+//! Pseudo FSes are not backed by physical storage devices,
+//! but they still need to be assigned container device IDs
+//! (see [`Metadata::container_dev_id`]).
+//! [Linux's behavior](https://elixir.bootlin.com/linux/v6.19.3/source/fs/super.c#L1254)
+//! is to assign _anonymous device IDs_ (whose major IDs are 0).
+//! As such, this module provides [`AnonDeviceId`] to acquire and recycle
+//! anonymous device IDs.
+
 use core::{
     sync::atomic::{AtomicU64, Ordering},
     time::Duration,
@@ -39,6 +59,7 @@ mod pidfdfs;
 mod pipefs;
 mod sockfs;
 
+/// A pseudo file system that manages pseudo inodes, such as pipe inodes and socket inodes.
 pub(crate) struct NaivePseudoFs {
     name: &'static str,
     _anon_device_id: AnonDeviceId,
@@ -75,6 +96,7 @@ impl FileSystem for NaivePseudoFs {
 }
 
 impl NaivePseudoFs {
+    /// Returns a reference to the singleton pseudo file system.
     fn singleton(
         fs: &'static Once<Arc<Self>>,
         name: &'static str,
@@ -141,6 +163,7 @@ pub(super) fn init() {
     sockfs::init();
 }
 
+/// Root Inode ID.
 const ROOT_INO: u64 = 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -166,6 +189,7 @@ impl From<PseudoInodeType> for InodeType {
     }
 }
 
+/// A pseudo inode that does not correspond to any real path in the file system.
 pub(crate) struct PseudoInode {
     metadata: SpinLock<Metadata>,
     extension: Extension,

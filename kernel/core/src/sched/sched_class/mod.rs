@@ -1,3 +1,5 @@
+//! Completely Fair Scheduler (CFS).
+
 #![warn(unused)]
 
 use alloc::{boxed::Box, sync::Arc};
@@ -52,11 +54,22 @@ pub(crate) fn init_on_each_cpu() {
     enable_preemption_on_cpu();
 }
 
+/// Represents the middle layer between scheduling classes and generic scheduler
+/// traits. It consists of all the sets of run queues for CPU cores. Other global
+/// information may also be stored here.
 pub(crate) struct ClassScheduler {
+    /// The per-CPU runqueues.
+    ///
+    /// We use the `LocalIrqDisabled` marker for this spinlock to ensure local IRQs are always disabled,
+    /// preventing potential deadlocks due to the fact that
+    /// the runqueues may be accessed in both the task and interrupt context (L1 and L2).
     rqs: Box<[SpinLock<PerCpuClassRqSet, LocalIrqDisabled>]>,
     last_chosen_cpu: AtomicCpuId,
 }
 
+/// Represents the run queue for each CPU core. It stores a list of run queues for
+/// scheduling classes in its corresponding CPU core. The current task of this CPU
+/// core is also stored in this structure.
 struct PerCpuClassRqSet {
     stop: stop::StopClassRq,
     real_time: real_time::RealTimeClassRq,
@@ -65,6 +78,13 @@ struct PerCpuClassRqSet {
     current: Option<(SchedEntity, CurrentRuntime)>,
 }
 
+/// Stores the runtime information of the current task.
+///
+/// This is used to calculate the time slice of the current task.
+///
+/// This struct is independent of the current `Arc<Task>` instead encapsulating the
+/// task, because the scheduling class implementations use `CurrentRuntime` and
+/// `SchedAttr` only.
 struct CurrentRuntime {
     start: u64,
     delta: u64,
@@ -87,21 +107,35 @@ impl CurrentRuntime {
     }
 }
 
+/// The run queue for scheduling classes (the main trait). Scheduling classes
+/// should implement this trait to function as expected.
 trait SchedClassRq: Send + fmt::Debug {
+    /// Enqueues a task into the run queue.
     fn enqueue(&mut self, task: Arc<Task>, flags: Option<EnqueueFlags>);
 
+    /// Returns the number of threads in the run queue.
     fn len(&self) -> usize;
 
+    /// Checks if the run queue is empty.
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
+    /// Picks the next task for running.
     fn pick_next(&mut self) -> Option<Arc<Task>>;
 
+    /// Update the information of the current task.
+    ///
+    /// The return value of this method indicates whether there is another task
+    /// **in this run queue** to replace the current one.
     fn update_current(&mut self, rt: &CurrentRuntime, attr: &SchedAttr, flags: UpdateFlags)
     -> bool;
 }
 
+/// The scheduling attribute for a thread.
+///
+/// This is used to store the scheduling policy and runtime parameters for each
+/// scheduling class.
 #[derive(Debug)]
 pub(crate) struct SchedAttr {
     policy: SchedPolicyState,
@@ -111,6 +145,7 @@ pub(crate) struct SchedAttr {
 }
 
 impl SchedAttr {
+    /// Constructs a new `SchedAttr` with the given scheduling policy.
     pub(crate) fn new(policy: SchedPolicy) -> Self {
         Self {
             policy: SchedPolicyState::new(policy),
@@ -129,6 +164,7 @@ impl SchedAttr {
         }
     }
 
+    /// Retrieves the current scheduling policy of the thread.
     pub(crate) fn policy(&self) -> SchedPolicy {
         self.policy.get()
     }
@@ -137,6 +173,10 @@ impl SchedAttr {
         self.policy.kind()
     }
 
+    /// Updates the scheduling policy of the thread.
+    ///
+    /// Specifically for real-time policies, if the new policy doesn't
+    /// specify a base slice factor for RR, the old one will be kept.
     pub(crate) fn set_policy(&self, policy: SchedPolicy) {
         self.policy.set(policy, |policy| match policy {
             SchedPolicy::RealTime { rt_prio, rt_policy } => {
@@ -264,6 +304,13 @@ impl ClassScheduler {
         selected
     }
 
+    /// Returns a cycling iterator over the CPUs in the [`CpuSet`], starting *after*
+    /// the given [`CpuId`].
+    ///
+    /// The iteration order is ascending up to the wrapping point, after which it
+    /// continues from the first CPU in the set in ascending order again.
+    ///
+    /// If the given [`CpuId`] is in the set, it will be the last element yielded.
     fn cycle_after(cpu: CpuId, cpu_set: &CpuSet) -> impl Iterator<Item = CpuId> + '_ {
         cpu_set
             .iter_in((Bound::Excluded(cpu), Bound::Unbounded))
@@ -350,8 +397,15 @@ impl LocalRunQueue for PerCpuClassRqSet {
     }
 }
 
+/// Holds per-CPU load information.
 struct PerCpuLoadStats {
+    /// The length of the run queue (excluding the idle task).
     queue_len: u32,
+    /// If the CPU is currently idle.
+    ///
+    /// A CPU is said to be idle when it is running the idle task, or it is not
+    /// running any task at all. The latter case is very unlikely to happen
+    /// (almost a bug if it happens) as the idle task should always be runnable.
     is_idle: bool,
 }
 

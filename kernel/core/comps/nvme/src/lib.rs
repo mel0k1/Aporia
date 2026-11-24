@@ -1,3 +1,10 @@
+//! NVMe (Non-Volatile Memory Express) driver for Asterinas.
+//!
+//! This driver implements support for NVMe storage devices following the
+//! NVM Express Base Specification Revision 2.0.
+//!
+//! Reference: NVM Express Base Specification Revision 2.0
+
 #![no_std]
 
 extern crate alloc;

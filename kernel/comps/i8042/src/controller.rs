@@ -1,3 +1,8 @@
+//! Provides i8042 PS/2 Controller I/O port access.
+//!
+//! Reference: <https://wiki.osdev.org/I8042_PS/2_Controller>
+//!
+
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bitflags::bitflags;
@@ -8,6 +13,7 @@ use ostd::{
 };
 use spin::Once;
 
+/// The `I8042Controller` singleton.
 pub(super) static I8042_CONTROLLER: Once<SpinLock<I8042Controller, LocalIrqDisabled>> = Once::new();
 
 pub(super) fn init() -> Result<(), I8042ControllerError> {
@@ -41,7 +47,9 @@ pub(super) fn init() -> Result<(), I8042ControllerError> {
         if result != SELF_TEST_OK {
             return Err(I8042ControllerError::ControllerTestFailed);
         }
+
         controller.write_configuration(&config)?;
+
         controller.flush_output_buffer();
     }
 
@@ -51,6 +59,7 @@ pub(super) fn init() -> Result<(), I8042ControllerError> {
             .read_configuration()?
             .contains(Configuration::SECOND_PORT_CLOCK_DISABLED);
     controller.wait_and_send_command(Command::DisableSecondPort)?;
+
     controller.flush_output_buffer();
 
     if has_second_port {
@@ -71,6 +80,7 @@ pub(super) fn init() -> Result<(), I8042ControllerError> {
             config.insert(Configuration::FIRST_PORT_TRANSLATION_ENABLED);
         }
     }
+
     controller.wait_and_send_command(Command::DisableFirstPort)?;
     controller.flush_output_buffer();
 
@@ -82,18 +92,22 @@ pub(super) fn init() -> Result<(), I8042ControllerError> {
             config.remove(Configuration::SECOND_PORT_CLOCK_DISABLED);
             config.insert(Configuration::SECOND_PORT_INTERRUPT_ENABLED);
         }
+
         controller.wait_and_send_command(Command::DisableSecondPort)?;
         controller.flush_output_buffer();
     }
 
     I8042_CONTROLLER.call_once(|| SpinLock::new(controller));
     let mut controller = I8042_CONTROLLER.get().unwrap().lock();
+
     controller.write_configuration(&config)?;
+
     controller.flush_output_buffer();
 
     Ok(())
 }
 
+/// An I8042 PS/2 Controller.
 pub(super) struct I8042Controller {
     data_port: IoPort<u8, ReadWriteAccess>,
     status_or_command_port: IoPort<u8, ReadWriteAccess>,
@@ -136,6 +150,7 @@ impl I8042Controller {
             .is_some_and(|flags| flags.motherboard_implements_8042())
     }
 
+    /// Checks if the kernel command line contains the "i8042.exist" option.
     fn is_present_cmdline() -> bool {
         I8042_EXIST.load(Ordering::Relaxed)
     }
@@ -200,10 +215,17 @@ impl I8042Controller {
         spin_wait_until(Timeout::Short, || self.receive_data()).ok_or(I8042ControllerError::NoInput)
     }
 
+    /// Waits a long time for the data to be received.
+    ///
+    /// This is usually used when performing a reset that takes a long time to complete.
     pub(super) fn wait_long_and_recv_data(&mut self) -> Result<u8, I8042ControllerError> {
         spin_wait_until(Timeout::Long, || self.receive_data()).ok_or(I8042ControllerError::NoInput)
     }
 
+    /// Waits for the specified data to be received.
+    ///
+    /// This is typically used when waiting for an acknowledgment of a command. Any garbage data
+    /// before the acknowledgment is ignored.
     pub(super) fn wait_for_specific_data(
         &mut self,
         data: &[u8],
@@ -237,13 +259,19 @@ impl I8042Controller {
     }
 }
 
+/// Timeout in milliseconds for sending commands or receiving data.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.17.9/source/drivers/input/serio/libps2.c#L344>
 #[repr(u16)]
 #[derive(Clone, Copy, Debug)]
 enum Timeout {
+    /// Short timeout for normal commands (500 ms).
     Short = 500,
+    /// Long timeout for the reset command (4000 ms).
     Long = 4000,
 }
 
+/// Spins and waits until the timeout occurs or `f` returns `Some(_)`.
 fn spin_wait_until<F, R>(timeout: Timeout, mut f: F) -> Option<R>
 where
     F: FnMut() -> Option<R>,
@@ -269,6 +297,7 @@ where
     }
 }
 
+/// Errors that can occur when initializing the i8042 controller.
 #[derive(Clone, Copy, Debug)]
 pub(super) enum I8042ControllerError {
     NotPresent,
@@ -281,6 +310,9 @@ pub(super) enum I8042ControllerError {
     DeviceAllocIrqFailed,
 }
 
+/// The commands that can be sent to the PS/2 controller.
+///
+/// Reference: <https://wiki.osdev.org/I8042_PS/2_Controller#PS/2_Controller_Commands>.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug)]
 enum Command {
@@ -297,23 +329,46 @@ enum Command {
 }
 
 bitflags! {
+    /// The configuration of the PS/2 controller.
+    ///
+    /// Reference: <https://wiki.osdev.org/I8042_PS/2_Controller#PS/2_Controller_Configuration_Byte>.
     struct Configuration: u8 {
+        /// First PS/2 port interrupt (1 = enabled, 0 = disabled)
         const FIRST_PORT_INTERRUPT_ENABLED   = 1 << 0;
+        /// Second PS/2 port interrupt (1 = enabled, 0 = disabled, only if 2 PS/2 ports supported)
         const SECOND_PORT_INTERRUPT_ENABLED  = 1 << 1;
+        /// System Flag (1 = system passed POST, 0 = your OS shouldn't be running)
         const SYSTEM_POST_PASSED             = 1 << 2;
+        /// First PS/2 port clock (1 = disabled, 0 = enabled)
         const FIRST_PORT_CLOCK_DISABLED      = 1 << 4;
+        /// Second PS/2 port clock (1 = disabled, 0 = enabled, only if 2 PS/2 ports supported)
         const SECOND_PORT_CLOCK_DISABLED     = 1 << 5;
+        /// First PS/2 port translation (1 = enabled, 0 = disabled)
         const FIRST_PORT_TRANSLATION_ENABLED = 1 << 6;
     }
 }
 
 bitflags! {
+    /// The status of the i8042 PS/2 controller.
+    ///
+    /// Reference: <https://wiki.osdev.org/I8042_PS/2_Controller#Status_Register>.
     struct Status: u8 {
+        /// Output buffer status (0 = empty, 1 = full)
+        /// Must be set before attempting to read data from port 0x60.
         const OUTPUT_BUFFER_IS_FULL = 1 << 0;
+        /// Input buffer status (0 = empty, 1 = full)
+        /// Must be clear before attempting to write data to IO port 0x60 or IO port 0x64.
         const INPUT_BUFFER_IS_FULL  = 1 << 1;
+        /// System Flag
+        /// Meant to be cleared on reset and set by firmware (via. PS/2 Controller Configuration Byte)
+        /// if the system passes self tests (POST).
         const SYSTEM_FLAG           = 1 << 2;
+        /// Command or data (0 = data, 1 = command)
+        /// Data written to input buffer is data for PS/2 device or command for controller.
         const IS_COMMAND            = 1 << 3;
+        /// Time-out error (0 = no error, 1 = time-out error)
         const TIME_OUT_ERROR        = 1 << 6;
+        /// Parity error (0 = no error, 1 = parity error)
         const PARITY_ERROR          = 1 << 7;
     }
 }
@@ -321,5 +376,8 @@ bitflags! {
 static I8042_EXIST: AtomicBool = AtomicBool::new(false);
 aster_cmdline::define_flag_param!("i8042.exist", I8042_EXIST);
 
+/// Whether to force the controller self-test during initialization.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v7.0/source/drivers/input/serio/i8042.c#L84>
 static I8042_RESET: AtomicBool = AtomicBool::new(false);
 aster_cmdline::define_flag_param!("i8042.reset", I8042_RESET);

@@ -1,22 +1,36 @@
+//! A data structure that tracks a contiguous range of counters.
+
 use alloc::{collections::btree_map::BTreeMap, vec::Vec};
 use core::ops::Range;
 
+/// A contiguous range of counters.
 pub(crate) struct RangeCounter {
     counters: BTreeMap<usize, usize>,
 }
 
 impl RangeCounter {
+    /// Creates a new [`RangeCounter`].
+    ///
+    /// The default value for all counters is zero.
     pub(crate) const fn new() -> Self {
         Self {
             counters: BTreeMap::new(),
         }
     }
 
+    /// Returns the counter at the index.
     #[cfg(ktest)]
     pub(crate) fn get(&self, index: usize) -> usize {
         self.counters.get(&index).cloned().unwrap_or(0)
     }
 
+    /// Adds one new count for all counters in the range.
+    ///
+    /// Returns ranges that the counter has updated from zero to one.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the range has a negative size.
     pub(crate) fn add(&mut self, range: &Range<usize>) -> impl Iterator<Item = Range<usize>> {
         assert!(range.start <= range.end);
         let mut updated_ranges = Vec::new();
@@ -39,6 +53,15 @@ impl RangeCounter {
         updated_ranges.into_iter()
     }
 
+    /// Removes one count for all counters in the range.
+    ///
+    /// Returns ranges that the counter has updated from one to zero.
+    ///
+    /// # Panics
+    ///
+    /// Panics if
+    ///  - the range has a negative size, or
+    ///  - the range contains a counter that is already zero.
     pub(crate) fn remove(&mut self, range: &Range<usize>) -> impl Iterator<Item = Range<usize>> {
         assert!(range.start <= range.end);
         let mut updated_ranges = Vec::new();
@@ -72,6 +95,13 @@ mod test {
     use super::*;
     use crate::prelude::*;
 
+    /// A macro to check counter values for multiple ranges.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// check_counter_values!(counter, [15..20, 1], [20..30, 2], [30..35, 1])
+    /// ```
     macro_rules! check_counter_values {
         ($counter:expr, $([$range:expr, $expected:expr]),* $(,)?) => {
             $(

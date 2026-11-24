@@ -24,27 +24,36 @@ use crate::{
     thread::Thread,
 };
 
+/// Represents the inode at `/proc/[pid]/task/[tid]/ns` (and also `/proc/[pid]/ns`).
 pub(super) struct NsDirOps {
     dir: TidDirOps,
 }
 
 impl NsDirOps {
+    /// Creates a new directory inode for the `ns` directory.
     pub(super) fn new_inode(dir: &TidDirOps, parent: Weak<dyn Inode>) -> Arc<dyn Inode> {
         ProcDir::new(Self { dir: dir.clone() }, parent, mkmod!(u+r, a+x))
     }
 }
 
+/// Namespace entries backed by the thread's [`NsProxy`].
 #[derive(Clone, Copy)]
 enum NsProxyEntry {
+    /// The cgroup namespace.
     Cgroup,
+    /// The IPC namespace.
     Ipc,
+    /// The mount namespace.
     Mnt,
+    /// The UTS namespace.
     Uts,
 }
 
 impl NsProxyEntry {
+    /// All supported `NsProxy`-backed namespace entries.
     const ALL: &[Self] = &[Self::Cgroup, Self::Ipc, Self::Mnt, Self::Uts];
 
+    /// Returns the filename of this namespace entry under `/proc/[pid]/ns/`.
     fn as_str(self) -> &'static str {
         match self {
             Self::Cgroup => "cgroup",
@@ -54,6 +63,7 @@ impl NsProxyEntry {
         }
     }
 
+    /// Parses a namespace entry name, returning `None` for unrecognized names.
     fn from_str(s: &str) -> Option<Self> {
         match s {
             "cgroup" => Some(Self::Cgroup),
@@ -64,6 +74,7 @@ impl NsProxyEntry {
         }
     }
 
+    /// Creates a symlink inode for this namespace entry.
     fn new_sym_inode(
         self,
         dir: &TidDirOps,
@@ -95,6 +106,9 @@ impl NsProxyEntry {
     }
 }
 
+/// Extracts the cached namespace path from a `NsSymlink<T>` inode.
+///
+/// Returns `None` if the inode is not a known namespace symlink type.
 fn cached_ns_path(inode: &dyn Inode) -> Option<&Path> {
     if let Some(sym) = inode.downcast_ref::<NsSymlink<CgroupNamespace>>() {
         return Some(&sym.inner().ns_path);
@@ -111,6 +125,7 @@ fn cached_ns_path(inode: &dyn Inode) -> Option<&Path> {
     if let Some(sym) = inode.downcast_ref::<NsSymlink<UtsNamespace>>() {
         return Some(&sym.inner().ns_path);
     }
+
     None
 }
 
@@ -223,6 +238,7 @@ impl ProcDirOps for NsDirOps {
 
 type NsSymlink<T> = ProcSym<NsSymOps<T>>;
 
+/// Represents the inode at `/proc/[pid]/task/[tid]/ns/<type>` (and also `/proc/[pid]/ns/<type>`).
 struct NsSymOps<T: NsCommonOps> {
     dir: TidDirOps,
     ns_path: Path,
@@ -230,6 +246,7 @@ struct NsSymOps<T: NsCommonOps> {
 }
 
 impl<T: NsCommonOps> NsSymOps<T> {
+    /// Creates a new symlink inode pointing to the given namespace.
     fn new_inode(dir: TidDirOps, ns_path: Path, parent: Weak<dyn Inode>) -> Arc<dyn Inode> {
         ProcSym::new(
             Self {

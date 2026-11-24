@@ -1,3 +1,48 @@
+//! This crate provides a function-like macro for defining atomic version of integer-like type.
+//!
+//! By integer-like type we mean types that implement `Into<Integer>` and `From<Integer>/TryFrom<integer>`
+//! where `Integer` is a built-in integer type, e.g. u8.
+//!
+//! Below is a simple example. We define an atomic version `AtomicStatus` for integer-like
+//! type `Status`.
+//! ```ignore
+//! use atomic_integer_wrapper::define_atomic_version_of_integer_like_type;
+//! use core::sync::atomic::AtomicU8;
+//!
+//! #[repr(u8)]
+//! pub enum Status {
+//!     Alive = 1,
+//!     Dead = 0,
+//! }
+//!
+//! define_atomic_version_of_integer_like_type(Status, {
+//!     #[derive(Debug)]
+//!     pub struct AtomicStatus(AtomicU8);
+//! })
+//!
+//! impl From<u8> for Status {
+//!     // ...
+//! }
+//!
+//! impl From<Status> for u8 {
+//!     // ...
+//! }
+//! ```
+//!
+//! The `define_atomic_version_of_integer_like_type` macro will automatically implement
+//! `core::sync::atomic::AtomicU8`'s commonly used methods for `AtomicStatus` like `load` and `store`.
+//!
+//! The default behavior of the macro when converting a built-in integer to an integer-like type is to use
+//! implemented `From` trait for performance. If you'd like to enable some runtime checks that are implemented
+//! in `TryFrom` trait, you can specify the `try_from` boolean parameter. In the example above, it's like
+//! ```ignore
+//! define_atomic_version_of_integer_like_type(Status, try_from = true, {
+//!     #[derive(Debug)]
+//!     pub struct AtomicStatus(AtomicU8);
+//! })
+//! ```
+//!
+
 #![feature(proc_macro_diagnostic)]
 
 use proc_macro::TokenStream;

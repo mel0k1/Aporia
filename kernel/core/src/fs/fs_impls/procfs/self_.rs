@@ -7,6 +7,7 @@ use crate::{
     prelude::*,
 };
 
+/// Represents the inode at `/proc/self`.
 pub(super) struct SelfSymOps;
 
 impl SelfSymOps {

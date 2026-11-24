@@ -324,6 +324,7 @@ impl Backlog {
         Ok(client_conn)
     }
 
+    /// Blocks until the backlogs are free and the `try_connect` succeeds, or until interrupted.
     pub(super) fn block_connect<F>(
         &self,
         timeout: Option<Duration>,

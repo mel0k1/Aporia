@@ -1,3 +1,8 @@
+//! `FUSE_UNLINK` removes a non-directory entry from parent directory.
+//!
+//! The request body contains only the null-terminated child name. Successful
+//! replies do not carry a payload.
+
 use ostd::mm::{Infallible, VmReader, VmWriter};
 
 use super::util;

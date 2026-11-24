@@ -18,8 +18,10 @@ use crate::{
     process::{Gid, Uid},
 };
 
+/// Same major number with Linux, the minor number is the index of slave.
 const SLAVE_MAJOR_NUM: u32 = 3;
 
+/// Pty slave inode for the slave device.
 pub(crate) struct PtySlaveInode {
     device: Arc<PtySlave>,
     metadata: RwLock<Metadata>,

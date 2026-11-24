@@ -53,6 +53,7 @@ pub(super) fn sys_inotify_add_watch(
     if flags == 0 {
         return Err(errno!(EINVAL, "invalid flags"));
     }
+
     let (interesting, options) = parse_inotify_watch_request(flags)?;
 
     if options.contains(InotifyControls::MASK_ADD) && options.contains(InotifyControls::MASK_CREATE)

@@ -1,3 +1,7 @@
+
+
+//! The test suite for hello-asterinas on Asterinas NixOS.
+
 use nixos_test_framework::*;
 
 nixos_test_main!();

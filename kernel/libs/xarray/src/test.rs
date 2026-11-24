@@ -61,10 +61,12 @@ fn store_overwrite() {
     init_continuous_with_arc(&xarray_arc, n!(100));
 
     let mut locked_xarray = xarray_arc.lock();
+
     let value = Arc::new(20);
     locked_xarray.store(10, value);
     let v = locked_xarray.load(10).unwrap();
     assert_eq!(*v.as_ref(), 20);
+
     let value = Arc::new(40);
     locked_xarray.store(10, value);
     let v = locked_xarray.load(10).unwrap();
@@ -414,6 +416,7 @@ fn no_leakage() {
     TEST_LEAKAGE.store(false, Ordering::Relaxed);
 
     let count = DROP_COUNT.load(Ordering::Relaxed);
+
     let expected = 68;
     assert_eq!(count, expected);
 }
@@ -425,6 +428,7 @@ fn remove_shrinks_empty_nodes() {
     TEST_LEAKAGE.store(true, Ordering::Relaxed);
 
     let xarray_arc: XArray<Arc<u32>> = XArray::new();
+
     let index = (SLOT_SIZE * SLOT_SIZE) as u64;
     xarray_arc.lock().store(index, Arc::new(0));
 

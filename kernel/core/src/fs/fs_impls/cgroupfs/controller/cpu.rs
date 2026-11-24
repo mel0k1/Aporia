@@ -18,30 +18,53 @@ use crate::{
     util::ReadCString,
 };
 
+/// A sub-controller responsible for CPU resource management in the cgroup subsystem.
+///
+/// This controller always exists so that `cpu.stat` remains readable even before `+cpu`
+/// is enabled. When inactive, only the base usage fields are exposed and the non-root
+/// CPU control files are hidden.
 pub(crate) struct CpuController {
+    /// Persistent CPU usage accounting for this cgroup.
     stats: CpuStats,
+    /// Optional CPU resource control attributes exposed only when `+cpu` is active.
     control: Option<CpuControl>,
 }
 
+/// CPU usage accounting that survives CPU controller toggles.
 struct CpuStats {
+    /// A counter accumulates CPU time spent executing user-space code.
+    ///
+    /// The counter is in units of one [`Jiffies`] per increment.
     user: PerCpuCounter,
+    /// A counter accumulates CPU time spent executing kernel code on behalf of tasks.
+    ///
+    /// The counter is in units of one [`Jiffies`] per increment.
     system: PerCpuCounter,
 }
 
+/// CPU resource controls that are reset whenever `+cpu` is re-enabled.
 struct CpuControl {
+    /// A value stores the configured relative CPU share for scheduler integration.
     weight: AtomicU32,
+    /// A value stores the configured CPU bandwidth limit for scheduler integration.
     max: SpinLock<CpuMax>,
 }
 
+/// A CPU bandwidth limit.
 #[derive(Clone, Copy)]
 struct CpuMax {
+    /// The configured CPU runtime budget for bandwidth enforcement.
     quota_usec: u64,
+    /// The window over which the CPU runtime budget is intended to apply.
     period_usec: u64,
 }
 
+/// Specifies the cgroup CPU sub-controller receives one [`Jiffies`] of charge.
 #[derive(Clone, Copy)]
 pub(crate) enum CpuStatKind {
+    /// Charges one [`Jiffies`] to `user_usec`.
     User,
+    /// Charges one [`Jiffies`] to `system_usec`.
     System,
 }
 
@@ -62,6 +85,11 @@ impl CpuController {
         }
     }
 
+    /// Initializes CPU usage statistics from the previous sub-controller.
+    ///
+    /// Toggling `+cpu` must reset some controller attributes such as `cpu.weight`
+    /// and `cpu.max`, but `cpu.stat` remains visible and continues to report the
+    /// accumulated CPU usage.
     pub(super) fn init_stats(&mut self, previous: &Self) {
         self.stats.user.add_on_cpu(
             CpuId::bsp(),
@@ -78,6 +106,7 @@ impl CpuController {
     }
 
     fn read_cpu_stat(&self, printer: &mut VmPrinter) -> Result<usize> {
+        /// Converts a per-CPU counter expressed in jiffies to microseconds.
         fn counter_usec(counter: &PerCpuCounter) -> u64 {
             let jiffies = u64::try_from(counter.sum_all_cpus()).unwrap_or(u64::MAX);
             u64::try_from(Jiffies::new(jiffies).as_duration().as_micros()).unwrap_or(u64::MAX)
@@ -104,6 +133,7 @@ impl CpuController {
         Ok(printer.bytes_written())
     }
 
+    /// Accounts one [`Jiffies`] of CPU time on `cpu`.
     fn account(&self, cpu: CpuId, stat_kind: CpuStatKind) {
         match stat_kind {
             CpuStatKind::User => self.stats.user.add_on_cpu(cpu, 1),
@@ -269,6 +299,7 @@ impl super::SubControlStatic for CpuController {
 }
 
 impl super::SubController<CpuController> {
+    /// Accounts one [`Jiffies`] of CPU time for this cgroup and all of its ancestors.
     fn account_hierarchy(&self, stat_kind: CpuStatKind) {
         let cpu = CpuId::current_racy();
 
@@ -281,11 +312,15 @@ impl super::SubController<CpuController> {
 }
 
 impl super::Controller {
+    /// Charges one [`Jiffies`] in the CPU sub-controller hierarchy.
     fn charge_cpu_time<G: AsAtomicModeGuard + ?Sized>(&self, guard: &G, stat_kind: CpuStatKind) {
         self.cpu.read_with(guard).account_hierarchy(stat_kind);
     }
 }
 
+/// Charges one [`Jiffies`] of CPU time to `process`'s cgroup hierarchy.
+///
+/// If `process` is not attached to a non-root cgroup, the charge is applied to the root cgroup.
 pub(crate) fn charge_cpu_time(process: &Process, stat_kind: CpuStatKind) {
     let cgroup_guard = process.cgroup();
 

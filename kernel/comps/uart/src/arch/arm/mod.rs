@@ -10,6 +10,7 @@ use crate::{
     console::{Uart, UartConsole, UartMut},
 };
 
+/// IRQ line for UART serial.
 static IRQ_LINE: Once<MappedIrqLine> = Once::new();
 
 pub(super) fn init() {

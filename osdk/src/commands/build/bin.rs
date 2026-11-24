@@ -59,6 +59,7 @@ pub fn make_install_bzimage(
         };
         setup_install_dir.join("bin").join("linux-bzimage-setup")
     };
+
     let install_path = install_dir.as_ref().join(target_name);
     info!("Building bzImage");
     println!("install_path: {:?}", install_path);
@@ -222,11 +223,13 @@ fn install_setup_with_arch(
         cmd.arg("--version").arg(env!("CARGO_PKG_VERSION"));
     }
     cmd.arg("--target").arg(arch);
+
     if arch.ends_with(".json") {
         cmd.arg("-Zjson-target-spec");
     }
     cmd.arg("-Zbuild-std=core,alloc,compiler_builtins");
     cmd.arg("-Zbuild-std-features=compiler-builtins-mem");
+
     cmd.arg("--target-dir").arg(target_dir.as_os_str());
 
     let status = cmd.status().unwrap();

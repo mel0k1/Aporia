@@ -1,3 +1,5 @@
+//! The timer support.
+
 use core::{
     arch::asm,
     sync::atomic::{AtomicU64, Ordering},
@@ -16,6 +18,14 @@ pub(super) static TIMER_IRQ: Once<IrqLine> = Once::new();
 static TIMEBASE_FREQ: AtomicU64 = AtomicU64::new(0);
 static TIMER_INTERVAL: AtomicU64 = AtomicU64::new(0);
 
+/// Initializes the timer module on the BSP.
+///
+/// # Safety
+///
+/// This function is safe to call on the following conditions:
+///  1. It is called once and at most once at a proper timing in the boot context
+///     of the BSP.
+///  2. It is called before any other public functions of this module is called.
 pub(super) unsafe fn init_on_bsp() {
     TIMEBASE_FREQ.store(
         DEVICE_TREE
@@ -47,12 +57,23 @@ pub(super) unsafe fn init_on_bsp() {
     unsafe { init_current_hart() };
 }
 
+/// Initializes the timer on this AP.
+///
+/// # Safety
+///
+/// This function must be called on an AP that hasn't called this function.
 pub(super) unsafe fn init_on_ap() {
     unsafe { init_current_hart() };
 }
 
+/// Initializes the timer on the current hart.
+///
+/// # Safety
+///
+/// This function must be called on a hart that hasn't called this function.
 unsafe fn init_current_hart() {
     set_next_timer();
+
     unsafe {
         riscv::register::sie::set_stimer();
     }

@@ -1,3 +1,41 @@
+//! Intel TDX guest device and measurement register API.
+//!
+//! This module provides two things:
+//!
+//! 1. **`/dev/tdx_guest` character device** — exposes the `TDX_CMD_GET_REPORT0`
+//!    ioctl, which lets userspace request a `TDREPORT_STRUCT` from the TDX module
+//!    (see [`TdxGuest`]).
+//!
+//! 2. **Measurement register API** — a set of public functions used by other
+//!    kernel subsystems (e.g. the TSM-MR sysfs layer) to interact with TDX
+//!    measurement registers.
+//!
+//! # Cached-report model
+//!
+//! A **TDX report** (`TDREPORT_STRUCT`) is a hardware-signed snapshot of the
+//! TD's current measurement state, produced by the `TDG.MR.REPORT` TDCALL.
+//! Throughout this module the word **"refresh"** always means issuing that
+//! TDCALL to regenerate the snapshot; it never refers to individual register
+//! reads.
+//!
+//! Because `TDG.MR.REPORT` is relatively expensive, the module keeps a single
+//! **global cached report** in `TDX_REPORT` and satisfies measurement-register
+//! reads from that cache.  The cache becomes **stale** after any
+//! [`extend_tdx_mr`] call, because extending an RTMR changes hardware state
+//! that is not reflected in the snapshot until the next refresh.
+//!
+//! # Measurement register API quick reference
+//!
+//! | Function | TDCALL? | Use when… |
+//! |---|---|---|
+//! | [`get_tdx_mr`] | No | Reading a register whose value is not expected to have changed since the last refresh (cheap). |
+//! | [`get_tdx_mr_refresh`] | Yes | Reading a register whose current hardware value is needed — e.g. immediately after [`extend_tdx_mr`]. The refresh and the register read are performed atomically under the write lock. |
+//! | [`refresh_tdx_report`] | Yes | Regenerating the report with a custom `report_data` blob (used by the `TDX_CMD_GET_REPORT0` ioctl and the quote path) without reading a specific register. |
+//! | [`extend_tdx_mr`] | Yes | Extending an RTMR. After extending, the cached report is stale; use [`get_tdx_mr_refresh`] (or [`refresh_tdx_report`] followed by [`get_tdx_mr`]) to observe the updated value. |
+//!
+//! For the TDX architecture specification see Intel's
+//! [TDX Module Specification](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-trust-domain-extensions.html).
+
 use core::{mem::offset_of, time::Duration};
 
 use aster_util::{field_ptr, safe_ptr::SafePtr};
@@ -29,6 +67,7 @@ use crate::{
 
 const TDX_GUEST_MINOR: u32 = 0x7b;
 
+/// The `/dev/tdx_guest` device.
 #[derive(Debug)]
 pub(crate) struct TdxGuest {
     id: DeviceId,
@@ -178,6 +217,10 @@ fn tdx_report_or_err() -> Result<&'static RwMutex<USegment>> {
         .ok_or_else(|| errno!(ENODEV, "the TDX report is not initialized"))
 }
 
+/// Runtime Measurement Register (RTMR) index.
+///
+/// RTMRs are the only measurement registers that can be extended at runtime
+/// via [`extend_tdx_mr`].
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Rtmr {
     Rtmr0,
@@ -186,6 +229,7 @@ pub(crate) enum Rtmr {
     Rtmr3,
 }
 
+/// TDX measurement register.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum MeasurementReg {
     MrConfigId,
@@ -195,6 +239,7 @@ pub(crate) enum MeasurementReg {
     Rtmr(Rtmr),
 }
 
+/// Gets the TDX quote given the specified data in `inblob`.
 pub(crate) fn tdx_get_quote(inblob: &[u8]) -> Result<Box<[u8]>> {
     const GET_QUOTE_IN_FLIGHT: u64 = 0xFFFF_FFFF_FFFF_FFFF;
     const GET_QUOTE_BUF_SIZE: usize = 8 * 1024;
@@ -233,6 +278,15 @@ pub(crate) fn tdx_get_quote(inblob: &[u8]) -> Result<Box<[u8]>> {
     Ok(outblob)
 }
 
+/// Refreshes the global TDX report cache, issuing a `TDG.MR.REPORT` TDCALL.
+///
+/// If `inblob` is `Some`, it is written into the report's `REPORTDATA` field
+/// before the TDCALL; otherwise the field already present in the cached report
+/// is reused.
+///
+/// Most callers that only need to read a measurement register after an extend
+/// should use [`get_tdx_mr_refresh`] instead, which combines the refresh and
+/// the register read atomically.
 pub(crate) fn refresh_tdx_report(inblob: Option<&[u8]>) -> Result<()> {
     let report = tdx_report_or_err()?.write();
     refresh_tdx_report_locked(&report, inblob)
@@ -240,6 +294,13 @@ pub(crate) fn refresh_tdx_report(inblob: Option<&[u8]>) -> Result<()> {
 
 pub(crate) const SHA384_DIGEST_SIZE: usize = 48;
 
+/// Gets the measurement register value from the cached TDX report.
+///
+/// This is a cheap read — no TDCALL is issued. The value reflects the state of
+/// the report at the time of the last [`refresh_tdx_report`] or
+/// [`get_tdx_mr_refresh`] call. If the register may have been updated by a
+/// recent [`extend_tdx_mr`], use [`get_tdx_mr_refresh`] instead to obtain the
+/// current hardware value.
 pub(crate) fn get_tdx_mr(reg: MeasurementReg) -> Result<[u8; SHA384_DIGEST_SIZE]> {
     let report = tdx_report_or_err()?.read();
 
@@ -250,6 +311,16 @@ pub(crate) fn get_tdx_mr(reg: MeasurementReg) -> Result<[u8; SHA384_DIGEST_SIZE]
     Ok(blob)
 }
 
+/// Refreshes the TDX report and returns the requested measurement register value.
+///
+/// Issues a `TDG.MR.REPORT` TDCALL and then reads `reg` from the newly
+/// generated report. The refresh and the read are performed atomically under
+/// the write lock, so the returned value is guaranteed to reflect the hardware
+/// state at the time of the call.
+///
+/// Use this function after [`extend_tdx_mr`] to observe the updated RTMR
+/// value. If no extend has occurred and the cached report is still current,
+/// the cheaper [`get_tdx_mr`] can be used instead.
 pub(crate) fn get_tdx_mr_refresh(reg: MeasurementReg) -> Result<[u8; SHA384_DIGEST_SIZE]> {
     let report = tdx_report_or_err()?.write();
 
@@ -262,6 +333,14 @@ pub(crate) fn get_tdx_mr_refresh(reg: MeasurementReg) -> Result<[u8; SHA384_DIGE
     Ok(blob)
 }
 
+/// Extends an RTMR with the given SHA-384 digest, issuing a
+/// `TDG.MR.RTMR.EXTEND` TDCALL.
+///
+/// After this call the cached TDX report is stale with respect to the extended
+/// register. To read the updated value, use [`get_tdx_mr_refresh`], which
+/// atomically regenerates the report and reads the register. Alternatively,
+/// call [`refresh_tdx_report`] and then [`get_tdx_mr`] if you need to refresh
+/// once and read multiple registers.
 pub(crate) fn extend_tdx_mr(reg: Rtmr, data: &[u8; SHA384_DIGEST_SIZE]) -> Result<()> {
     let index = match reg {
         Rtmr::Rtmr0 => 0,
@@ -313,8 +392,11 @@ fn refresh_tdx_report_locked(
 #[repr(C)]
 struct TdxQuoteHdr {
     version: u64,
+
     status: u64,
+
     in_len: u32,
+
     out_len: u32,
 }
 
@@ -331,6 +413,7 @@ struct ReportData {
     data: [u8; 64],
 }
 
+/// TDX Report structure (`TDREPORT_STRUCT`) as defined in the Intel TDX Module Specification.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 struct TdReport {

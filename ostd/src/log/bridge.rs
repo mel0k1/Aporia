@@ -1,5 +1,8 @@
+//! Bridge that forwards `log` crate messages to the OSTD logger.
+
 use super::{Level, LevelFilter, Record, logger::__logger};
 
+/// Syncs the `log` crate's max level with the given OSTD level filter.
 pub(super) fn sync_log_crate_max_level(filter: LevelFilter) {
     ::log::set_max_level(map_level_filter(filter));
 }

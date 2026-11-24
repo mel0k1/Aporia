@@ -10,11 +10,15 @@ use ostd::mm::PAGE_SIZE;
 
 use crate::gem::object::DrmGemObject;
 
+/// A userspace-visible byte offset in the fake GEM mmap-offset space.
 pub(super) type DrmMmapOffset = u64;
 
 const DRM_MMAP_OFFSET_START_PAGE: u64 = ((u32::MAX as u64) / PAGE_SIZE as u64) + 1;
 const DRM_MMAP_OFFSET_PAGE_COUNT: u64 = ((u32::MAX as u64) / PAGE_SIZE as u64) * 256;
 
+/// The device-wide mmap-offset namespace for GEM objects.
+///
+/// The offsets are handle-like tokens rather than positions in a real file.
 #[derive(Debug)]
 pub(crate) struct DrmGemMmapOffsetSpace {
     free_ranges: BTreeMap<u64, u64>,
@@ -35,6 +39,7 @@ impl Default for DrmGemMmapOffsetSpace {
 }
 
 impl DrmGemMmapOffsetSpace {
+    /// Returns an object's mmap offset, allocating its range if necessary.
     pub(crate) fn get_or_allocate_offset(&mut self, gem_object: &Arc<DrmGemObject>) -> Result<u64> {
         if let Some(offset) = gem_object.mmap_offset() {
             return Ok(offset);
@@ -43,6 +48,7 @@ impl DrmGemMmapOffsetSpace {
         self.reclaim_dead_ranges();
 
         let size = gem_object.size();
+
         let page_count = (size / PAGE_SIZE) as u64;
 
         let (best_start, best_len) = self
@@ -72,6 +78,10 @@ impl DrmGemMmapOffsetSpace {
         Ok(offset)
     }
 
+    /// Resolves a range in the fake mmap-offset space and creates its mapped object.
+    ///
+    /// This validates the range and the client's access before delegating to the
+    /// owning GEM object.
     pub(crate) fn create_mapped_object(
         &self,
         client_id: u64,
@@ -152,6 +162,7 @@ impl DrmGemMmapOffsetSpace {
     }
 }
 
+/// An allocation whose start page is the corresponding `allocated_ranges` key.
 #[derive(Debug)]
 struct DrmMmapOffsetAllocation {
     page_count: u64,

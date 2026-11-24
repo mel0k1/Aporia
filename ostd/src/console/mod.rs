@@ -1,9 +1,12 @@
+//! Console output.
+
 use core::fmt::{Arguments, Write};
 
 use crate::arch::serial::SERIAL_PORT;
 
 pub mod uart_ns16650a;
 
+/// Prints formatted arguments to the console.
 pub fn early_print(args: Arguments) {
     let Some(serial) = SERIAL_PORT.get() else {
         return;
@@ -11,6 +14,7 @@ pub fn early_print(args: Arguments) {
 
     #[cfg(target_arch = "x86_64")]
     crate::arch::if_tdx_enabled!({
+
         let _guard = serial.lock();
         tdx_guest::print(args);
     } else {
@@ -20,6 +24,7 @@ pub fn early_print(args: Arguments) {
     serial.lock().write_fmt(args).unwrap();
 }
 
+/// Prints to the console.
 #[macro_export]
 macro_rules! early_print {
     ($fmt: literal $(, $($arg: tt)+)?) => {
@@ -27,6 +32,7 @@ macro_rules! early_print {
     }
 }
 
+/// Prints to the console with a newline.
 #[macro_export]
 macro_rules! early_println {
     () => { $crate::early_print!("\n") };

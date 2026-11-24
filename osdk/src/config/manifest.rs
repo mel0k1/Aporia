@@ -9,6 +9,7 @@ use clap::ValueEnum;
 use serde::{Deserialize, Deserializer, Serialize, de};
 
 use super::scheme::Scheme;
+
 use crate::{error::Errno, error_msg, util::get_cargo_metadata};
 
 #[expect(dead_code)]
@@ -27,6 +28,7 @@ pub enum ProjectType {
     Module,
 }
 
+/// The osdk manifest from configuration file `OSDK.toml`.
 #[derive(Clone, Debug)]
 pub struct TomlManifest {
     #[cfg_attr(not(test), expect(dead_code))]
@@ -78,6 +80,7 @@ impl TomlManifest {
         current_manifest
     }
 
+    /// Get the scheme given the scheme from the command line arguments.
     pub fn get_scheme(&self, scheme: Option<impl ToString>) -> &Scheme {
         if let Some(scheme) = scheme {
             log::info!("Using scheme `{}`", scheme.to_string());
@@ -100,6 +103,7 @@ fn deserialize_toml_manifest(path: impl AsRef<Path>) -> Option<TomlManifest> {
     if !path.as_ref().exists() || !path.as_ref().is_file() {
         return None;
     }
+
     let contents = fs::read_to_string(&path).unwrap_or_else(|err| {
         error_msg!(
             "Cannot read file {}, {}",
@@ -108,6 +112,7 @@ fn deserialize_toml_manifest(path: impl AsRef<Path>) -> Option<TomlManifest> {
         );
         process::exit(Errno::GetMetadata as _);
     });
+
     let mut manifest: TomlManifest = toml::from_str(&contents).unwrap_or_else(|err| {
         let span = err.span().unwrap();
         let wider_span =

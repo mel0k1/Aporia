@@ -1,3 +1,22 @@
+//! Mount construction: the one-shot preparation of an overlay filesystem's
+//! published state.
+//!
+//! Construction runs once per mount, before the overlay filesystem object
+//! is published: options are parsed, the original roots are resolved and
+//! validated, the upper/workdir pair is claimed, the layer stack is built,
+//! the staging workspace is prepared, upper-filesystem capabilities are
+//! probed, and the mount policy is assembled from the results.
+//!
+//! # Module map
+//!
+//! | Submodule | Responsibility |
+//! |---|---|
+//! | [`options`] | the mount option parse and validation |
+//! | [`layer_parts`] | the root resolution, the overlap checks, and the layer-stack build |
+//! | [`inuse`] | the exclusive upper/workdir claim and the overlay uuid |
+//! | [`capabilities`] | the upper-filesystem capability probes |
+//! | [`policy`] | the per-mount decisions settled after the probes, published as fixed state |
+
 #![short_vis_path::add(overlayfs)]
 
 mod capabilities;
@@ -49,6 +68,7 @@ impl OverlayFs {
 
                 let capabilities =
                     UpperFilesystemCapabilities::probe(&inuse_pair, xattr_namespace)?;
+
                 if !capabilities.can_report_directory_type() {
                     return Err(errno!(
                         EOPNOTSUPP,

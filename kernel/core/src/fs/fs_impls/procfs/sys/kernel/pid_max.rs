@@ -10,6 +10,7 @@ use crate::{
     process::posix_thread::PID_MAX,
 };
 
+/// Represents the inode at `/proc/sys/kernel/pid_max`.
 pub(super) struct PidMaxFileOps;
 
 impl PidMaxFileOps {

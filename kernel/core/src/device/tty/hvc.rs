@@ -14,6 +14,7 @@ use crate::{
     prelude::*,
 };
 
+/// The driver for hypervisor console devices.
 #[derive(Clone)]
 pub(super) struct HvcDriver {
     console: Arc<dyn AnyConsoleDevice>,
@@ -50,6 +51,9 @@ impl TtyDriver for HvcDriver {
 
 static HVC0: Once<Arc<Tty<HvcDriver>>> = Once::new();
 
+/// Returns the `hvc0` device.
+///
+/// Returns `None` if the device is not found nor initialized.
 pub(super) fn hvc0_device() -> Option<&'static Arc<Tty<HvcDriver>>> {
     HVC0.get()
 }

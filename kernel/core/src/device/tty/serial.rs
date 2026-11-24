@@ -14,6 +14,7 @@ use crate::{
     prelude::*,
 };
 
+/// The driver for serial devices.
 #[derive(Clone)]
 pub(super) struct SerialDriver {
     console: Arc<dyn AnyConsoleDevice>,
@@ -54,6 +55,9 @@ impl TtyDriver for SerialDriver {
 
 static SERIAL0: Once<Arc<Tty<SerialDriver>>> = Once::new();
 
+/// Returns the `ttyS0` device.
+///
+/// Returns `None` if the device is not found nor initialized.
 pub(super) fn serial0_device() -> Option<&'static Arc<Tty<SerialDriver>>> {
     SERIAL0.get()
 }

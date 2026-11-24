@@ -1,3 +1,5 @@
+//! Virtio over MMIO
+
 use bus::MmioBus;
 use ostd::{debug, io::IoMem, mm::HasPaddr, sync::SpinLock};
 
@@ -13,11 +15,16 @@ mod arch;
 pub(super) mod bus;
 pub(super) mod common_device;
 
+/// The MMIO bus instance.
 pub(super) static MMIO_BUS: SpinLock<MmioBus> = SpinLock::new(MmioBus::new());
 
 pub(super) fn init() {
     #[cfg(target_arch = "x86_64")]
     ostd::if_tdx_enabled!({
+
+
+
+
     } else {
         arch::probe_for_device();
     });
@@ -25,6 +32,7 @@ pub(super) fn init() {
     arch::probe_for_device();
 }
 
+/// Validates a potential VirtIO-MMIO device.
 fn validate_mmio_device(io_mem: &IoMem) -> Result<(), MmioValidateError> {
     if !mmio_check_magic(io_mem) {
         debug!(
@@ -42,6 +50,8 @@ fn validate_mmio_device(io_mem: &IoMem) -> Result<(), MmioValidateError> {
 
 #[derive(Clone, Copy, Debug)]
 enum MmioValidateError {
+    /// Not a VirtIO-MMIO slot.
     MagicMismatch,
+    /// No device present.
     NoDevice,
 }

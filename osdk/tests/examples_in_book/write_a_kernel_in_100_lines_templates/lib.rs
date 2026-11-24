@@ -3,22 +3,26 @@
 
 extern crate alloc;
 
-use alloc::{sync::Arc, vec};
+use align_ext::AlignExt;
 use core::str;
 
-use align_ext::AlignExt;
-use ostd::{
-    arch::cpu::context::UserContext,
-    mm::{
-        CachePolicy, FallibleVmRead, FrameAllocOptions, PageFlags, PageProperty, Vaddr, VmIo,
-        VmSpace, VmWriter, PAGE_SIZE,
-    },
-    power::{poweroff, ExitCode},
-    prelude::*,
-    task::{disable_preempt, Task, TaskOptions},
-    user::{DummyUserHooks, ReturnReason, UserMode},
-};
+use alloc::sync::Arc;
+use alloc::vec;
 
+use ostd::arch::cpu::context::UserContext;
+use ostd::mm::{
+    CachePolicy, FallibleVmRead, FrameAllocOptions, PageFlags, PageProperty, Vaddr, VmIo, VmSpace,
+    VmWriter, PAGE_SIZE,
+};
+use ostd::power::{poweroff, ExitCode};
+use ostd::prelude::*;
+use ostd::task::{disable_preempt, Task, TaskOptions};
+use ostd::user::{DummyUserHooks, ReturnReason, UserMode};
+
+/// The kernel's boot and initialization process is managed by OSTD.
+/// After the process is done, the kernel's execution environment
+/// (e.g., stack, heap, tasks) will be ready for use and the entry function
+/// labeled as `#[ostd::main]` will be called.
 #[ostd::main]
 pub fn main() {
     let vm_space = Arc::new(create_vm_space(PROGRAM_BINARY));
@@ -33,6 +37,7 @@ fn create_vm_space(program: &[u8]) -> VmSpace {
         let segment = FrameAllocOptions::new()
             .alloc_segment(nbytes / PAGE_SIZE)
             .unwrap();
+
         segment.write_bytes(0, program).unwrap();
         segment
     };
@@ -53,6 +58,7 @@ fn create_vm_space(program: &[u8]) -> VmSpace {
 fn create_user_task(vm_space: Arc<VmSpace>) -> Arc<Task> {
     fn user_task() {
         let current = Task::current().unwrap();
+
         let mut user_mode = {
             let user_ctx = create_user_context();
             UserMode::new(user_ctx)
@@ -88,13 +94,16 @@ fn handle_syscall(user_context: &mut UserContext, vm_space: &VmSpace) {
                 (user_context.rdi(), user_context.rsi(), user_context.rdx());
             let buf = {
                 let mut buf = vec![0u8; buf_len];
+
                 let mut reader = vm_space.reader(buf_addr, buf_len).unwrap();
                 reader
                     .read_fallible(&mut VmWriter::from(&mut buf as &mut [u8]))
                     .unwrap();
                 buf
             };
+
             println!("{}", str::from_utf8(&buf).unwrap());
+
             user_context.set_rax(buf_len);
         }
         SYS_EXIT => poweroff(ExitCode::Success),

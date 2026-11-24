@@ -1,3 +1,5 @@
+//! The IOMMU support.
+
 macro_rules! __log_prefix {
     () => {
         "iommu: "
@@ -17,9 +19,12 @@ pub(in crate::arch) use interrupt_remapping::{
 
 use crate::{io::IoMemAllocatorBuilder, mm::page_table::PageTableError};
 
+/// An enumeration representing possible errors related to IOMMU.
 #[derive(Debug)]
 pub(crate) enum IommuError {
+    /// No IOMMU is available.
     NoIommu,
+    /// Error encountered during modification of the page table.
     #[expect(dead_code)]
     ModificationError(PageTableError),
 }

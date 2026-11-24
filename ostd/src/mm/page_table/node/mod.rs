@@ -1,3 +1,28 @@
+//! This module defines page table node abstractions and the handle.
+//!
+//! The page table node is also frequently referred to as a page table in many architectural
+//! documentations. It is essentially a page that contains page table entries (PTEs) that map
+//! to child page tables nodes or mapped pages.
+//!
+//! This module leverages the page metadata to manage the page table pages, which makes it
+//! easier to provide the following guarantees:
+//!
+//! The page table node is not freed when it is still in use by:
+//!    - a parent page table node,
+//!    - or a handle to a page table node,
+//!    - or a processor.
+//!
+//! This is implemented by using a reference counter in the page metadata. If the above
+//! conditions are not met, the page table node is ensured to be freed upon dropping the last
+//! reference.
+//!
+//! One can acquire exclusive access to a page table node using merely the physical address of
+//! the page table node. This is implemented by a lock in the page metadata. Here the
+//! exclusiveness is only ensured for kernel code, and the processor's MMU is able to access the
+//! page table node while a lock is held. So the modification to the PTEs should be done after
+//! the initialization of the entity that the PTE points to. This is taken care in this module.
+//!
+
 mod entry;
 mod pte_state;
 
@@ -23,6 +48,15 @@ use crate::{
     task::atomic_mode::InAtomicMode,
 };
 
+/// A smart pointer to a page table node.
+///
+/// This smart pointer is an owner of a page table node. Thus creating and
+/// dropping it will affect the reference count of the page table node. If
+/// dropped it as the last reference, the page table node and subsequent
+/// children will be freed.
+///
+/// [`PageTableNode`] is read-only. To modify the page table node, lock and use
+/// [`PageTableGuard`].
 pub(crate) type PageTableNode<C> = Frame<PageTablePageMeta<C>>;
 
 impl<C: PageTableConfig> PageTableNode<C> {
@@ -30,6 +64,7 @@ impl<C: PageTableConfig> PageTableNode<C> {
         self.meta().level
     }
 
+    /// Allocates a new empty page table node.
     pub(super) fn alloc(level: PagingLevel) -> Self {
         let meta = PageTablePageMeta::new(level);
         FrameAllocOptions::new()
@@ -38,6 +73,22 @@ impl<C: PageTableConfig> PageTableNode<C> {
             .expect("Failed to allocate a page table node")
     }
 
+    /// Activates the page table assuming it is a root page table.
+    ///
+    /// Here we ensure not dropping an active page table by making a
+    /// processor a page table owner. When activating a page table, the
+    /// reference count of the last activated page table is decremented.
+    /// And that of the current page table is incremented.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the page table to be activated has
+    /// proper mappings for the kernel and has the correct const parameters
+    /// matching the current CPU.
+    ///
+    /// # Panics
+    ///
+    /// Only top-level page tables can be activated using this function.
     pub(super) unsafe fn activate(&self) {
         use crate::arch::mm::{activate_page_table, current_page_table_paddr};
 
@@ -53,6 +104,10 @@ impl<C: PageTableConfig> PageTableNode<C> {
         drop(unsafe { Self::from_raw(last_activated_paddr) });
     }
 
+    /// Activates the (root) page table assuming it is the first activation.
+    ///
+    /// It will not try dropping the last activate page table. It is the same
+    /// with [`Self::activate()`] in other senses.
     pub(super) unsafe fn first_activate(&self) {
         use crate::arch::mm::activate_page_table;
 
@@ -60,9 +115,15 @@ impl<C: PageTableConfig> PageTableNode<C> {
     }
 }
 
+/// A reference to a page table node.
 pub(super) type PageTableNodeRef<'a, C> = FrameRef<'a, PageTablePageMeta<C>>;
 
 impl<'a, C: PageTableConfig> PageTableNodeRef<'a, C> {
+    /// Locks the page table node.
+    ///
+    /// An atomic mode guard is required to
+    ///  1. prevent deadlocks;
+    ///  2. provide a lifetime (`'rcu`) that the nodes are guaranteed to outlive.
     pub(super) fn lock<'rcu>(self, _guard: &'rcu dyn InAtomicMode) -> PageTableGuard<'rcu, C>
     where
         'a: 'rcu,
@@ -79,6 +140,14 @@ impl<'a, C: PageTableConfig> PageTableNodeRef<'a, C> {
         PageTableGuard::<'rcu, C> { inner: self }
     }
 
+    /// Creates a new [`PageTableGuard`] without checking if the page table lock is held.
+    ///
+    /// # Safety
+    ///
+    /// This function must be called if this task logically holds the lock.
+    ///
+    /// Calling this function when a guard is already created is undefined behavior
+    /// unless that guard was already forgotten.
     pub(super) unsafe fn make_guard_unchecked<'rcu>(
         self,
         _guard: &'rcu dyn InAtomicMode,
@@ -90,37 +159,71 @@ impl<'a, C: PageTableConfig> PageTableNodeRef<'a, C> {
     }
 }
 
+/// A guard that holds the lock of a page table node.
 #[derive(Debug)]
 pub(super) struct PageTableGuard<'rcu, C: PageTableConfig> {
     inner: PageTableNodeRef<'rcu, C>,
 }
 
 impl<'rcu, C: PageTableConfig> PageTableGuard<'rcu, C> {
+    /// Borrows an entry in the node at a given index.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the index is not within the bound of
+    /// [`nr_subpage_per_huge<C>`].
     pub(super) fn entry(&mut self, idx: usize) -> Entry<'_, 'rcu, C> {
         assert!(idx < nr_subpage_per_huge::<C>());
+
         unsafe { Entry::new_at(self, idx) }
     }
 
+    /// Gets the number of valid PTEs in the node.
     pub(super) fn nr_children(&self) -> u16 {
         unsafe { *self.meta().nr_children.get() }
     }
 
+    /// Returns if the page table node is detached from its parent.
     pub(super) fn stray_mut(&mut self) -> &mut bool {
         unsafe { &mut *self.meta().stray.get() }
     }
 
+    /// Reads a non-owning PTE at the given index.
+    ///
+    /// A non-owning PTE means that it does not account for a reference count
+    /// of the a page if the PTE points to a page. The original PTE still owns
+    /// the child page.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the index is within the bound.
     pub(super) unsafe fn read_pte(&self, idx: usize) -> C::E {
         debug_assert!(idx < nr_subpage_per_huge::<C>());
         let ptr = paddr_to_vaddr(self.paddr()) as *mut C::E;
+
         unsafe { load_pte(ptr.add(idx), Ordering::Relaxed) }
     }
 
+    /// Writes a page table entry at a given index.
+    ///
+    /// This operation will leak the old child if the old PTE is present.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that:
+    ///  1. The index must be within the bound;
+    ///  2. The PTE must represent a [`PteState`] in the same [`PageTableConfig`]
+    ///     and at the right paging level (`self.level() - 1`).
+    ///  3. The page table node will have the ownership of the [`PteState`]
+    ///     after this method.
     pub(super) unsafe fn write_pte(&mut self, idx: usize, pte: C::E) {
         debug_assert!(idx < nr_subpage_per_huge::<C>());
         let ptr = paddr_to_vaddr(self.paddr()) as *mut C::E;
+
         unsafe { store_pte(ptr.add(idx), pte, Ordering::Release) }
     }
 
+    /// Gets the mutable reference to the number of valid PTEs in the node.
     fn nr_children_mut(&mut self) -> &mut u16 {
         unsafe { &mut *self.meta().nr_children.get() }
     }
@@ -140,11 +243,22 @@ impl<C: PageTableConfig> Drop for PageTableGuard<'_, C> {
     }
 }
 
+/// The metadata of any kinds of page table pages.
+/// Make sure the the generic parameters don't effect the memory layout.
 #[derive(Debug)]
 pub(crate) struct PageTablePageMeta<C: PageTableConfig> {
+    /// The number of valid PTEs. It is mutable if the lock is held.
     nr_children: SyncUnsafeCell<u16>,
+    /// If the page table is detached from its parent.
+    ///
+    /// A page table can be detached from its parent while still being accessed,
+    /// since we use a RCU scheme to recycle page tables. If this flag is set,
+    /// it means that the parent is recycling the page table.
     stray: SyncUnsafeCell<bool>,
+    /// The level of the page table page. A page table page cannot be
+    /// referenced by page tables of different levels.
     level: PagingLevel,
+    /// The lock for the page table page.
     lock: AtomicU8,
     _phantom: PhantomData<C>,
 }

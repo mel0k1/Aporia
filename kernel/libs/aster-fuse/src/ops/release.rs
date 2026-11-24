@@ -1,3 +1,10 @@
+//! `FUSE_RELEASE` releases an open file handle, and `FUSE_RELEASEDIR` releases
+//! an open directory handle.
+//!
+//! Both request bodies contain [`ReleaseReq`] for the handle named by the target
+//! inode and [`ReleaseKind`] selects the opcode. Successful replies do not
+//! carry a payload.
+
 use bitflags::bitflags;
 use ostd::mm::{Infallible, VmReader, VmWriter};
 
@@ -6,9 +13,13 @@ use crate::{FuseError, FuseFileHandle, FuseOpcode, FuseOperation, FuseResult, Re
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub struct ReleaseReq {
+    /// File handle to release.
     fh: FuseFileHandle,
+    /// POSIX open flags associated with the handle.
     flags: u32,
+    /// FUSE-specific release flags.
     release_flags: ReleaseFlags,
+    /// Lock owner associated with the handle.
     lock_owner: u64,
 }
 
@@ -23,14 +34,21 @@ impl ReleaseReq {
     }
 }
 
+/// Flags for `FUSE_RELEASE` and `FUSE_RELEASEDIR` requests.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.18/source/include/uapi/linux/fuse.h#L506-L510>
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub struct ReleaseFlags(u32);
 
 bitflags! {
     impl ReleaseFlags: u32 {
+        /// The contents of the file should be flushed to disk.
         const RELEASE_FLUSH        = 1 << 0;
+        /// Unlocks BSD flock locks held by the process on release.
         const RELEASE_FLOCK_UNLOCK = 1 << 1;
+
+
 
         const _                    = !0;
     }
@@ -79,6 +97,7 @@ impl FuseOperation for ReleaseOperation {
     }
 }
 
+/// Options that determine how an open handle is released.
 #[derive(Clone, Copy, Debug)]
 pub struct ReleaseOptions {
     kind: ReleaseKind,
@@ -99,9 +118,13 @@ impl ReleaseOptions {
     }
 }
 
+/// Selects between `FUSE_RELEASE` (for files) and `FUSE_RELEASEDIR` (for
+/// directories). The protocol uses distinct opcodes for each.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReleaseKind {
+    /// Releases a regular file handle with `FUSE_RELEASE`.
     File,
+    /// Releases a directory handle with `FUSE_RELEASEDIR`.
     Directory,
 }
 

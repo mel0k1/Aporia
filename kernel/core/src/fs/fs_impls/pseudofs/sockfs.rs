@@ -25,12 +25,14 @@ pub(crate) struct SockFs {
 }
 
 impl SockFs {
+    /// Returns the singleton instance of the socket file system.
     pub(crate) fn singleton() -> &'static Arc<NaivePseudoFs> {
         static SOCKFS: Once<Arc<NaivePseudoFs>> = Once::new();
 
         NaivePseudoFs::singleton(&SOCKFS, "sockfs", SOCKFS_MAGIC)
     }
 
+    /// Creates a pseudo `Path` for a socket.
     pub(crate) fn new_path() -> Path {
         let (uid, gid) = utils::current_fs_ids();
         let socket_inode = Arc::new(Self::singleton().alloc_inode(
@@ -45,6 +47,7 @@ impl SockFs {
         })
     }
 
+    /// Returns the pseudo mount node of the socket file system.
     pub(crate) fn mount_node() -> &'static Arc<Mount> {
         static SOCKFS_MOUNT: Once<Arc<Mount>> = Once::new();
 

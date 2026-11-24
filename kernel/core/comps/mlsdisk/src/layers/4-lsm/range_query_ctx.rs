@@ -3,6 +3,9 @@ use core::ops::RangeInclusive;
 use super::{RecordKey, RecordValue};
 use crate::{prelude::*, util::BitMap};
 
+/// Context for a range query request.
+/// It tracks the completing process of each slot within the range.
+/// A "slot" indicates one specific key-value pair of the query.
 #[derive(Debug)]
 pub(crate) struct RangeQueryCtx<K, V> {
     start: K,
@@ -13,6 +16,8 @@ pub(crate) struct RangeQueryCtx<K, V> {
 }
 
 impl<K: RecordKey<K>, V: RecordValue> RangeQueryCtx<K, V> {
+    /// Create a new context with the given start key,
+    /// and the number of values for query.
     pub(crate) fn new(start: K, num_values: usize) -> Self {
         Self {
             start,
@@ -23,6 +28,8 @@ impl<K: RecordKey<K>, V: RecordValue> RangeQueryCtx<K, V> {
         }
     }
 
+    /// Gets the uncompleted range within the whole, returns `None`
+    /// if all slots are already completed.
     pub(crate) fn range_uncompleted(&self) -> Option<RangeInclusive<K>> {
         if self.is_completed() {
             return None;
@@ -34,15 +41,20 @@ impl<K: RecordKey<K>, V: RecordValue> RangeQueryCtx<K, V> {
         Some(first_uncompleted..=last_uncompleted)
     }
 
+    /// Whether the uncompleted range contains the target key.
     pub(crate) fn contains_uncompleted(&self, key: &K) -> bool {
         let nth = *key - self.start;
         nth < self.num_values && !self.complete_table[nth]
     }
 
+    /// Whether the range query context is completed, means
+    /// all slots are filled with the corresponding values.
     pub(crate) fn is_completed(&self) -> bool {
         self.min_uncompleted == self.num_values
     }
 
+    /// Complete one slot within the range, with the specific
+    /// key and the queried value.
     pub(crate) fn complete(&mut self, key: K, value: V) {
         let nth = key - self.start;
         if self.complete_table[nth] {
@@ -54,6 +66,7 @@ impl<K: RecordKey<K>, V: RecordValue> RangeQueryCtx<K, V> {
         self.update_min_uncompleted(nth);
     }
 
+    /// Mark the specific slot as completed.
     pub(crate) fn mark_completed(&mut self, key: K) {
         let nth = key - self.start;
 
@@ -61,6 +74,7 @@ impl<K: RecordKey<K>, V: RecordValue> RangeQueryCtx<K, V> {
         self.update_min_uncompleted(nth);
     }
 
+    /// Turn the context into final results.
     pub(crate) fn into_results(self) -> Vec<(K, V)> {
         debug_assert!(self.is_completed());
         self.res

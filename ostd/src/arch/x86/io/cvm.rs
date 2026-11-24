@@ -1,3 +1,5 @@
+//! I/O memory utilities for confidential VMs.
+
 use super::io_mem::read_once;
 use crate::{
     arch::mm::__memcpy_fallible,
@@ -5,6 +7,12 @@ use crate::{
     mm::PodOnce,
 };
 
+/// Copies from MMIO to regular memory with CVM-safe access granularity.
+///
+/// # Safety
+///
+/// - `dst_ptr` must be valid for writes of `count` bytes.
+/// - `src_io_ptr` must be valid for MMIO reads of `count` bytes.
 pub(super) unsafe fn copy_from_mmio(mut dst_ptr: *mut u8, mut src_io_ptr: *const u8, count: usize) {
     if count == 0 {
         return;
@@ -19,6 +27,12 @@ pub(super) unsafe fn copy_from_mmio(mut dst_ptr: *mut u8, mut src_io_ptr: *const
     debug_assert_eq!(copied, count);
 }
 
+/// Copies from regular memory to MMIO with CVM-safe access granularity.
+///
+/// # Safety
+///
+/// - `src_ptr` must be valid for reads of `count` bytes.
+/// - `dst_io_ptr` must be valid for MMIO writes of `count` bytes.
 pub(super) unsafe fn copy_to_mmio(mut src_ptr: *const u8, mut dst_io_ptr: *mut u8, count: usize) {
     if count == 0 {
         return;
@@ -33,6 +47,12 @@ pub(super) unsafe fn copy_to_mmio(mut src_ptr: *const u8, mut dst_io_ptr: *mut u
     debug_assert_eq!(copied, count);
 }
 
+/// Copies from MMIO to fallible memory with CVM-safe access granularity.
+///
+/// # Safety
+///
+/// - `dst_ptr` must be valid or in user space for writes of `count` bytes.
+/// - `src_io_ptr` must be valid for MMIO reads of `count` bytes.
 pub(super) unsafe fn copy_from_mmio_fallible(
     mut dst_ptr: *mut u8,
     mut src_io_ptr: *const u8,
@@ -46,6 +66,12 @@ pub(super) unsafe fn copy_from_mmio_fallible(
     )
 }
 
+/// Copies from fallible memory to MMIO with CVM-safe access granularity.
+///
+/// # Safety
+///
+/// - `dst_io_ptr` must be valid for MMIO writes of `count` bytes.
+/// - `src_ptr` must be valid or in user space for reads of `count` bytes.
 pub(super) unsafe fn copy_to_mmio_fallible(
     mut src_ptr: *const u8,
     mut dst_io_ptr: *mut u8,
@@ -75,6 +101,11 @@ pub(super) unsafe fn copy_to_mmio_fallible(
     copied_total
 }
 
+/// Fills MMIO with `value` for `count` bytes with CVM-safe access granularity.
+///
+/// # Safety
+///
+/// - `dst_io_ptr` must be valid for MMIO writes of `count` bytes.
 pub(super) unsafe fn memset_mmio(mut dst_io_ptr: *mut u8, value: u8, count: usize) {
     if count == 0 {
         return;
@@ -89,12 +120,19 @@ pub(super) unsafe fn memset_mmio(mut dst_io_ptr: *mut u8, value: u8, count: usiz
     debug_assert_eq!(written, count);
 }
 
+/// Copies from MMIO to fallible memory for a single value and returns bytes copied.
+///
+/// # Safety
+///
+/// - `dst_ptr` must be valid or in user space for writes of `size_of::<T>()` bytes.
+/// - `src_io_ptr` must be valid for MMIO reads of `size_of::<T>()` bytes.
 unsafe fn copy_from_mmio_val_fallible<T: PodOnce>(
     dst_ptr: &mut *mut u8,
     src_io_ptr: &mut *const u8,
 ) -> usize {
     let value = unsafe { read_once::<T>((*src_io_ptr).cast::<T>()) };
     let size = size_of::<T>();
+
     let failed =
         unsafe { __memcpy_fallible(*dst_ptr, core::ptr::addr_of!(value).cast::<u8>(), size) };
     let copied = size - failed;

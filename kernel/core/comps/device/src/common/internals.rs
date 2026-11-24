@@ -1,3 +1,5 @@
+//! Internal device interfaces and shared state.
+
 use alloc::{
     collections::BTreeMap,
     string::String,
@@ -21,46 +23,72 @@ use crate::{
     uevent::UeventVars,
 };
 
+/// What the registration sequence asks a device for.
+///
+/// This trait seals [`AnyDevice`] and has no public import path.
 pub trait DeviceInternals {
+    /// Returns the shared device state.
     fn base(&self) -> &DeviceBase;
 
+    /// Returns type-erased attributes contributed by the subsystem, the device type, and the device.
     fn attr_groups(&self) -> Vec<TyErasedAttr>;
 
+    /// Returns the `/dev` node overrides from the device type and the subsystem.
     fn devnode_override(&self) -> Option<DevNode>;
 
+    /// Appends device type, bound driver, and subsystem-specific uevent entries.
     fn append_uevent_vars(&self, vars: &mut UeventVars) -> Result<()>;
 
+    /// Returns whether the device gets a `device` symlink to its parent
+    /// (class devices only; a device type may opt out).
     fn wants_device_link(&self) -> bool {
         true
     }
 }
 
+/// The properties and registration status shared by all devices.
 pub struct DeviceBase {
     fields: ObjFields<dyn AnyDevice>,
+    /// The parent in the sysfs tree, as the registration sequence edits it.
     tree_parent: Once<TreeParent>,
+    /// The entries of the device's directory: symlinks, glue directories,
+    /// and child devices of any kind.
     children: RwMutex<BTreeMap<SysStr, Arc<dyn SysObj>>>,
     attrs: AttrTable,
+    /// The device this one is reached through, if any.
     parent: Option<Arc<dyn AnyDevice>>,
     devnum: Option<DevNum>,
     state: Mutex<State>,
+    /// Glue directories created under this device, one per class of child.
     glue_dirs: GlueDirs,
+    /// Which of the symlinks that `add` may create exist,
+    /// so that `teardown` removes only links this device made.
     links: Mutex<Links>,
+    /// The `/dev` node created for this device, kept so it can be deleted.
     devnode: Mutex<Option<DevNodeRequest>>,
 }
 
 impl DeviceBase {
+    /// Returns the device name, which is also its directory name.
     pub(crate) fn name(&self) -> &SysStr {
         self.fields.name()
     }
 
+    /// Returns the parent device, if any.
     pub(crate) fn parent(&self) -> Option<&Arc<dyn AnyDevice>> {
         self.parent.as_ref()
     }
 
+    /// Returns whether the device is registered.
     pub(crate) fn is_added(&self) -> bool {
         matches!(*self.state.lock(), State::Adding(_) | State::Added(_))
     }
 
+    /// Creates the shared state of a device.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `name` is not a valid `SysTree` node name.
     pub(crate) fn new(
         name: SysStr,
         parent: Option<Arc<dyn AnyDevice>>,
@@ -139,6 +167,7 @@ impl SysTreeEdit for DeviceBase {
         !self.children.read().is_empty()
     }
 
+    /// Returns the device's path, computed as [`SysObj::path`] computes it.
     fn tree_path(&self) -> String {
         let Some(parent) = self.fields.parent() else {
             return String::from(self.name().as_ref());

@@ -1,3 +1,4 @@
+//! Sorted String Table.
 use alloc::vec;
 use core::{marker::PhantomData, num::NonZeroUsize, ops::RangeInclusive};
 
@@ -17,6 +18,11 @@ use crate::{
     prelude::*,
 };
 
+/// Sorted String Table (SST) for `TxLsmTree`.
+///
+/// Responsible for storing, managing key-value records on a `TxLog` (L3).
+/// Records are serialized, sorted, organized on the `TxLog`.
+/// Supports three access modes: point query, range query and whole scan.
 pub(super) struct SSTable<K, V> {
     id: TxLogId,
     footer: Footer<K>,
@@ -24,12 +30,15 @@ pub(super) struct SSTable<K, V> {
     phantom: PhantomData<(K, V)>,
 }
 
+/// Footer of a `SSTable`, contains metadata of itself
+/// index entries for locating record blocks.
 #[derive(Debug)]
 struct Footer<K> {
     meta: FooterMeta,
     index: Vec<IndexEntry<K>>,
 }
 
+/// Footer metadata to describe a `SSTable`.
 #[padding_struct]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
@@ -42,6 +51,7 @@ struct FooterMeta {
 }
 const FOOTER_META_SIZE: usize = size_of::<FooterMeta>();
 
+/// Index entry to describe a `RecordBlock` in a `SSTable`.
 #[derive(Debug)]
 struct IndexEntry<K> {
     pos: BlockId,
@@ -49,17 +59,21 @@ struct IndexEntry<K> {
     last: K,
 }
 
+/// A block full of serialized records.
 struct RecordBlock {
     buf: Vec<u8>,
 }
 const RECORD_BLOCK_NBLOCKS: usize = 32;
+/// The size of a `RecordBlock`, which is a multiple of `BLOCK_SIZE`.
 const RECORD_BLOCK_SIZE: usize = RECORD_BLOCK_NBLOCKS * BLOCK_SIZE;
 
+/// Accessor for a query.
 enum QueryAccessor<K> {
     Point(K),
     Range(RangeInclusive<K>),
 }
 
+/// Iterator over `RecordBlock` for query purpose.
 struct BlockQueryIter<'a, K, V> {
     block: &'a RecordBlock,
     offset: usize,
@@ -67,18 +81,21 @@ struct BlockQueryIter<'a, K, V> {
     phantom: PhantomData<(K, V)>,
 }
 
+/// Accessor for a whole table scan.
 struct ScanAccessor<'a, K, V> {
     all_synced: bool,
     discard_unsynced: bool,
     event_listener: Option<&'a Arc<dyn TxEventListener<K, V>>>,
 }
 
+/// Iterator over `RecordBlock` for scan purpose.
 struct BlockScanIter<'a, K, V> {
     block: Arc<RecordBlock>,
     offset: usize,
     accessor: ScanAccessor<'a, K, V>,
 }
 
+/// Iterator over `SSTable`.
 pub(super) struct SstIter<'a, K, V, D> {
     sst: &'a SSTable<K, V>,
     curr_nth_index: usize,
@@ -86,6 +103,13 @@ pub(super) struct SstIter<'a, K, V, D> {
     tx_log_store: &'a Arc<TxLogStore<D>>,
 }
 
+/// Format on a `TxLog`:
+///
+/// ```text
+/// |    [Record]     |    [Record]     |...|         Footer            |
+/// |K|flag|V(V)| ... |    [Record]     |...| [IndexEntry] | FooterMeta |
+/// |RECORD_BLOCK_SIZE|RECORD_BLOCK_SIZE|...|                           |
+/// ```
 impl<K: RecordKey<K>, V: RecordValue> SSTable<K, V> {
     const K_SIZE: usize = size_of::<K>();
     const V_SIZE: usize = size_of::<V>();
@@ -95,14 +119,19 @@ impl<K: RecordKey<K>, V: RecordValue> SSTable<K, V> {
     const INDEX_ENTRY_SIZE: usize = BID_SIZE + 2 * Self::K_SIZE;
     const CACHE_CAP: usize = 1024;
 
+    /// Return the ID of this `SSTable`, which is the same ID
+    /// to the underlying `TxLog`.
     pub(super) fn id(&self) -> TxLogId {
         self.id
     }
 
+    /// Return the sync ID of this `SSTable`, it may be smaller than the
+    /// current master sync ID.
     pub(super) fn sync_id(&self) -> SyncId {
         self.footer.meta.sync_id
     }
 
+    /// The range of keys covered by this `SSTable`.
     pub(super) fn range(&self) -> RangeInclusive<K> {
         RangeInclusive::new(
             self.footer.index[0].first,
@@ -110,15 +139,23 @@ impl<K: RecordKey<K>, V: RecordValue> SSTable<K, V> {
         )
     }
 
+    /// Whether the target key is within the range, "within the range" doesn't mean
+    /// the `SSTable` do have this key.
     pub(super) fn is_within_range(&self, key: &K) -> bool {
         self.range().contains(key)
     }
 
+    /// Whether the target range is overlapped with the range of this `SSTable`.
     pub(super) fn overlap_with(&self, rhs_range: &RangeInclusive<K>) -> bool {
         let lhs_range = self.range();
         !(lhs_range.end() < rhs_range.start() || lhs_range.start() > rhs_range.end())
     }
 
+    /// Point query.
+    ///
+    /// # Panics
+    ///
+    /// This method must be called within a TX. Otherwise, this method panics.
     pub(super) fn access_point<D: BlockSet + 'static>(
         &self,
         key: &K,
@@ -152,6 +189,11 @@ impl<K: RecordKey<K>, V: RecordValue> SSTable<K, V> {
             .ok_or(Error::with_msg(NotFound, "target value not found in SST"))
     }
 
+    /// Range query.
+    ///
+    /// # Panics
+    ///
+    /// This method must be called within a TX. Otherwise, this method panics.
     pub(super) fn access_range<D: BlockSet + 'static>(
         &self,
         range_query_ctx: &mut RangeQueryCtx<K, V>,
@@ -194,6 +236,8 @@ impl<K: RecordKey<K>, V: RecordValue> SSTable<K, V> {
         Ok(())
     }
 
+    /// Locate the target record block given its position, it
+    /// resides in either the cache or the log.
     fn target_record_block<D: BlockSet + 'static>(
         &self,
         target_pos: BlockId,
@@ -204,6 +248,7 @@ impl<K: RecordKey<K>, V: RecordValue> SSTable<K, V> {
             Ok(cached_rb.clone())
         } else {
             let mut rb = RecordBlock::from_buf(vec![0; RECORD_BLOCK_SIZE]);
+
             let tx_log = tx_log_store.open_log(self.id, false)?;
             tx_log.read(target_pos, BufMut::try_from(rb.as_mut_slice()).unwrap())?;
             let rb = Arc::new(rb);
@@ -212,6 +257,13 @@ impl<K: RecordKey<K>, V: RecordValue> SSTable<K, V> {
         }
     }
 
+    /// Return the iterator over this `SSTable`.
+    /// The given `event_listener` (optional) is used on dropping records
+    /// during iteration.
+    ///
+    /// # Panics
+    ///
+    /// This method must be called within a TX. Otherwise, this method panics.
     pub(super) fn iter<'a, D: BlockSet + 'static>(
         &'a self,
         sync_id: SyncId,
@@ -242,6 +294,11 @@ impl<K: RecordKey<K>, V: RecordValue> SSTable<K, V> {
         }
     }
 
+    /// Scan the whole SST and collect all records.
+    ///
+    /// # Panics
+    ///
+    /// This method must be called within a TX. Otherwise, this method panics.
     pub(super) fn access_scan<D: BlockSet + 'static>(
         &self,
         sync_id: SyncId,
@@ -255,6 +312,12 @@ impl<K: RecordKey<K>, V: RecordValue> SSTable<K, V> {
         Ok(all_records)
     }
 
+    /// Builds a SST given a bunch of records, after the SST becomes immutable.
+    /// The given `event_listener` (optional) is used on adding records.
+    ///
+    /// # Panics
+    ///
+    /// This method must be called within a TX. Otherwise, this method panics.
     pub(super) fn build<'a, D: BlockSet + 'static, I, KVex>(
         records_iter: I,
         sync_id: SyncId,
@@ -279,6 +342,8 @@ impl<K: RecordKey<K>, V: RecordValue> SSTable<K, V> {
         })
     }
 
+    /// Builds all the record blocks from the given records. Put the blocks to the log
+    /// and the cache.
     fn build_record_blocks<'a, D: BlockSet + 'static, I, KVex>(
         records_iter: I,
         tx_log: &'a TxLog<D>,
@@ -388,6 +453,8 @@ impl<K: RecordKey<K>, V: RecordValue> SSTable<K, V> {
         Ok((total_records, index_vec))
     }
 
+    /// Builds the footer from the given index entries. The footer block will be appended
+    /// to the SST log's end.
     fn build_footer<'a, D: BlockSet + 'static>(
         index_vec: Vec<IndexEntry<K>>,
         total_records: usize,
@@ -425,10 +492,16 @@ impl<K: RecordKey<K>, V: RecordValue> SSTable<K, V> {
         })
     }
 
+    /// Builds a SST from a `TxLog`, loads the footer and the index blocks.
+    ///
+    /// # Panics
+    ///
+    /// This method must be called within a TX. Otherwise, this method panics.
     pub(super) fn from_log<D: BlockSet + 'static>(tx_log: &Arc<TxLog<D>>) -> Result<Self> {
         let nblocks = tx_log.nblocks();
 
         let mut rbuf = Buf::alloc(1)?;
+
         tx_log.read(nblocks - 1, rbuf.as_mut())?;
         let meta = FooterMeta::from_bytes(&rbuf.as_slice()[BLOCK_SIZE - FOOTER_META_SIZE..]);
 
@@ -639,6 +712,7 @@ impl<K: RecordKey<K>, V: RecordValue, D: BlockSet + 'static> Iterator for SstIte
         let curr_rb_iter = self.curr_rb_iter.take().unwrap();
 
         self.curr_nth_index += 1;
+
         if self.curr_nth_index >= self.sst.footer.meta.num_index as _ {
             return None;
         }
@@ -677,6 +751,7 @@ impl<K: Debug, V> Debug for SSTable<K, V> {
     }
 }
 
+/// Flag bit for records in SSTable.
 #[repr(u8)]
 #[derive(Debug, Eq, PartialEq)]
 enum RecordFlag {

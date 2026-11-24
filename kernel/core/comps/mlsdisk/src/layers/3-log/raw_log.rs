@@ -1,3 +1,87 @@
+//! A store of raw (untrusted) logs.
+//!
+//! `RawLogStore<D>` allows creating, deleting, reading and writing
+//! `RawLog<D>`. Each raw log is uniquely identified by its ID (`RawLogId`).
+//! Writing to a raw log is append only.
+//!
+//! `RawLogStore<D>` stores raw logs on a disk of `D: BlockSet`.
+//! Internally, `RawLogStore<D>` manages the disk space with `ChunkAlloc`
+//! so that the disk space can be allocated and deallocated in the units of
+//! chunk. An allocated chunk belongs to exactly one raw log. And one raw log
+//! may be backed by multiple chunks. The raw log is represented externally
+//! as a `BlockLog`.
+//!
+//! # Examples
+//!
+//! Raw logs are manipulated and accessed within transactions.
+//!
+//! ```
+//! fn concat_logs<D>(
+//!     log_store: &RawLogStore<D>,
+//!     log_ids: &[RawLogId]
+//! ) -> Result<RawLogId> {
+//!     let mut tx = log_store.new_tx();
+//!     let res: Result<_> = tx.context(|| {
+//!         let mut buf = Buf::alloc(1)?;
+//!         let output_log = log_store.create_log()?;
+//!         for log_id in log_ids {
+//!             let input_log = log_store.open_log(log_id, false)?;
+//!             let input_len = input_log.nblocks();
+//!             let mut pos = 0 as BlockId;
+//!             while pos < input_len {
+//!                 input_log.read(pos, buf.as_mut())?;
+//!                 output_log.append(buf.as_ref())?;
+//!             }
+//!         }
+//!         Ok(output_log.id())
+//!     });
+//!     if res.is_ok() {
+//!         tx.commit()?;
+//!     } else {
+//!         tx.abort();
+//!     }
+//!     res
+//! }
+//! ```
+//!
+//! If any error occurs (e.g., failures to open, read, or write a log) during
+//! the transaction, then all prior changes to raw logs shall have no
+//! effects. On the other hand, if the commit operation succeeds, then
+//! all changes made in the transaction shall take effect as a whole.
+//!
+//! # Expected behaviors
+//!
+//! We provide detailed descriptions about the expected behaviors of raw log
+//! APIs under transactions.
+//!
+//! 1. The local changes made (e.g., creations, deletions, writes) in a TX are
+//!    immediately visible to the TX, but not other TX until the TX is committed.
+//!    For example, a newly-created log within TX A is immediately usable within TX,
+//!    but becomes visible to other TX only until A is committed.
+//!    As another example, when a log is deleted within a TX, then the TX can no
+//!    longer open the log. But other concurrent TX can still open the log.
+//!
+//! 2. If a TX is aborted, then all the local changes made in the TX will be
+//!    discarded.
+//!
+//! 3. At any given time, a log can have at most one writer TX.
+//!    A TX becomes the writer of a log when the log is opened with the write
+//!    permission in the TX. And it stops being the writer TX of the log only when
+//!    the TX is terminated (not when the log is closed within TX).
+//!    This single-writer rule avoids potential conflicts between concurrent
+//!    writing to the same log.
+//!
+//! 4. Log creation does not conflict with log deleation, read, or write as
+//!    every newly-created log is assigned a unique ID automatically.
+//!
+//! 4. Deleting a log does not affect any opened instance of the log in the TX
+//!    or other TX (similar to deleting a file in a UNIX-style system).
+//!    It is only until the deleting TX is committed and the last
+//!    instance of the log is closed shall the log be deleted and its disk space
+//!    be freed.
+//!
+//! 5. The TX commitment will not fail due to conflicts between concurrent
+//!    operations in different TX.
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use serde::{Deserialize, Serialize};
@@ -14,8 +98,10 @@ use crate::{
     util::LazyDelete,
 };
 
+/// The ID of a raw log.
 pub(super) type RawLogId = u64;
 
+/// A store of raw logs.
 pub(super) struct RawLogStore<D> {
     state: Arc<Mutex<State>>,
     disk: D,
@@ -25,10 +111,13 @@ pub(super) struct RawLogStore<D> {
 }
 
 impl<D: BlockSet> RawLogStore<D> {
+    /// Creates a new store of raw logs,
+    /// given a chunk allocator and an untrusted disk.
     pub(super) fn new(disk: D, tx_provider: Arc<TxProvider>, chunk_alloc: ChunkAlloc) -> Arc<Self> {
         Self::from_parts(RawLogStoreState::new(), disk, chunk_alloc, tx_provider)
     }
 
+    /// Constructs a `RawLogStore` from its parts.
     pub(super) fn from_parts(
         state: RawLogStoreState,
         disk: D,
@@ -127,14 +216,21 @@ impl<D: BlockSet> RawLogStore<D> {
         }
     }
 
+    /// Creates a new transaction for `RawLogStore`.
     pub(super) fn new_tx(&self) -> CurrentTx<'_> {
         self.tx_provider.new_tx()
     }
 
+    /// Syncs all the data managed by `RawLogStore` for persistence.
     pub(super) fn sync(&self) -> Result<()> {
         Ok(())
     }
 
+    /// Creates a new raw log with a new log ID.
+    ///
+    /// # Panics
+    ///
+    /// This method must be called within a TX. Otherwise, this method panics.
     pub(super) fn create_log(&self) -> Result<RawLog<D>> {
         let mut state = self.state.lock();
         let new_log_id = state.alloc_log_id();
@@ -158,8 +254,17 @@ impl<D: BlockSet> RawLogStore<D> {
         })
     }
 
+    /// Opens the raw log of a given ID.
+    ///
+    /// For any log at any time, there can be at most one TX that opens the log
+    /// in the appendable mode.
+    ///
+    /// # Panics
+    ///
+    /// This method must be called within a TX. Otherwise, this method panics.
     pub(super) fn open_log(&self, log_id: u64, can_append: bool) -> Result<RawLog<D>> {
         let mut state = self.state.lock();
+
         let lazy_delete = state
             .lazy_deletes
             .get(&log_id)
@@ -168,6 +273,7 @@ impl<D: BlockSet> RawLogStore<D> {
         let mut current_tx = self.tx_provider.current();
 
         let log_entry_opt = state.persistent.find_log(log_id);
+
         if let Some(log_entry) = log_entry_opt.as_ref() {
             if can_append {
                 state.add_to_write_set(log_id)?;
@@ -199,6 +305,11 @@ impl<D: BlockSet> RawLogStore<D> {
         })
     }
 
+    /// Deletes the raw log of a given ID.
+    ///
+    /// # Panics
+    ///
+    /// This method must be called within a TX. Otherwise, this method panics.
     pub(super) fn delete_log(&self, log_id: RawLogId) -> Result<()> {
         let mut current_tx = self.tx_provider.current();
 
@@ -225,6 +336,7 @@ impl<D> Debug for RawLogStore<D> {
     }
 }
 
+/// A raw (untrusted) log.
 pub(super) struct RawLog<D> {
     log_id: RawLogId,
     log_entry: Option<Arc<Mutex<RawLogEntry>>>,
@@ -235,27 +347,38 @@ pub(super) struct RawLog<D> {
     can_append: bool,
 }
 
+/// A reference (handle) to a raw log.
 struct RawLogRef<'a, D> {
     log_store: &'a RawLogStore<D>,
     log_head: Option<RawLogHeadRef<'a>>,
     log_tail: Option<RawLogTailRef<'a>>,
 }
 
+/// A head reference (handle) to a raw log.
 struct RawLogHeadRef<'a> {
     entry: MutexGuard<'a, RawLogEntry>,
 }
 
+/// A tail reference (handle) to a raw log.
 struct RawLogTailRef<'a> {
     log_id: RawLogId,
     current: CurrentTx<'a>,
 }
 
 impl<D: BlockSet> BlockLog for RawLog<D> {
+    /// Reads one or multiple blocks at a specified position.
+    ///
+    /// # Panics
+    ///
+    /// This method must be called within a TX. Otherwise, this method panics.
     fn read(&self, pos: BlockId, buf: BufMut) -> Result<()> {
         let log_ref = self.as_ref();
         log_ref.read(pos, buf)
     }
 
+    /// Appends one or multiple blocks at the end.
+    ///
+    /// This method must be called within a TX. Otherwise, this method panics.
     fn append(&self, buf: BufRef) -> Result<BlockId> {
         if !self.can_append {
             return_errno_with_msg!(PermissionDenied, "raw log not in append mode");
@@ -269,11 +392,17 @@ impl<D: BlockSet> BlockLog for RawLog<D> {
         Ok(pos)
     }
 
+    /// Ensures that blocks are persisted to the disk.
     fn flush(&self) -> Result<()> {
         self.log_store.disk.flush()?;
         Ok(())
     }
 
+    /// Returns the number of blocks.
+    ///
+    /// # Panics
+    ///
+    /// This method must be called within a TX. Otherwise, this method panics.
     fn nblocks(&self) -> usize {
         let log_ref = self.as_ref();
         log_ref.nblocks()
@@ -281,10 +410,16 @@ impl<D: BlockSet> BlockLog for RawLog<D> {
 }
 
 impl<D> RawLog<D> {
+    /// Gets the unique ID of raw log.
     pub(super) fn id(&self) -> RawLogId {
         self.log_id
     }
 
+    /// Gets the reference (handle) of raw log.
+    ///
+    /// # Panics
+    ///
+    /// This method must be called within a TX. Otherwise, this method panics.
     fn as_ref(&self) -> RawLogRef<'_, D> {
         let log_head = self.log_entry.as_ref().map(|entry| RawLogHeadRef {
             entry: entry.lock(),
@@ -342,6 +477,12 @@ impl<D> Debug for RawLog<D> {
 }
 
 impl<D: BlockSet> RawLogRef<'_, D> {
+    /// Reads one or multiple blocks at a specified position of the log.
+    /// First head then tail if necessary.
+    ///
+    /// # Panics
+    ///
+    /// This method must be called within a TX. Otherwise, this method panics.
     pub(crate) fn read(&self, mut pos: BlockId, mut buf: BufMut) -> Result<()> {
         let mut nblocks = buf.nblocks();
         let mut buf_slice = buf.as_mut_slice();
@@ -355,6 +496,7 @@ impl<D: BlockSet> RawLogRef<'_, D> {
         }
 
         let disk = &self.log_store.disk;
+
         let head_opt = &self.log_head;
         if let Some(head) = head_opt
             && pos < head_len
@@ -384,6 +526,11 @@ impl<D: BlockSet> RawLogRef<'_, D> {
         Ok(())
     }
 
+    /// Appends one or multiple blocks at the end (to the tail).
+    ///
+    /// # Panics
+    ///
+    /// This method must be called within a TX. Otherwise, this method panics.
     pub(crate) fn append(&mut self, buf: BufRef) -> Result<()> {
         let append_nblocks = buf.nblocks();
         let log_tail = self
@@ -419,6 +566,11 @@ impl<D: BlockSet> RawLogRef<'_, D> {
         Ok(())
     }
 
+    /// Returns the number of blocks.
+    ///
+    /// # Panics
+    ///
+    /// This method must be called within a TX. Otherwise, this method panics.
     pub(crate) fn nblocks(&self) -> usize {
         self.head_len() + self.tail_len()
     }
@@ -462,6 +614,7 @@ impl RawLogHeadRef<'_> {
         Ok(())
     }
 
+    /// Collect and prepare a set of consecutive blocks in head for a read request.
     pub(crate) fn prepare_blocks(&self, mut offset: BlockId, nblocks: usize) -> Vec<BlockId> {
         let mut res_blocks = Vec::with_capacity(nblocks);
         let chunks = &self.entry.head.chunks;
@@ -479,6 +632,7 @@ impl RawLogHeadRef<'_> {
 }
 
 impl RawLogTailRef<'_> {
+    /// Apply given function to the immutable tail.
     pub(crate) fn tail_with<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&RawLogTail) -> R,
@@ -493,6 +647,7 @@ impl RawLogTailRef<'_> {
         })
     }
 
+    /// Apply given function to the mutable tail.
     pub(crate) fn tail_mut_with<F, R>(&mut self, f: F) -> R
     where
         F: FnOnce(&mut RawLogTail) -> R,
@@ -569,6 +724,7 @@ impl RawLogTailRef<'_> {
         })
     }
 
+    /// Collect and prepare a set of consecutive blocks in tail for a read/append request.
     fn prepare_blocks(&self, mut offset: BlockId, nblocks: usize) -> Vec<BlockId> {
         self.tail_with(|tail: &RawLogTail| {
             let mut res_blocks = Vec::with_capacity(nblocks);
@@ -604,6 +760,7 @@ impl RawLogTailRef<'_> {
     }
 }
 
+/// The volatile and persistent state of a `RawLogStore`.
 struct State {
     persistent: RawLogStoreState,
     next_free_log_id: u64,
@@ -611,16 +768,19 @@ struct State {
     lazy_deletes: HashMap<RawLogId, Arc<LazyDelete<RawLogEntry>>>,
 }
 
+/// The persistent state of a `RawLogStore`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(super) struct RawLogStoreState {
     log_table: HashMap<RawLogId, RawLogEntry>,
 }
 
+/// A log entry implies the persistent state of the raw log.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(super) struct RawLogEntry {
     head: RawLogHead,
 }
 
+/// A log head contains chunk metadata of a log's already-persist data.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(super) struct RawLogHead {
     pub chunks: Vec<ChunkId>,
@@ -714,11 +874,13 @@ impl RawLogHead {
     }
 }
 
+/// A persistent edit to the state of `RawLogStore`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(super) struct RawLogStoreEdit {
     edit_table: HashMap<RawLogId, RawLogEdit>,
 }
 
+/// The basic unit of a persistent edit to the state of `RawLogStore`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(super) enum RawLogEdit {
     Create(RawLogCreate),
@@ -726,37 +888,45 @@ pub(super) enum RawLogEdit {
     Delete,
 }
 
+/// An edit that implies a log being created.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(super) struct RawLogCreate {
     tail: RawLogTail,
 }
 
+/// An edit that implies an existing log being appended.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(super) struct RawLogAppend {
     tail: RawLogTail,
 }
 
+/// A log tail contains chunk metadata of a log's TX-ongoing data.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(super) struct RawLogTail {
     head_last_chunk_id: ChunkId,
     head_last_chunk_free_blocks: u16,
+
     chunks: Vec<ChunkId>,
+
     num_blocks: u32,
 }
 
 impl RawLogStoreEdit {
+    /// Creates a new empty edit table.
     pub(super) fn new() -> Self {
         Self {
             edit_table: HashMap::new(),
         }
     }
 
+    /// Records a log creation in the edit.
     pub(super) fn create_log(&mut self, new_log_id: RawLogId) {
         let create_edit = RawLogEdit::Create(RawLogCreate::new());
         let edit_exists = self.edit_table.insert(new_log_id, create_edit);
         debug_assert!(edit_exists.is_none());
     }
 
+    /// Records a log being opened in the edit.
     pub(super) fn open_log(&mut self, log_id: RawLogId, log_entry: &RawLogEntry) {
         match self.edit_table.get(&log_id) {
             None => {
@@ -769,6 +939,7 @@ impl RawLogStoreEdit {
                 if let RawLogEdit::Create(_) = edit {
                     unreachable!();
                 }
+
                 if let RawLogEdit::Delete = edit {
                     panic!("try to open a deleted log!");
                 }
@@ -776,6 +947,7 @@ impl RawLogStoreEdit {
         }
     }
 
+    /// Records a log deletion in the edit, returns the tail chunks of the deleted log.
     pub(super) fn delete_log(&mut self, log_id: RawLogId) -> Option<Vec<ChunkId>> {
         match self.edit_table.insert(log_id, RawLogEdit::Delete) {
             None => None,

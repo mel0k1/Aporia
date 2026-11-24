@@ -20,17 +20,26 @@ use crate::{
     vm::{GuestModeHooks, GuestPhysMemSpace},
 };
 
+/// An execution object that keeps VMX operation enabled.
 pub(crate) struct ArchGuestMode {
     vmx_guard: VmxGuard,
 }
 
 impl ArchGuestMode {
+    /// Creates a guest execution object without entering a guest.
     pub(crate) fn new() -> Result<Self> {
         Ok(Self {
             vmx_guard: VmxGuard::acquire_vmx()?,
         })
     }
 
+    /// Attempts one guest entry and returns an exit that needs higher-level handling.
+    ///
+    /// Returns `None` for an internally handled exit, with local IRQs enabled.
+    ///
+    /// # Panics
+    ///
+    /// Local IRQs must be enabled.
     pub(crate) fn execute_once<H: GuestModeHooks + ?Sized>(
         &self,
         context: &mut GuestContext,
@@ -57,6 +66,7 @@ impl ArchGuestMode {
 }
 
 impl CurrentVmcs<'_> {
+    /// Runs a guest and restores host state before returning, including on errors.
     fn run_guest(
         &self,
         arch: &mut VcpuArchState,
@@ -69,6 +79,7 @@ impl CurrentVmcs<'_> {
         self.sync_host()?;
 
         let kernel_gs_base_restorer = KernelGsBaseRestorer::new(self.irq_guard());
+
         let syscall_msrs_restorer = unsafe { arch.load_run_state(self.irq_guard()) }?;
 
         unsafe { self.run(&mut arch.regs) }?;
@@ -86,6 +97,7 @@ impl CurrentVmcs<'_> {
         Ok(exit)
     }
 
+    /// Prepares events and returns whether a new external interrupt is armed.
     fn prepare_events(&self, arch: &VcpuArchState) -> Result<bool> {
         let timer_count = if let Some(deadline) = arch.timer_deadline {
             let rate = unsafe { msr::rdmsr(msr::IA32_VMX_MISC) } & 0x1f;
@@ -94,6 +106,7 @@ impl CurrentVmcs<'_> {
         } else {
             u32::MAX
         };
+
         unsafe { self.write(guest::VMX_PREEMPTION_TIMER_VALUE, timer_count as usize) }?;
 
         let interrupt = if let Some(interrupt) = arch.pending_interrupt {
@@ -117,9 +130,11 @@ impl CurrentVmcs<'_> {
         } else {
             primary &= !(control::PrimaryControls::INTERRUPT_WINDOW_EXITING.bits() as usize);
         }
+
         unsafe { self.write(control::PRIMARY_PROCBASED_EXEC_CONTROLS, primary) }?;
 
         let vector = interrupt.map_or(0, |interrupt| (1 << 31) | usize::from(interrupt.vector));
+
         unsafe { self.write(control::VMENTRY_INTERRUPTION_INFO_FIELD, vector) }?;
 
         Ok(interrupt.is_some())
@@ -164,6 +179,7 @@ impl<'a> Drop for SyscallMsrsRestorer<'a> {
             limit: gdt::gdt_limit(),
             base: VirtAddr::new(gdt::gdt_base(self.irq_guard) as u64),
         };
+
         unsafe { lgdt(&gdtr) };
 
         syscall::configure_msrs(self.irq_guard);

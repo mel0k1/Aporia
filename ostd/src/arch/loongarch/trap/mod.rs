@@ -1,3 +1,5 @@
+//! Handles trap.
+
 #[expect(clippy::module_inception)]
 mod trap;
 
@@ -11,12 +13,24 @@ use crate::{
     irq::call_irq_callback_functions,
 };
 
+/// Initializes trap handling on LoongArch.
+///
+/// This function will:
+/// - Set `ecfg`'s VS bit to zero.
+/// - Set `eentry` to the trap entry.
+///
+/// # Safety
+///
+/// On the current CPU, this function must be called
+/// - only once and
+/// - before any trap can occur.
 pub(crate) unsafe fn init_on_cpu() {
     unsafe {
         trap::init_on_cpu();
     }
 }
 
+/// Handle traps (only from kernel).
 #[unsafe(no_mangle)]
 unsafe extern "C" fn trap_handler(f: &mut TrapFrame) {
     let cause = estat::read().cause();

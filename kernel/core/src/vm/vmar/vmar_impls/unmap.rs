@@ -9,6 +9,9 @@ use crate::{
 };
 
 impl Vmar {
+    /// Clears all mappings.
+    ///
+    /// After being cleared, this VMAR will become an empty VMAR.
     pub(super) fn clear(&self) {
         let mut inner = self.inner.write();
         for vm_mapping in inner.vm_mappings.iter() {
@@ -28,6 +31,13 @@ impl Vmar {
         cursor.flusher().sync_tlb_flush();
     }
 
+    /// Destroys all mappings that fall within the specified
+    /// range in bytes.
+    ///
+    /// The range's start and end addresses must be page-aligned.
+    ///
+    /// Mappings may fall partially within the range; only the overlapped
+    /// portions of the mappings are unmapped.
     pub(crate) fn remove_mapping(&self, range: Range<usize>) {
         debug_assert!(range.start.is_multiple_of(PAGE_SIZE));
         debug_assert!(range.end.is_multiple_of(PAGE_SIZE));
@@ -37,6 +47,21 @@ impl Vmar {
         inner.alloc_free_region_exact_truncate(self, range.start, range.len(), &mut rss_delta);
     }
 
+    /// Discards all pages in the mappings that fall within the specified
+    /// range in bytes.
+    ///
+    /// The pages will be reloaded from a clean state by the page fault
+    /// handler if they are accessed later.
+    ///
+    /// The range's start and end addresses must be page-aligned.
+    ///
+    /// Mappings may fall partially within the range; only the pages in the
+    /// overlapped portions of the mappings are discarded.
+    ///
+    /// If the range contains unmapped pages, an [`ENOMEM`] error will be returned.
+    /// Note that all other pages are still discarded.
+    ///
+    /// [`ENOMEM`]: Errno::ENOMEM
     pub(crate) fn discard_pages(&self, range: Range<usize>) -> Result<()> {
         debug_assert!(range.start.is_multiple_of(PAGE_SIZE));
         debug_assert!(range.end.is_multiple_of(PAGE_SIZE));

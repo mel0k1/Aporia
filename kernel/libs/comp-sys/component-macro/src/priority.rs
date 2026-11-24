@@ -12,6 +12,7 @@ use crate::COMPONENT_FILE_NAME;
 #[derive(Debug)]
 pub(crate) struct ComponentInfo {
     name: String,
+    /// The absolute path to the component
     path: String,
     priority: u16,
 }
@@ -26,6 +27,7 @@ impl ToTokens for ComponentInfo {
     }
 }
 
+/// Automatic generate all the component information
 pub(crate) fn component_generate() -> Vec<ComponentInfo> {
     let mut metadata = metadata();
 
@@ -70,8 +72,10 @@ pub(crate) fn component_generate() -> Vec<ComponentInfo> {
     for package in component_packages {
         let path = {
             let id = package["id"].as_str().unwrap();
+
             assert!(id.starts_with("path+file://"));
             let id = id.trim_start_matches("path+file://");
+
             id.split(['#', '@']).next().unwrap()
         };
         let component_info = {
@@ -92,6 +96,7 @@ pub(crate) fn component_generate() -> Vec<ComponentInfo> {
     components_info
 }
 
+/// Get the path to the Components.toml file
 pub(crate) fn get_component_toml_path() -> TokenStream {
     let metadata = metadata();
     let workspace_root = metadata["workspace_root"].as_str().unwrap();
@@ -114,6 +119,7 @@ fn is_component(package: &JsonValue) -> bool {
     false
 }
 
+/// Get all the components name, this function will also check if the Components.toml contain all the components.
 fn get_components_name(workspace_root: &str, packages: &JsonValue) -> Vec<String> {
     let file_components_name = read_component_file(workspace_root);
     let mut comps_name = Vec::new();
@@ -134,6 +140,7 @@ fn get_components_name(workspace_root: &str, packages: &JsonValue) -> Vec<String
     comps_name
 }
 
+/// read component file, return all the components name
 fn read_component_file(workspace_root: &str) -> Vec<String> {
     let component_toml: toml::Value = {
         let mut component_file_path = workspace_root.to_owned();
@@ -165,6 +172,7 @@ fn read_component_file(workspace_root: &str) -> Vec<String> {
     panic!("Components.toml file not valid")
 }
 
+/// calculate the priority of one node
 fn calculate_priority(
     prioritys: &mut HashMap<String, u16>,
     package_mapping: &HashMap<String, &mut JsonValue>,

@@ -13,12 +13,19 @@ use crate::{
     prelude::*,
 };
 
+/// An inode abstraction used in the cgroup file system.
 pub(super) struct CgroupInode {
+    /// The corresponding node in the SysTree.
     node_kind: SysTreeNodeKind,
+    /// The metadata of this inode.
     metadata: Metadata,
+    /// The extension of this inode.
     extension: Extension,
+    /// The file mode (permissions) of this inode, protected by a lock.
     mode: RwLock<InodeMode>,
+    /// Weak reference to the parent inode.
     parent: Weak<CgroupInode>,
+    /// Weak self-reference for cyclic data structures.
     this: Weak<CgroupInode>,
 }
 

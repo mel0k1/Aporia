@@ -1,3 +1,5 @@
+//! Registry initialization tests.
+
 use ostd::prelude::ktest;
 
 use super::utils;

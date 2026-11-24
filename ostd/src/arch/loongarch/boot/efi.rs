@@ -15,6 +15,7 @@ macro_rules! efi_guid {
     }};
 }
 
+/// Reference: <https://github.com/torvalds/linux/blob/master/include/linux/efi.h#L417>
 const LINUX_EFI_INITRD_MEDIA_GUID: EfiGuid = efi_guid!(
     0x5568e427,
     0x68fc,
@@ -22,6 +23,7 @@ const LINUX_EFI_INITRD_MEDIA_GUID: EfiGuid = efi_guid!(
     [0xac, 0x74, 0xca, 0x55, 0x52, 0x31, 0xcc, 0x68]
 );
 
+/// Reference: <https://uefi.org/specs/UEFI/2.10/04_EFI_System_Table.html#devicetree-tables>
 const DEVICE_TREE_GUID: EfiGuid = efi_guid!(
     0xb1b621d5,
     0xf19c,
@@ -35,6 +37,7 @@ struct EfiGuid {
     b: [u8; 16],
 }
 
+/// Reference: <https://uefi.org/specs/UEFI/2.10/04_EFI_System_Table.html#id4>
 #[repr(C)]
 struct EfiTableHeader {
     signature: u64,
@@ -44,12 +47,14 @@ struct EfiTableHeader {
     reserved: u32,
 }
 
+/// Reference: <https://uefi.org/specs/UEFI/2.10/04_EFI_System_Table.html#efi-configuration-table>
 #[repr(C)]
 struct EfiConfigurationTable {
     guid: EfiGuid,
     table: *const core::ffi::c_void,
 }
 
+/// Reference: <https://uefi.org/specs/UEFI/2.10/04_EFI_System_Table.html#id6>
 #[repr(C)]
 pub(super) struct EfiSystemTable {
     hdr: EfiTableHeader,
@@ -93,6 +98,7 @@ impl EfiSystemTable {
     }
 }
 
+/// Reference: <https://github.com/torvalds/linux/blob/master/include/linux/efi.h#L1327>
 #[repr(C)]
 pub(super) struct EfiInitrd {
     base: u64,

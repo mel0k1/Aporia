@@ -1,5 +1,6 @@
 use super::RouteTableId;
 
+/// One routing policy rule.
 #[derive(Clone, Debug)]
 pub(super) struct Rule {
     priority: RulePriority,
@@ -23,6 +24,7 @@ impl Rule {
     }
 }
 
+/// A route-rule priority.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) struct RulePriority(u32);
 
@@ -32,6 +34,7 @@ impl RulePriority {
     }
 }
 
+/// The action applied by a routing policy rule.
 #[derive(Clone, Debug)]
 pub(super) enum RuleAction {
     Lookup(RouteTableId),

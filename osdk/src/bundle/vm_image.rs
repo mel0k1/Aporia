@@ -4,8 +4,9 @@ use std::{
     time::SystemTime,
 };
 
-use super::file::BundleFile;
 use crate::util::hard_link_or_copy;
+
+use super::file::BundleFile;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct AsterVmImage {
@@ -66,6 +67,7 @@ impl AsterVmImage {
         &self.typ
     }
 
+    /// Copy the binary to the `base` directory and convert the path to a relative path.
     pub fn copy_to(self, base: impl AsRef<Path>) -> Self {
         let file_name = self.path.file_name().unwrap();
         let copied_path = base.as_ref().join(file_name);

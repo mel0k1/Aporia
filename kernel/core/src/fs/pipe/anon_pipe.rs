@@ -18,6 +18,7 @@ use crate::{
     process::{Gid, Uid},
 };
 
+/// Creates a pair of connected pipe file handles with the default capacity.
 pub(crate) fn new_file_pair(
     status_flags: StatusFlags,
 ) -> Result<(Arc<InodeHandle>, Arc<InodeHandle>)> {
@@ -35,7 +36,9 @@ pub(crate) fn new_file_pair(
     Ok((Arc::new(reader), Arc::new(writer)))
 }
 
+/// An anonymous pipe inode.
 pub(crate) struct AnonPipeInode {
+    /// The underlying pipe backend.
     pipe: Pipe,
     pseudo_inode: PseudoInode,
 }

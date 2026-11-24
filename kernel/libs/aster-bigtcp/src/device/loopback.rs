@@ -5,12 +5,16 @@ use super::{
 };
 use crate::packet::{FreshTxPacket, LinkLayer, RxPacket, TxPacket};
 
+/// A loopback network device.
 #[derive(Debug)]
 pub struct Loopback {
     _private: (),
 }
 
 impl Loopback {
+    /// Creates a loopback device.
+    ///
+    /// Every transmitted packet is made available for reception in FIFO order.
     #[expect(clippy::new_without_default)]
     pub fn new() -> Self {
         Self { _private: () }

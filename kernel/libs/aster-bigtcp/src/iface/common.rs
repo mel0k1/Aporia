@@ -74,6 +74,14 @@ pub(super) trait PollPhy {
     fn alloc_tx_buffer(&self, payload_len: usize) -> Result<FreshTxPacket, ostd::Error>;
 }
 
+/// A normalized IP address for binding purposes.
+///
+/// IPv4 addresses are normalized to IPv4-mapped IPv6 addresses. IPv6 addresses
+/// remain unchanged.
+///
+/// IPv4-mapped IPv6 addresses (`::ffff:x.x.x.x`) should be treated as equivalent
+/// to their IPv4 counterparts for binding purposes. This ensures that binding
+/// to `192.0.2.1:80` and `::ffff:192.0.2.1:80` are treated as the same.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct NormalizedAddress(Ipv6Address);
 
@@ -141,13 +149,16 @@ impl<E: Ext> IfaceCommon<E> {
     }
 }
 
+/// An allocator that allocates a unique index for each interface.
 static INTERFACE_INDEX_ALLOCATOR: AtomicU32 = AtomicU32::new(1);
 
 impl<E: Ext> IfaceCommon<E> {
+    /// Acquires the lock to the interface.
     pub(crate) fn interface(&self) -> SpinLockGuard<'_, PollableIface<E>, BottomHalfDisabled> {
         self.interface.lock()
     }
 
+    /// Acquires the lock to the socket table.
     pub(crate) fn sockets(&self) -> SpinLockGuard<'_, SocketTable<E>, BottomHalfDisabled> {
         self.sockets.lock()
     }
@@ -192,6 +203,7 @@ impl<E: Ext> IfaceCommon<E> {
         })
     }
 
+    /// Releases the port so that it can be used again.
     fn release_port(&self, addr: IpAddress, port: u16, can_reuse: bool, protocol: PortProtocol) {
         self.used_ports
             .lock()
@@ -256,6 +268,9 @@ impl<E: Ext> IfaceCommon<E> {
     }
 }
 
+/// A port bound to an iface.
+///
+/// When dropped, the port is automatically released.
 pub struct BoundPort<E: Ext> {
     iface: Arc<dyn Iface<E>>,
     addr: IpAddress,
@@ -265,22 +280,27 @@ pub struct BoundPort<E: Ext> {
 }
 
 impl<E: Ext> BoundPort<E> {
+    /// Returns a reference to the iface.
     pub fn iface(&self) -> &Arc<dyn Iface<E>> {
         &self.iface
     }
 
+    /// Returns the port number.
     pub fn port(&self) -> u16 {
         self.port
     }
 
+    /// Returns the bound IP address.
     pub fn addr(&self) -> &IpAddress {
         &self.addr
     }
 
+    /// Returns the bound endpoint.
     pub fn endpoint(&self) -> IpEndpoint {
         IpEndpoint::new(self.addr, self.port)
     }
 
+    /// Sets whether the port can be reused.
     pub fn set_can_reuse(&self, can_reuse: bool) {
         let iface_common = self.iface.common();
         let mut used_ports = iface_common.used_ports.lock();
@@ -301,6 +321,10 @@ impl<E: Ext> BoundPort<E> {
 }
 
 impl<E: Ext> BoundTcpPort<E> {
+    /// Ensures that the bound address is a unicast address.
+    ///
+    /// The bound address will be converted to a unicast address belonging to the local interface if
+    /// it is a broadcast address.
     pub(crate) fn ensure_unicast(&mut self, interface: &PollableIface<E>) {
         let new_addr = interface.map_broadcast_to_local(self.addr);
         if new_addr == self.addr {
@@ -329,7 +353,9 @@ impl<E: Ext> Drop for BoundPort<E> {
     }
 }
 
+/// A TCP port bound to an iface.
 pub struct BoundTcpPort<E: Ext>(BoundPort<E>);
+/// A UDP port bound to an iface.
 pub struct BoundUdpPort<E: Ext>(BoundPort<E>);
 
 impl<E: Ext> Deref for BoundTcpPort<E> {
@@ -360,6 +386,7 @@ enum PortProtocol {
 
 struct PortState {
     nsocket: usize,
+    /// The number of sockets that have enabled address reuse on this port.
     nreuse: usize,
 }
 
@@ -413,6 +440,7 @@ impl PortTable {
         match entry {
             Entry::Occupied(mut occupied) => {
                 let port_state = occupied.get_mut();
+
                 let can_reuse = config.is_backlog() || (port_state.can_reuse() & config_can_reuse);
                 if can_reuse {
                     port_state.nsocket += 1;
@@ -432,6 +460,16 @@ impl PortTable {
         Ok((port, config_can_reuse))
     }
 
+    /// Allocates an ephemeral port.
+    ///
+    /// We follow the port range that many Linux kernels use by default, which is 32768-60999.
+    ///
+    /// Each allocation starts scanning from the port immediately
+    /// after the last successfully allocated ephemeral port.
+    /// This ensures that a recently released port is not immediately
+    /// reused by a new socket, which avoids potential port conflicts.
+    ///
+    /// See <https://en.wikipedia.org/wiki/Ephemeral_port>.
     fn alloc_ephemeral_port(
         &mut self,
         addr: NormalizedAddress,
@@ -522,42 +560,76 @@ impl PortTable {
     }
 }
 
+/// Interface type.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.0.18/source/include/uapi/linux/if_arp.h#L30>
 #[repr(u16)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, TryFromInt)]
 pub enum InterfaceType {
+    /// from KA9Q: NET/ROM pseudo
     NETROM = 0,
+    /// Ethernet 10Mbps
     ETHER = 1,
+    /// Experimental Ethernet
     EETHER = 2,
 
+    /// IPIP tunnel
     TUNNEL = 768,
+    /// IP6IP6 tunnel
     TUNNEL6 = 769,
+    /// Frame Relay Access Device
     FRAD = 770,
+    /// SKIP vif
     SKIP = 771,
+    /// Loopback device
     LOOPBACK = 772,
+    /// Localtalk device
     LOCALTALK = 773,
 }
 
 bitflags! {
+    /// Interface flags.
+    ///
+    /// Reference: <https://elixir.bootlin.com/linux/v6.0.18/source/include/uapi/linux/if.h#L82>
     #[derive(Clone, Copy, Debug)]
     pub struct InterfaceFlags: u32 {
+        /// Interface is up
         const UP          = 1 << 0;
+        /// Broadcast address valid
         const BROADCAST   = 1 << 1;
+        /// Turn on debugging
         const DEBUG       = 1 << 2;
+        /// Loopback net
         const LOOPBACK    = 1 << 3;
+        /// Interface is has p-p link
         const POINTOPOINT = 1 << 4;
+        /// Avoid use of trailers
         const NOTRAILERS  = 1 << 5;
+        /// Interface RFC2863 OPER_UP
         const RUNNING     = 1 << 6;
+        /// No ARP protocol
         const NOARP       = 1 << 7;
+        /// Receive all packets
         const PROMISC     = 1 << 8;
+        /// Receive all multicast packets
         const ALLMULTI    = 1 << 9;
+        /// Master of a load balancer
         const MASTER      = 1 << 10;
+        /// Slave of a load balancer
         const SLAVE       = 1 << 11;
+        /// Supports multicast
         const MULTICAST   = 1 << 12;
+        /// Can set media type
         const PORTSEL     = 1 << 13;
+        /// Auto media select active
         const AUTOMEDIA   = 1 << 14;
+        /// Dialup device with changing addresses
         const DYNAMIC     = 1 << 15;
+        /// Driver signals L1 up
         const LOWER_UP    = 1 << 16;
+        /// Driver signals dormant
         const DORMANT     = 1 << 17;
+        /// Echo sent packets
         const ECHO        = 1 << 18;
     }
 }

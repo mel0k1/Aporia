@@ -2,12 +2,16 @@ use ostd::mm::{HasPaddr, Paddr, frame::linked_list::LinkedList};
 
 use crate::chunk::{BuddyOrder, FreeChunk, FreeHeadMeta, size_of_order};
 
+/// A set of free buddy chunks.
 pub(crate) struct BuddySet<const MAX_ORDER: BuddyOrder> {
+    /// The sum of the sizes of all free chunks.
     total_size: usize,
+    /// The lists of free buddy chunks for each orders.
     lists: [LinkedList<FreeHeadMeta>; MAX_ORDER],
 }
 
 impl<const MAX_ORDER: BuddyOrder> BuddySet<MAX_ORDER> {
+    /// Creates a new empty set of free lists.
     pub(crate) const fn new_empty() -> Self {
         Self {
             total_size: 0,
@@ -15,10 +19,12 @@ impl<const MAX_ORDER: BuddyOrder> BuddySet<MAX_ORDER> {
         }
     }
 
+    /// Gets the total size of free chunks.
     pub(crate) fn total_size(&self) -> usize {
         self.total_size
     }
 
+    /// Inserts a free chunk into the set.
     pub(crate) fn insert_chunk(&mut self, addr: Paddr, order: BuddyOrder) {
         debug_assert!(order < MAX_ORDER);
 
@@ -26,6 +32,7 @@ impl<const MAX_ORDER: BuddyOrder> BuddySet<MAX_ORDER> {
         let mut chunk = FreeChunk::from_unused(addr, order);
 
         let order = chunk.order();
+
         for (i, list) in self.lists.iter_mut().enumerate().skip(order) {
             if i + 1 >= MAX_ORDER {
                 break;
@@ -38,12 +45,17 @@ impl<const MAX_ORDER: BuddyOrder> BuddySet<MAX_ORDER> {
             debug_assert_eq!(buddy_addr, taken.paddr());
             chunk = chunk.merge_free(FreeChunk::from_free_head(taken));
         }
+
         let order = chunk.order();
         self.lists[order].push_front(chunk.into_unique_head());
 
         self.total_size += inserted_size;
     }
 
+    /// Allocates a chunk from the set.
+    ///
+    /// The function will choose and remove a buddy chunk of the given order
+    /// from the set. The address of the chunk will be returned.
     pub(crate) fn alloc_chunk(&mut self, order: BuddyOrder) -> Option<Paddr> {
         let mut non_empty = None;
         for (i, list) in self.lists.iter_mut().enumerate().skip(order) {
@@ -62,9 +74,11 @@ impl<const MAX_ORDER: BuddyOrder> BuddySet<MAX_ORDER> {
 
         for i in (order + 1..=non_empty).rev() {
             let (left_sub, right_sub) = chunk.take().unwrap().split_free();
+
             let right_sub = right_sub.into_unique_head();
             debug_assert_eq!(right_sub.meta().order(), (i - 1) as BuddyOrder);
             self.lists[i - 1].push_front(right_sub);
+
             chunk = Some(left_sub);
         }
 
@@ -81,10 +95,9 @@ impl<const MAX_ORDER: BuddyOrder> BuddySet<MAX_ORDER> {
 
 #[cfg(ktest)]
 mod test {
-    use ostd::prelude::ktest;
-
     use super::*;
     use crate::test::MockMemoryRegion;
+    use ostd::prelude::ktest;
 
     #[ktest]
     fn buddy_set_insert_alloc() {

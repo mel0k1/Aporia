@@ -1,3 +1,5 @@
+//! System call dispatch in the LoongArch architecture.
+
 #[path = "./generic.rs"]
 mod generic;
 

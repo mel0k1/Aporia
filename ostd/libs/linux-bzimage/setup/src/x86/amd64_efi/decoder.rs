@@ -1,3 +1,5 @@
+//! This module is used to decompress payload.
+
 extern crate alloc;
 
 use alloc::vec::Vec;
@@ -27,15 +29,22 @@ impl TryFrom<&[u8]> for MagicNumber {
     }
 }
 
+/// Detects the format used to encode the payload and decodes the payload accordingly.
 pub(super) fn decode_payload(payload: &[u8]) -> Vec<u8> {
     let magic = MagicNumber::try_from(payload).unwrap();
     match magic {
         MagicNumber::Elf => payload.to_vec(),
+
         MagicNumber::Gzip => decompress_to_vec(strip_gzip_header(payload)).unwrap(),
         MagicNumber::Zlib => decompress_to_vec_zlib(payload).unwrap(),
     }
 }
 
+/// Parses the gzip header and returns the remaining bytes.
+///
+/// # Panics
+///
+/// Panics if `buf` contains an invalid or incomplete gzip header.
 fn strip_gzip_header(buf: &[u8]) -> &[u8] {
     const FLG_FHCRC: u8 = 0x02;
     const FLG_FEXTRA: u8 = 0x04;

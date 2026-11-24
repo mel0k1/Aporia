@@ -1,3 +1,9 @@
+//! Power management.
+//!
+//! This implements ARM Power State Coordination Interface (PSCI).
+//!
+//! Reference: <https://developer.arm.com/documentation/den0022/fb/>
+
 use core::arch::asm;
 
 use fdt::node::FdtNode;
@@ -30,10 +36,18 @@ enum PsciFunc {
     SystemReset = 0x8400_0009,
 }
 
+/// Attempts to power off the system using an architecture-specific mechanism.
+///
+/// On ARM, this function attempts to power off the system if a supported PSCI device tree node
+/// exists. Otherwise, it does nothing and returns.
 pub fn try_poweroff(_code: ExitCode) {
     psci_call(PsciFunc::SystemOff);
 }
 
+/// Attempts to restart the system using an architecture-specific mechanism.
+///
+/// On ARM, this function attempts to restart the system if a supported PSCI device tree node
+/// exists. Otherwise, it does nothing and returns.
 pub fn try_restart(_code: ExitCode) {
     psci_call(PsciFunc::SystemReset);
 }

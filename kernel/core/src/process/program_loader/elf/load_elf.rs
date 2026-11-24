@@ -1,3 +1,5 @@
+//! ELF file parser.
+
 use core::ops::Range;
 
 use align_ext::AlignExt;
@@ -25,13 +27,29 @@ use crate::{
     },
 };
 
+/// The base address for PIE (ET_DYN with INTERP) loading.
+///
+/// Linux calls this `ELF_ET_DYN_BASE`. It has some intentions:
+/// - The base load address for PIE programs (ET_DYN with INTERP).
+/// - The heap start address for static PIE programs (ET_DYN without INTERP).
+///
+/// References: <https://elixir.bootlin.com/linux/v6.16.9/source/arch/x86/include/asm/elf.h#L235>
+/// - x86_64:       ELF_ET_DYN_BASE = DEFAULT_MAP_WINDOW / 3 * 2
+/// - riscv64:      ELF_ET_DYN_BASE = (DEFAULT_MAP_WINDOW / 3) * 2
+/// - loongarch64:  ELF_ET_DYN_BASE = TASK_SIZE / 3 * 2
 const PIE_BASE_ADDR: Vaddr = VMAR_CAP_ADDR / 3 * 2;
 
 pub(crate) struct ElfLoadInfo {
+    /// The relocated entry point.
     pub entry_point: Vaddr,
+    /// The top address of the user stack.
     pub user_stack_top: Vaddr,
 }
 
+/// Loads an ELF file to the process VMAR.
+///
+/// This function will map ELF segments and
+/// initialize the init stack and heap.
 pub(crate) fn load_elf_to_vmar(
     vmar: &Vmar,
     elf_file: Arc<dyn FileLike>,
@@ -107,6 +125,9 @@ fn lookup_and_parse_ldso(
     Ok(Some((ldso_file, ldso_elf)))
 }
 
+/// Maps the VMOs to the corresponding virtual memory addresses and builds the auxiliary vector.
+///
+/// Returns the mapped information, the entry point, and the auxiliary vector.
 fn map_vmos_and_build_aux_vec(
     vmar: &Vmar,
     ldso: Option<(Arc<dyn FileLike>, ElfHeaders)>,
@@ -153,7 +174,11 @@ fn map_vmos_and_build_aux_vec(
 }
 
 struct LdsoLoadInfo {
+    /// The relocated entry point.
     entry_point: Vaddr,
+    /// The range covering all the mapped segments.
+    ///
+    /// Note that the range may not be page-aligned.
     range: RelocatedRange,
 }
 
@@ -170,13 +195,26 @@ fn load_ldso(
     Ok(LdsoLoadInfo { entry_point, range })
 }
 
+/// The information of mapped ELF segments.
 struct ElfMappedInfo {
+    /// The range covering all the mapped segments.
     full_range: RelocatedRange,
+    /// The executable code range after relocation.
     code_range: Range<Vaddr>,
+    /// The data range after relocation.
     data_range: Range<Vaddr>,
+    /// The base address for the heap start.
     heap_base: Vaddr,
 }
 
+/// Initializes a [`Vmo`] for each segment and then map to the [`Vmar`].
+///
+/// This function will return the mapped information, which contains the
+/// mapped range that covers all segments. The range will be tight,
+/// i.e., will not include any padding bytes. So the boundaries may not
+/// be page-aligned.
+///
+/// [`Vmo`]: crate::vm::page_cache::Vmo
 fn map_segment_vmos(
     elf: &ElfHeaders,
     vmar: &Vmar,
@@ -283,6 +321,10 @@ fn map_segment_vmos(
     })
 }
 
+/// Creates and maps the segment VMO to the VMAR.
+///
+/// Additional anonymous mappings will be created to represent trailing bytes, if any. For example,
+/// this applies to the `.bss` segment.
 fn map_segment_vmo(
     loadable_phdr: &LoadablePhdr,
     elf_file: Arc<dyn FileLike>,
@@ -377,6 +419,7 @@ fn init_aux_vec(
     Ok(aux_vec)
 }
 
+/// Maps the vDSO VMO to the corresponding virtual memory address.
 #[cfg(not(target_arch = "loongarch64"))]
 fn map_vdso_to_vmar(vmar: &Vmar) -> Option<Vaddr> {
     use crate::vdso::{VDSO_VMO_LAYOUT, vdso_vmo};

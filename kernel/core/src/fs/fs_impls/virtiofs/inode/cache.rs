@@ -1,3 +1,5 @@
+//! Inode cache for `virtiofs`.
+
 #![short_vis_path::add(virtiofs)]
 
 use aster_fuse::{EntryReply, FuseNodeId};
@@ -7,6 +9,7 @@ use hashbrown::HashMap;
 use super::{VirtioFs, VirtioFsInode};
 use crate::prelude::*;
 
+/// In-memory inode cache keyed by FUSE node ID.
 pub(in virtiofs) struct InodeCache {
     inodes: RwMutex<HashMap<FuseNodeId, Weak<VirtioFsInode>>>,
 }
@@ -17,6 +20,7 @@ impl InodeCache {
         Self { inodes }
     }
 
+    /// Looks up an inode by FUSE node ID and validates its generation.
     pub(in virtiofs) fn lookup_inode(
         &self,
         lookup_reply: EntryReply,
@@ -43,6 +47,7 @@ impl InodeCache {
             .filter(|inode| inode.generation() == lookup_reply.generation())
         {
             drop(inode_cache);
+
             inode.update_from_entry_reply(&lookup_reply, request_attr_version)?;
             return Ok(inode);
         }
@@ -53,6 +58,7 @@ impl InodeCache {
         Ok(inode)
     }
 
+    /// Inserts an inode by FUSE node ID.
     pub(in virtiofs) fn insert_inode(&self, inode: &Arc<VirtioFsInode>) {
         self.inodes
             .write()

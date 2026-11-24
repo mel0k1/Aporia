@@ -1,5 +1,26 @@
+//! This module maintains preemption-related information for the current task
+//! on a CPU with a single 32-bit, CPU-local integer value.
+//!
+//! * Bits from 0 to 30 represents an unsigned counter called `guard_count`,
+//!   which is the number of `DisabledPreemptGuard` instances held by the
+//!   current CPU;
+//! * Bit 31 is set to `!need_preempt`, where `need_preempt` is a boolean value
+//!   that will be set by the scheduler when it decides that the current task
+//!   _needs_ to be preempted.
+//!
+//! Thus, the current task on a CPU _should_ be preempted if and only if this
+//! integer is equal to zero.
+//!
+//! The initial value of this integer is equal to `1 << 31`.
+//!
+//! This module provides a set of functions to access and manipulate
+//! `guard_count` and `need_preempt`.
+
 use crate::cpu_local_cell;
 
+/// Returns whether the current task _should_ be preempted or not.
+///
+/// `should_preempt() == need_preempt() && get_guard_count() == 0`.
 pub(in crate::task) fn should_preempt() -> bool {
     PREEMPT_INFO.load() == 0
 }

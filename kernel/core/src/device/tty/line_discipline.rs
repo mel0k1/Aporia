@@ -17,9 +17,13 @@ const BUFFER_CAPACITY: usize = 8192;
 const_assert!(LINE_CAPACITY < BUFFER_CAPACITY);
 
 pub(crate) struct LineDiscipline {
+    /// Current line
     current_line: CurrentLine,
+    /// Read buffer
     read_buffer: RingBuffer<u8>,
+    /// Termios
     termios: CTermios2,
+    /// Window size
     winsize: CWinSize,
 }
 
@@ -38,6 +42,7 @@ impl Default for CurrentLine {
 }
 
 impl CurrentLine {
+    /// Pushes a character to the current line.
     fn push_char(&mut self, ch: u8) {
         if self.len == self.buffer.len() {
             return;
@@ -47,22 +52,26 @@ impl CurrentLine {
         self.len += 1;
     }
 
+    /// Clears the current line and returns the bytes in it.
     fn drain(&mut self) -> &[u8] {
         let chs = &self.buffer[..self.len];
         self.len = 0;
         chs
     }
 
+    /// Removes the last character, if it is present.
     fn backspace(&mut self) {
         self.len = self.len.saturating_sub(1);
     }
 
+    /// Returns the number of characters in the current line.
     fn len(&self) -> usize {
         self.len
     }
 }
 
 impl LineDiscipline {
+    /// Creates a new line discipline.
     pub(crate) fn new() -> Self {
         Self {
             current_line: CurrentLine::default(),
@@ -72,6 +81,7 @@ impl LineDiscipline {
         }
     }
 
+    /// Pushes a character to the line discipline.
     pub(crate) fn push_char<F1: FnMut(SigNum), F2: FnMut(&[u8])>(
         &mut self,
         ch: u8,
@@ -146,6 +156,12 @@ impl LineDiscipline {
         }
     }
 
+    /// Reads bytes from `self` to `dst`, returning the actual bytes read.
+    ///
+    /// # Errors
+    ///
+    /// If no bytes are available or the available bytes are fewer than `min(dst.len(), vmin)`,
+    /// this method returns [`Errno::EAGAIN`].
     pub(crate) fn try_read(&mut self, dst: &mut [u8]) -> Result<usize> {
         let vmin = self.termios.special_char(CCtrlCharId::VMIN);
         let vtime = self.termios.special_char(CCtrlCharId::VTIME);
@@ -213,6 +229,7 @@ impl LineDiscipline {
         }
     }
 
+    /// Flushes the bytes in the current line into the read buffer.
     fn flush_line(&mut self) -> Option<()> {
         let bytes = self.current_line.drain();
         self.read_buffer.push_slice(bytes)

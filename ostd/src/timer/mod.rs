@@ -1,3 +1,5 @@
+//! The timer support.
+
 mod jiffies;
 
 use alloc::{boxed::Box, vec::Vec};
@@ -11,6 +13,13 @@ use crate::{
     cpu_local, irq,
 };
 
+/// The timer frequency in Hz.
+///
+/// Here we choose 1000Hz since 1000Hz is easier for unit conversion and convenient for timer.
+/// What's more, the frequency cannot be set too high or too low, 1000Hz is a modest choice.
+///
+/// For system performance reasons, this rate cannot be set too high, otherwise most of the time is
+/// spent in executing timer code.
 pub const TIMER_FREQ: u64 = 1000;
 
 type InterruptCallback = Box<dyn Fn() + Sync + Send>;
@@ -19,6 +28,7 @@ cpu_local! {
     static INTERRUPT_CALLBACKS: RefCell<Vec<InterruptCallback>> = RefCell::new(Vec::new());
 }
 
+/// Registers a function that will be executed during the timer interrupt on the current CPU.
 pub fn register_callback_on_cpu<F>(func: F)
 where
     F: Fn() + Sync + Send + 'static,

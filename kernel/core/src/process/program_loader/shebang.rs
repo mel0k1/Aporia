@@ -1,5 +1,14 @@
 use crate::prelude::*;
 
+/// Tries to parse a buffer as a shebang line.
+///
+/// If the buffer starts with `#!` and its header is a valid shebang sequence,
+/// then the function returns `Ok(Some(parts))`, where `parts` is a `Vec` that
+/// contains the path of and the arguments for the interpreter.
+///
+/// If the buffer starts with `#!` but some error occurs while parsing the
+/// file, then `Err(_)` is returned. If the buffer does not start with `#!`,
+/// then `Ok(None)` is returned.
 pub(crate) fn parse_shebang_line(file_first_page: &[u8]) -> Result<Option<Vec<CString>>> {
     if !file_first_page.starts_with(b"#!") {
         return Ok(None);

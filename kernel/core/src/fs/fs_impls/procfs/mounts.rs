@@ -7,6 +7,7 @@ use crate::{
     prelude::*,
 };
 
+/// Represents the inode at `/proc/mounts`.
 pub(super) struct MountsSymOps;
 
 impl MountsSymOps {

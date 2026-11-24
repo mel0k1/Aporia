@@ -66,6 +66,9 @@ pub(super) fn sys_rt_sigaction(
     Ok(SyscallReturn::Return(0))
 }
 
+/// Discard signals if the new action is to ignore the signal.
+///
+/// Ref: <https://elixir.bootlin.com/linux/v6.13/source/kernel/signal.c#L4323>
 fn discard_signals_if_ignored(ctx: &Context, signum: SigNum) {
     let mask = SigSet::new_full() - signum;
 

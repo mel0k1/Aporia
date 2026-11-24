@@ -1,9 +1,12 @@
 #![expect(dead_code)]
 
+/// Standard signals
 pub(super) const MIN_STD_SIG_NUM: u8 = 1;
 pub(super) const MAX_STD_SIG_NUM: u8 = 31;
+/// Real-time signals
 pub(super) const MIN_RT_SIG_NUM: u8 = 32;
 pub(super) const MAX_RT_SIG_NUM: u8 = 64;
+/// Count the number of signals
 pub(super) const COUNT_STD_SIGS: usize = 31;
 pub(super) const COUNT_RT_SIGS: usize = 33;
 pub(super) const COUNT_ALL_SIGS: usize = 64;

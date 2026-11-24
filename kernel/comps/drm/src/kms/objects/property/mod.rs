@@ -11,6 +11,16 @@ pub(crate) mod in_formats;
 pub(crate) const DRM_PROP_NAME_LEN: usize = 32;
 pub(super) type KmsObjectPropValue = u64;
 
+/// A DRM property definition attached to a KMS object.
+///
+/// In the atomic DRM model, a property is the userspace-visible configuration entry point:
+/// it defines the property's name, type, and constraints,
+/// and is used to address state updates through `(object_id, property_id, value)`.
+/// But a property does not, by itself, act as the kernel's single source of truth for mutable state.
+///
+/// Instead, mutable property values such as `CRTC_ID`, `FB_ID`, or `SRC_X`
+/// are expected to be carried by the typed KMS object state,
+/// while immutable or static properties may rely on their attached value directly.
 #[derive(Debug)]
 pub(crate) struct DrmProperty {
     id: KmsObjectId,
@@ -109,6 +119,19 @@ impl DrmProperty {
     }
 }
 
+/// The ordered property attachments of a KMS object.
+///
+/// In modern atomic DRM semantics, it should be treated primarily
+/// as the userspace-facing property attachment table.
+/// Immutable or static properties may rely directly on the initial value,
+/// while mutable atomic properties are expected to derive their current value
+/// from the typed KMS object state.
+///
+/// The insertion order is preserved
+/// so property IDs and values can be reported to userspace as corresponding arrays.
+///
+/// Attachments share ownership of each property with the object store
+/// so the property remains alive for as long as it is attached to a KMS object.
 #[derive(Debug, Default)]
 pub(crate) struct DrmPropertyAttachments {
     attachments: Vec<DrmPropertyAttachment>,
@@ -145,6 +168,7 @@ impl DrmPropertyAttachments {
     }
 }
 
+/// A property attached to a KMS object.
 #[derive(Clone, Debug)]
 pub(crate) struct DrmPropertyAttachment {
     property: Arc<DrmProperty>,
@@ -161,6 +185,10 @@ impl DrmPropertyAttachment {
     }
 }
 
+/// A standard property created once for each DRM device.
+///
+/// This enum gives kernel code a stable, semantic way to refer to standard properties
+/// without comparing their device-local object IDs or UAPI names.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(super) enum DrmStandardProperty {
     PlaneType,
@@ -244,15 +272,32 @@ impl DrmStandardProperty {
 }
 
 bitflags::bitflags! {
+    /// Property type and behavior flags exposed through the DRM property UAPI.
+    ///
+    /// `DrmProperty::flags` derives the property-type bits from `DrmPropertyValueType`
+    /// and adds [`Self::IMMUTABLE`] and [`Self::ATOMIC`] from the property's stored booleans.
+    ///
+    /// Property types are mutually exclusive encodings rather than freely composable capabilities.
+    /// In particular, [`Self::OBJECT`] and [`Self::SIGNED_RANGE`] use Linux's extended-type bit range.
+    ///
+    /// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm_mode.h#L518-L545>.
     #[derive(Clone, Copy, Debug)]
     pub(crate) struct DrmPropertyFlags: u32 {
+        /// An unsigned integer range property.
         const RANGE        = 1 << 1;
+        /// A property that userspace cannot modify.
         const IMMUTABLE    = 1 << 2;
+        /// An enumerated-value property.
         const ENUM         = 1 << 3;
+        /// A property whose value is a DRM property-blob ID.
         const BLOB         = 1 << 4;
+        /// A bitmask property whose named bits are described by enum entries.
         const BITMASK      = 1 << 5;
+        /// A property whose value is another DRM object's ID.
         const OBJECT       = 1 << 6;
+        /// A signed integer range property.
         const SIGNED_RANGE = 1 << 7;
+        /// A property exposed only to clients that understand atomic KMS.
         const ATOMIC       = 1 << 31;
     }
 }

@@ -68,6 +68,7 @@ inherit_sys_branch_node!(DeviceNode, fields, {
         }
 
         let attr = self.fields.attr_set().get(name).unwrap();
+
         if !attr.perms().can_read() {
             return Err(Error::PermissionDenied);
         }
@@ -79,6 +80,7 @@ inherit_sys_branch_node!(DeviceNode, fields, {
         };
 
         let mut printer = VmPrinter::new_skip(writer, offset);
+
         write!(printer, "{}", value)?;
 
         Ok(printer.bytes_written())
@@ -142,6 +144,7 @@ fn node_path() {
 
     let device = DeviceNode::new("device".into());
     let sub_device_1 = DeviceNode::new("sub_device_1".into());
+
     device.add_child(sub_device_1.clone()).unwrap();
     root.add_child(device.clone()).unwrap();
 
@@ -149,6 +152,7 @@ fn node_path() {
     assert_eq!(sub_device_1.path(), "/device/sub_device_1");
 
     let sub_device_2 = DeviceNode::new("sub_device_2".into());
+
     device.add_child(sub_device_2.clone()).unwrap();
     assert_eq!(sub_device_2.path(), "/device/sub_device_2");
 }

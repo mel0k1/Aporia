@@ -91,6 +91,7 @@ pub(super) fn sys_prctl(
             if (slack_ns as i64) < 0 {
                 return Err(errno!(EINVAL, "invalid timer slack"));
             }
+
             if slack_ns == 0 {
                 ctx.posix_thread.reset_timer_slack_to_default();
             } else {

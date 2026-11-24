@@ -11,6 +11,10 @@ impl IrqRemapping {
         Self { entry: Once::new() }
     }
 
+    /// Initializes the remapping entry for the specific IRQ number.
+    ///
+    /// This will do nothing if the entry is already initialized or interrupt
+    /// remapping is disabled or not supported by the architecture.
     pub(crate) fn init(&self, irq_num: u8) {
         if !has_interrupt_remapping() {
             return;
@@ -23,6 +27,10 @@ impl IrqRemapping {
         });
     }
 
+    /// Gets the remapping index of the IRQ line.
+    ///
+    /// This method will return `None` if interrupt remapping is disabled or
+    /// not supported by the architecture.
     pub(crate) fn remapping_index(&self) -> Option<u16> {
         Some(self.entry.get()?.index())
     }

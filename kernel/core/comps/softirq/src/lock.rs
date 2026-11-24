@@ -17,10 +17,12 @@ cpu_local_cell! {
     static DISABLE_SOFTIRQ_COUNT: u8 = 0;
 }
 
+/// Returns whether softirq is enabled on local CPU.
 pub(super) fn is_softirq_enabled() -> bool {
     DISABLE_SOFTIRQ_COUNT.load() == 0
 }
 
+/// A guard for disabled local softirqs.
 pub struct DisableLocalBottomHalfGuard {
     preempt: DisabledPreemptGuard,
 }
@@ -34,6 +36,7 @@ impl AsAtomicModeGuard for DisableLocalBottomHalfGuard {
 impl Drop for DisableLocalBottomHalfGuard {
     fn drop(&mut self) {
         let in_task_context = InterruptLevel::current().is_task_context();
+
         if DISABLE_SOFTIRQ_COUNT.load() == 1 && in_task_context {
             let irq_guard = disable_local();
             let irq_guard = process_all_pending(irq_guard);
@@ -60,6 +63,7 @@ impl GuardTransfer for DisableLocalBottomHalfGuard {
     }
 }
 
+/// A guardian that disables bottom half while holding a lock.
 pub enum BottomHalfDisabled {}
 
 impl SpinGuardian for BottomHalfDisabled {
@@ -75,6 +79,11 @@ impl SpinGuardian for BottomHalfDisabled {
     }
 }
 
+/// A guard for disabled local softirqs when there is a pre-existing preempt guard.
+///
+/// Note the difference between this guard and [`DisableLocalBottomHalfGuard`]:
+/// the former keeps a reference to a [`DisabledPreemptGuard`] guard,
+/// while the latter _owns_ one.
 pub(super) struct DisableLocalBottomHalfGuardInPreempt<'a> {
     phantom_data: PhantomData<&'a DisabledPreemptGuard>,
 }

@@ -1,3 +1,9 @@
+//! `FUSE_RENAME` renames a directory entry.
+//!
+//! The request body contains [`RenameReq`] followed by the null-terminated old
+//! name and the null-terminated new name. Successful replies do not carry a
+//! payload.
+
 use ostd::mm::{Infallible, VmReader, VmWriter};
 
 use super::util;
@@ -6,6 +12,7 @@ use crate::{FuseError, FuseNodeId, FuseOpcode, FuseOperation, FuseResult, ReplyE
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub struct RenameReq {
+    /// Parent directory node that will receive the renamed entry.
     newdir: FuseNodeId,
 }
 

@@ -1,3 +1,10 @@
+//! Upper-filesystem capability probes.
+//!
+//! After the upper/workdir pair is claimed, this module measures the upper
+//! filesystem's capabilities — on the upper itself and on the workdir
+//! workspace — used to decide whiteout and UUID support for a writable
+//! overlay mount.
+
 #![short_vis_path::add(overlayfs)]
 
 use super::{
@@ -20,19 +27,27 @@ use crate::{
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct UpperFilesystemCapabilities {
+    /// Reports whether the upper can persist the private xattr records this mount writes.
     can_store_private_xattr: bool,
+    /// Reports whether the upper types every non-dot directory entry it lists.
     can_report_directory_type: bool,
+    /// Reports whether the upper accepts a character-device `mknod`.
     can_mknod_char: bool,
 }
 
+/// The whiteout form the upper can publish.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in overlayfs) enum WhiteoutCapability {
+    /// Publishes a char device numbered `0:0`, the form every mount reads as a whiteout.
     CharDevice,
+    /// Publishes a zero-size regular file carrying this mount's whiteout record.
     Xattr,
+    /// Blocks new whiteouts.
     Unsupported,
 }
 
 impl UpperFilesystemCapabilities {
+    /// Probes the upper's private-xattr, d_type, and char-device support at mount time.
     pub(super) fn probe(
         upper_workdir: &UpperWorkdirInuse,
         namespace: XattrNamespace,
@@ -56,6 +71,7 @@ impl UpperFilesystemCapabilities {
         self.can_report_directory_type
     }
 
+    /// Derives the upper's published whiteout form, preferring the char-device `0:0` form.
     pub(super) fn whiteout_capability(&self) -> WhiteoutCapability {
         if self.can_mknod_char {
             WhiteoutCapability::CharDevice
@@ -94,6 +110,7 @@ impl UpperFilesystemCapabilities {
     }
 
     fn probe_d_type(upper_workdir: &UpperWorkdirInuse) -> Result<bool> {
+        /// The name prefix of the workspace entry the d_type probe creates.
         const D_TYPE_PROBE_PREFIX: &str = ".overlay-dtype-probe-";
         let workspace = upper_workdir.workdir_workspace()?;
         let workspace_dir = workspace.as_dir_dentry_or_err()?;
@@ -128,6 +145,7 @@ impl UpperFilesystemCapabilities {
     }
 
     fn probe_mknod_char(upper_workdir: &UpperWorkdirInuse) -> Result<bool> {
+        /// The name prefix of the workspace entry the char-device probe creates.
         const CHAR_DEVICE_PROBE_PREFIX: &str = ".overlay-char-device-probe-";
         let workspace = upper_workdir.workdir_workspace()?;
         let workspace_dir = workspace.as_dir_dentry_or_err()?;

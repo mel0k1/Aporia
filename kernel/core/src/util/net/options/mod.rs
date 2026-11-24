@@ -1,3 +1,54 @@
+//! This module introduces utilities to support Linux get/setsockopt syscalls.
+//!
+//! These two syscalls are used to get/set options for a socket. These options can be at different
+//! socket levels and of different types. To provide a unified interface, the `Socket` trait accepts
+//! a `dyn SocketOption` as a parameter. For each socket option, We define a struct that implements
+//! the `SocketOption` trait in net module.
+//!
+//! However, different socket options may have values of different types. For example, the values can
+//! be u32, C structs, or byte arrays. Furthermore, some values may have different formats in kernel
+//! space and user space. For example, for the option `ReusePort`, the user space may use an i32 while
+//! the kernel space may use a bool.
+//!
+//! We introduce the `RawSocketOption` trait for reading/writing socket options from/to user space. It
+//! can read/write values of different types and can convert the user type to the kernel type when
+//! reading from the user space and vice versa when writing to the user space. The `RawSocketOption`
+//! should not be implemented for a type by hand, and we provide macros to automatically implement the
+//! trait.
+//!
+//! # Example
+//!
+//! Suppose we want to add a new option `TcpNodelay`.
+//!
+//! First, the option should be added in the net module for the TCP socket.
+//!
+//! ```rust no_run
+//! impl_socket_option!(TcpNodelay(bool));
+//! ```
+//!
+//! Then, we need to implement the `ReadFromUser` and `WriteFromUser` traits for the bool type
+//! in the utils module. These util functions can be shared if multiple options have the value
+//! of same type.
+//!
+//! ```rust compile_fail
+//! impl ReadFromUser for bool {
+//!     // content omitted here
+//! }
+//! impl WriteFromUser for bool {
+//!     // content omitted here
+//! }
+//! ```
+//!
+//! At last, we can implement `RawSocketOption` for `TcpNodelay` so that it can be read/from
+//! user space.
+//!
+//! ```rust no_run
+//! impl_raw_socket_option!(TcpNodeley);
+//! ```
+//!
+//! At the syscall level, the interface is unified for all options and does not need to be modified.
+//!
+
 use ip::new_ip_option;
 use netlink::new_netlink_option;
 
@@ -21,6 +72,14 @@ pub(crate) trait RawSocketOption: SocketOption {
     fn as_sock_option(&self) -> &dyn SocketOption;
 }
 
+/// Impl `RawSocketOption` for a struct which implements `SocketOption`.
+///
+/// Fixed-size values require complete inputs and allow truncated outputs.
+/// Variable-length values use type-specific conversions.
+///
+/// Currently, this macro is used only for `SOL_SOCKET` and `SOL_TCP` options.
+/// Options at other socket levels may require different behavior and should
+/// use separate macros tailored to their semantics.
 macro_rules! impl_raw_socket_option {
     ($option:ty) => {
         impl RawSocketOption for $option {
@@ -50,6 +109,7 @@ macro_rules! impl_raw_socket_option {
     };
 }
 
+/// Impl `RawSocketOption` for a struct which is for only `getsockopt` and implements `SocketOption`.
 macro_rules! impl_raw_sock_option_get_only {
     ($option:ty) => {
         impl RawSocketOption for $option {
@@ -91,6 +151,11 @@ pub(crate) fn new_raw_socket_option(
     }
 }
 
+/// Socket level.
+///
+/// This can refer to either a socket option or a control message level.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.0.9/source/include/linux/socket.h#L343>.
 #[expect(non_camel_case_types)]
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, TryFromInt)]

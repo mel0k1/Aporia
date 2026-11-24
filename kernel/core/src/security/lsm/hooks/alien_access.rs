@@ -1,9 +1,16 @@
+//! Hooks for alien access checks.
+//!
+//! Linux names the corresponding LSM hook after `ptrace`, but Asterinas uses
+//! `alien access` for permission checks against threads outside the caller's
+//! thread group.
+
 use super::super::modules;
 use crate::{
     prelude::*,
     process::posix_thread::{PosixThread, alien_access::AlienAccessMode},
 };
 
+/// Runs alien access hooks in module order.
 pub(crate) fn on_alien_access(context: AlienAccessContext) -> Result<()> {
     for module in modules::active_modules() {
         module.on_alien_access(&context)?;
@@ -12,6 +19,7 @@ pub(crate) fn on_alien_access(context: AlienAccessContext) -> Result<()> {
     Ok(())
 }
 
+/// The inputs for an alien access check through the LSM stack.
 pub(crate) struct AlienAccessContext<'a> {
     accessor: &'a PosixThread,
     target: &'a PosixThread,
@@ -19,6 +27,7 @@ pub(crate) struct AlienAccessContext<'a> {
 }
 
 impl<'a> AlienAccessContext<'a> {
+    /// Creates an alien access context.
     pub(crate) const fn new(
         accessor: &'a PosixThread,
         target: &'a PosixThread,
@@ -31,14 +40,17 @@ impl<'a> AlienAccessContext<'a> {
         }
     }
 
+    /// Returns the thread requesting access.
     pub(crate) const fn accessor(&self) -> &PosixThread {
         self.accessor
     }
 
+    /// Returns the thread being accessed.
     pub(crate) const fn target(&self) -> &PosixThread {
         self.target
     }
 
+    /// Returns the requested access mode.
     pub(crate) const fn mode(&self) -> AlienAccessMode {
         self.mode
     }

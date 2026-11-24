@@ -73,6 +73,12 @@ macro_rules! copy_gp_regs {
     };
 }
 
+/// Represents the context of a signal handler.
+///
+/// This contains the context saved before a signal handler is invoked; it will be restored by
+/// `sys_rt_sigreturn`.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.15.7/source/arch/arm64/include/uapi/asm/sigcontext.h#L28>
 #[repr(C)]
 #[repr(align(16))]
 #[derive(Clone, Copy, Debug, Default, Pod)]
@@ -135,11 +141,16 @@ impl TryFrom<&CpuException> for PageFaultInfo {
     }
 }
 
+/// CPU information to be shown in `/proc/cpuinfo`.
+///
+/// Different CPUs may have different information, such as the core ID. Therefore, [`Self::new`]
+/// should be called on every CPU.
 pub(crate) struct CpuInformation {
     processor: u32,
 }
 
 impl CpuInformation {
+    /// Constructs the information for the current CPU.
     pub(crate) fn new(guard: &DisabledPreemptGuard) -> Self {
         Self {
             processor: guard.current_cpu().into(),

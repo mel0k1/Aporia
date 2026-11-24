@@ -1,6 +1,7 @@
 use bitflags::bitflags;
 use int_to_c_enum::TryFromInt;
 
+/// VirtioNet header precedes each packet
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
 pub(super) struct VirtioNetHdr {

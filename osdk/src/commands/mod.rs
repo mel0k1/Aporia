@@ -1,3 +1,5 @@
+//! This module contains subcommands of cargo-osdk.
+
 mod build;
 mod debug;
 mod new;
@@ -10,11 +12,16 @@ pub use self::{
     build::execute_build_command, debug::execute_debug_command, new::execute_new_command,
     profile::execute_profile_command, run::execute_run_command, test::execute_test_command,
 };
+
 use crate::{arch::get_default_arch, error_msg};
 
+/// Execute the forwarded cargo command with arguments.
+///
+/// The `cfg_ktest` parameter controls whether `cfg(ktest)` is enabled.
 pub fn execute_forwarded_command(subcommand: &str, args: &Vec<String>, cfg_ktest: bool) {
     let mut cargo = util::cargo();
     cargo.arg(subcommand);
+
     if subcommand != "udeps" {
         cargo.args(util::COMMON_CARGO_ARGS);
     }

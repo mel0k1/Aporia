@@ -31,6 +31,9 @@ pub(super) fn sys_getrandom(
 }
 
 bitflags::bitflags! {
+    /// Flags for `getrandom`.
+    ///
+    /// Reference: <https://elixir.bootlin.com/linux/v6.16.9/source/include/uapi/linux/random.h#L56>.
     #[derive(Clone, Copy, Debug)]
     struct GetRandomFlags: u32 {
         const GRND_NONBLOCK = 0x0001;

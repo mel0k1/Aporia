@@ -1,3 +1,5 @@
+//! The console device of Asterinas.
+
 #![no_std]
 #![deny(unsafe_code)]
 
@@ -16,8 +18,12 @@ use spin::Once;
 pub type ConsoleCallback = dyn Fn(VmReader<Infallible>) + Send + Sync;
 
 pub trait AnyConsoleDevice: Send + Sync + Any + Debug {
+    /// Sends data to the console device.
     fn send(&self, buf: &[u8]);
 
+    /// Registers a callback that will be invoked when the console device receives data.
+    ///
+    /// The callback may be called in the interrupt context. Therefore, it should _never_ sleep.
     fn register_callback(&self, callback: &'static ConsoleCallback);
 }
 

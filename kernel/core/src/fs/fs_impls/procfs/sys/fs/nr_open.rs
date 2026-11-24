@@ -10,6 +10,7 @@ use crate::{
     process::rlimit::SYSCTL_NR_OPEN,
 };
 
+/// Represents the inode at `/proc/sys/fs/nr_open`.
 pub(super) struct NrOpenFileOps;
 
 impl NrOpenFileOps {

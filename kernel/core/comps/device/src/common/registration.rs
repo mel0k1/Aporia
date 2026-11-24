@@ -1,3 +1,6 @@
+//! The registration sequence: `add`, `remove`,
+//! and the builder that every typed device is created through.
+
 use alloc::{
     string::ToString,
     sync::{Arc, Weak},
@@ -20,10 +23,21 @@ use crate::{
     uevent::{Uevent, UeventAction, UeventBuilder},
 };
 
+/// Registers a device, publishing its sysfs directory and optional `/dev` node.
+///
+/// The device's sysfs attributes and links are available before its bus probes for a driver
+/// or its class notifies observers.
+/// Device-node creation is queued until the kernel hooks are installed.
+///
+/// On failure, registration is rolled back and the device cannot be added again.
 pub fn add<D: AnyDevice + ?Sized>(dev: &Arc<D>) -> Result<()> {
     add_erased(dev.to_arc())
 }
 
+/// Unregisters a device, removing its sysfs directory and optional `/dev` node.
+///
+/// The device must have no child devices when removed.
+/// If its children were created by a driver, unbind that driver from the device first.
 pub fn remove<D: AnyDevice + ?Sized>(dev: &Arc<D>) -> Result<()> {
     let this = dev.to_arc();
     let base = this.base();
@@ -41,11 +55,30 @@ pub fn remove<D: AnyDevice + ?Sized>(dev: &Arc<D>) -> Result<()> {
     Ok(())
 }
 
+/// Attaches a permanent legacy sysfs subtree under `/devices/virtual/<class>`.
+///
+/// This is a temporary bridge for interfaces not yet supported by device
+/// attributes. It does not register an `AnyDevice` or create class/dev links.
+/// The class need not be registered. The subtree must not already have a parent.
+///
+/// # Panics
+///
+/// Panics if the device model is not initialized or the class name is invalid.
 pub fn register_legacy_virtual_node(class: &str, node: Arc<dyn SysObj>) -> Result<()> {
     registry::get().attach_into_virtual_glue_dir(class, node)?;
     Ok(())
 }
 
+/// A builder for a bus or class device.
+///
+/// Obtained from [`BusDevice::builder`] or [`ClassDevice::builder`].
+/// The built device is not in the tree until [`add_device`] is called.
+///
+/// `H` is the subsystem handle, `P` the payload, and `D` the concrete Rust type of the device.
+///
+/// [`BusDevice::builder`]: crate::bus::BusDevice::builder
+/// [`ClassDevice::builder`]: crate::class::ClassDevice::builder
+/// [`add_device`]: crate::add_device
 pub struct DeviceBuilder<H, P, D: 'static> {
     pub(crate) handle: H,
     pub(crate) payload: P,
@@ -57,21 +90,35 @@ pub struct DeviceBuilder<H, P, D: 'static> {
 }
 
 impl<H, P, D: 'static> DeviceBuilder<H, P, D> {
+    /// Sets the parent device; it must be registered before this device is.
     pub fn parent(mut self, parent: Arc<dyn AnyDevice>) -> Self {
         self.parent = Some(parent);
         self
     }
 
+    /// Sets the device number and requests a `/dev` node when the device is registered.
+    ///
+    /// By default, the node's path relative to `/dev` is the device name
+    /// with every `!` replaced by `/`.
+    /// For example, `cciss!c0d0` becomes `/dev/cciss/c0d0`.
+    ///
+    /// [`DeviceType::devnode`] can override the path.
+    /// For class devices, [`Class::devnode`] can provide a path
+    /// if the device type does not provide one.
+    ///
+    /// [`Class::devnode`]: crate::class::Class::devnode
     pub fn devnum(mut self, devnum: DevNum) -> Self {
         self.devnum = Some(devnum);
         self
     }
 
+    /// Gives the device a device type.
     pub fn dev_type(mut self, dev_type: &'static DeviceType<D>) -> Self {
         self.dev_type = Some(dev_type);
         self
     }
 
+    /// Gives the device attributes of its own.
     pub fn attrs(mut self, attrs: &'static [Attr<D>]) -> Self {
         self.attrs = attrs;
         self
@@ -89,6 +136,7 @@ impl<H, P, D: 'static> DeviceBuilder<H, P, D> {
         }
     }
 
+    /// Returns the device type and attributes declared for the device.
     pub(crate) fn declared_parts(&self) -> DeclaredParts<D> {
         DeclaredParts {
             dev_type: self.dev_type,
@@ -164,6 +212,7 @@ fn add_steps(this: &Arc<dyn AnyDevice>) -> Result<()> {
     }
 
     *base.state().lock() = State::Adding(Vec::new());
+
     if let Err(error) = crate::uevent::emit(this.as_ref(), UeventAction::Add) {
         ostd::warn!("cannot emit add for {}: {error}", this.name());
     }
@@ -175,14 +224,17 @@ fn add_steps(this: &Arc<dyn AnyDevice>) -> Result<()> {
     Ok(())
 }
 
+/// Whether teardown emits a remove uevent.
 enum RemoveUevent {
     Emit,
     Suppress,
 }
 
+/// Undoes registration, tolerating steps that never happened.
 fn teardown(this: &Arc<dyn AnyDevice>, remove_uevent: RemoveUevent) {
     let base = this.base();
     let subsystem = this.subsystem();
+
     let links = core::mem::take(&mut *base.links().lock());
 
     if let Some(ops) = subsystem.ops() {
@@ -258,6 +310,16 @@ fn teardown(this: &Arc<dyn AnyDevice>, remove_uevent: RemoveUevent) {
     }
 }
 
+/// Decides which directory a device's directory goes into, and attaches it there.
+///
+/// - A class device under a class device sits directly inside it,
+///   unless the class sets `KEEPS_GLUE_DIR`,
+///   in which case it sits in a glue directory named after its class inside the parent.
+/// - A class device under any other device sits in a glue directory named after its class,
+///   created inside the parent.
+/// - A class device with no parent sits in a glue directory under `/sys/devices/virtual`.
+/// - A bus device or a bare device sits directly under its parent,
+///   or at the top of `/sys/devices` if it has none.
 fn place(dev: &Arc<dyn AnyDevice>) -> Result<()> {
     let parent = dev.base().parent();
     if let Some(parent) = parent {
@@ -302,11 +364,14 @@ fn place(dev: &Arc<dyn AnyDevice>) -> Result<()> {
     Ok(())
 }
 
+/// Returns whether a class device under `parent` is placed in a glue directory,
+/// as opposed to directly inside a class-device parent.
 fn uses_glue_dir(subsystem: &Subsystem, parent: &Arc<dyn AnyDevice>) -> bool {
     let sits_inside_parent = parent.subsystem().is_class();
     !sits_inside_parent || subsystem.keeps_glue_dir()
 }
 
+/// Builds a `/dev` node creation request using the device's path and permission overrides.
 fn devnode_request(dev: &dyn AnyDevice, devnum: DevNum) -> DevNodeRequest {
     let over = dev.devnode_override().unwrap_or_default();
     DevNodeRequest {

@@ -11,8 +11,10 @@ use spin::Once;
 
 use crate::console::{Uart, UartConsole};
 
+/// ISA interrupt number for UART serial.
 const ISA_INTR_NUM: u8 = 4;
 
+/// IRQ line for UART serial.
 static IRQ_LINE: Once<MappedIrqLine> = Once::new();
 
 pub(super) fn init() {

@@ -1,3 +1,5 @@
+//! Class observer tests.
+
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicUsize, Ordering};
 

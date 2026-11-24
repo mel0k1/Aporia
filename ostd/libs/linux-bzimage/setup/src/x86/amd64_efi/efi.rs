@@ -38,6 +38,7 @@ fn allocate_boot_params() -> &'static mut BootParams {
     let boot_params = {
         let bytes = alloc_pages(AllocateType::AnyPages, size_of::<BootParams>());
         bytes.write_filled(0);
+
         unsafe { &mut *bytes.as_mut_ptr().cast::<BootParams>() }
     };
 
@@ -153,6 +154,7 @@ fn load_initrd() -> Option<&'static [u8]> {
     };
 
     let mut size = 0;
+
     let status = unsafe {
         (load_file2.0.load_file)(
             &mut load_file2.0,
@@ -168,6 +170,7 @@ fn load_initrd() -> Option<&'static [u8]> {
     }
 
     let initrd = alloc_pages(AllocateType::MaxAddress(u32::MAX as u64), size);
+
     let status = unsafe {
         (load_file2.0.load_file)(
             &mut load_file2.0,
@@ -274,6 +277,7 @@ unsafe fn efi_phase_runtime(boot_params: &mut BootParams) -> ! {
         super::unaccepted_memory::prepare_unaccepted_memory(boot_params);
 
     uefi::println!("[EFI stub] Exiting EFI boot services");
+
     let memory_map = unsafe { boot::exit_boot_services(Some(boot::MemoryType::LOADER_DATA)) };
 
     crate::println!(
@@ -293,9 +297,10 @@ unsafe fn efi_phase_runtime(boot_params: &mut BootParams) -> ! {
     populate_e820_from_memory_map(boot_params, &memory_map);
 
     crate::println!(
-        "[EFI stub] Entering the Aporia entry point at {:p}",
+        "[EFI stub] Entering the Asterinas entry point at {:p}",
         super::ASTER_ENTRY_POINT,
     );
+
     unsafe { super::call_aster_entrypoint(super::ASTER_ENTRY_POINT, boot_params) }
 }
 

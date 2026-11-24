@@ -1,3 +1,4 @@
+//! The virtio of Asterinas.
 #![no_std]
 #![deny(unsafe_code)]
 #![feature(custom_inner_attributes)]
@@ -143,8 +144,12 @@ fn negotiate_features(transport: &mut Box<dyn VirtioTransport>) {
 }
 
 bitflags! {
+    /// all device features, bits 0~23 and 50~63 are specified by device.
+    /// if using this struct to translate u64, use from_bits_truncate function instead of from_bits
+    ///
     #[derive(Clone, Copy, Debug)]
     struct Feature: u64 {
+
 
         const NOTIFY_ON_EMPTY    = 1 << 24;
         const ANY_LAYOUT         = 1 << 27;
@@ -152,6 +157,7 @@ bitflags! {
         const RING_EVENT_IDX     = 1 << 29;
         const UNUSED             = 1 << 30;
         const VERSION_1          = 1 << 32;
+
 
         const ACCESS_PLATFORM    = 1 << 33;
         const RING_PACKED        = 1 << 34;

@@ -13,16 +13,26 @@ impl SegmentBody for CIfaddrMsg {
     type CLegacyType = CRtGenMsg;
 }
 
+/// `ifaddrmsg` in Linux.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.13/source/include/uapi/linux/if_addr.h#L8>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(crate) struct CIfaddrMsg {
     pub family: u8,
+    /// The prefix length
     pub prefix_len: u8,
+    /// Flags
     pub flags: u8,
+    /// Address scope
     pub scope: u8,
+    /// Link index
     pub index: u32,
 }
 
+/// Flags in [`CIfaddrMsg`].
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.13/source/include/uapi/linux/if_addr.h#L45>.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Immutable, IntoBytes)]
 pub(crate) struct AddrMessageFlags(u32);
@@ -44,11 +54,15 @@ bitflags! {
     }
 }
 
+/// `rt_scope_t` in Linux.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.13/source/include/uapi/linux/rtnetlink.h#L320>.
 #[expect(clippy::upper_case_acronyms)]
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, TryFromInt)]
 pub(crate) enum RtScope {
     UNIVERSE = 0,
+
     SITE = 200,
     LINK = 253,
     HOST = 254,

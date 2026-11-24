@@ -1,19 +1,69 @@
+//! Log level and level filter types.
+
 use core::fmt;
 
+/// Kernel log level, matching the severity levels described in `syslog(2)`.
+///
+/// # Ordering
+///
+/// Levels are ordered by severity: `Emerg < Alert < ... < Debug`.
+/// `a < b` means `a` is more severe than `b`.
+///
+/// Higher severity is assigned lower numeric value.
+/// For example,
+/// `Level::Emerg` has the smallest value of 0 and means the highest severity.
+/// On the end of the spectrum,
+/// `Level::Debug` has the largest value of 7 and means the lowest severity.
+///
+/// # Mapping from Linux's logging levels
+///
+/// The numeric values of `Level::Xxx` are assigned to those of their Linux counterparts.
+///
+/// ```text
+/// LOGLEVEL_EMERG      0   /* system is unusable */
+/// LOGLEVEL_ALERT      1   /* action must be taken immediately */
+/// LOGLEVEL_CRIT       2   /* critical conditions */
+/// LOGLEVEL_ERR        3   /* error conditions */
+/// LOGLEVEL_WARNING    4   /* warning conditions */
+/// LOGLEVEL_NOTICE     5   /* normal but significant condition */
+/// LOGLEVEL_INFO       6   /* informational */
+/// LOGLEVEL_DEBUG      7   /* debug-level messages */
+/// ```
+///
+/// # Mapping from the `log` crate
+///
+/// | `log::Level` | `ostd::log::Level` | Notes |
+/// |--------------|--------------------| ------|
+/// | Error        | Error (3)          | |
+/// | Warn         | Warning (4)        | |
+/// | Info         | Info (6)           | |
+/// | Debug        | Debug (7)          | |
+/// | Trace        | Debug (7)          | Bridge only; no `trace!` macro in OSTD |
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum Level {
+    /// System is unusable.
     Emerg = 0,
+    /// Action must be taken immediately.
     Alert = 1,
+    /// Critical conditions.
     Crit = 2,
+    /// Error conditions.
     Error = 3,
+    /// Warning conditions.
     Warning = 4,
+    /// Normal but significant condition.
     Notice = 5,
+    /// Informational.
     Info = 6,
+    /// Debug-level messages.
     Debug = 7,
 }
 
 impl Level {
+    /// Creates a `Level` from a numeric value (0--7).
+    ///
+    /// Values > 7 are clamped to `Debug`.
     pub const fn from_u8(val: u8) -> Self {
         match val {
             0 => Self::Emerg,
@@ -43,26 +93,49 @@ impl fmt::Display for Level {
     }
 }
 
+/// A filter for log levels.
+///
+/// `LevelFilter::from_level(level)` includes that level and all more-severe levels.
+/// `LevelFilter::Off` disables all logging.
+///
+/// The filtering rule: a level passes when `(filter as u8) > (level as u8)`.
+///
+/// ```text
+/// LevelFilter::Off(0)     -> nothing passes
+/// LevelFilter::Error(4)   -> Emerg(0), Alert(1), Crit(2), Error(3)
+/// LevelFilter::Debug(8)   -> everything
+/// ```
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum LevelFilter {
+    /// All logging disabled.
     Off = 0,
+    /// Enable Emerg only.
     Emerg = 1,
+    /// Enable Emerg and Alert.
     Alert = 2,
+    /// Enable Emerg through Crit.
     Crit = 3,
+    /// Enable Emerg through Error.
     Error = 4,
+    /// Enable Emerg through Warning.
     Warning = 5,
+    /// Enable Emerg through Notice.
     Notice = 6,
+    /// Enable Emerg through Info.
     Info = 7,
+    /// Enable all levels.
     Debug = 8,
 }
 
 impl LevelFilter {
+    /// Returns `true` if `level` passes this filter.
     #[inline]
     pub const fn is_enabled(self, level: Level) -> bool {
         (self as u8) > (level as u8)
     }
 
+    /// Constructs a filter that enables `level` and all more-severe levels.
     pub const fn from_level(level: Level) -> Self {
         match level {
             Level::Emerg => Self::Emerg,
@@ -76,6 +149,9 @@ impl LevelFilter {
         }
     }
 
+    /// Creates a `LevelFilter` from a numeric value (0--8).
+    ///
+    /// Values > 8 are clamped to `Debug`.
     pub const fn from_u8(val: u8) -> Self {
         match val {
             0 => Self::Off,

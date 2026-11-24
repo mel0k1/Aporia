@@ -1,3 +1,5 @@
+//! Useful synchronization primitives.
+
 mod guard;
 mod mutex;
 mod rcu;

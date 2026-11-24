@@ -1,1 +1,1 @@
-
+//! POSIX semaphore.

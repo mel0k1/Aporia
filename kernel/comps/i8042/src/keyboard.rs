@@ -1,3 +1,5 @@
+//! The i8042 keyboard driver.
+
 use alloc::{
     string::{String, ToString},
     sync::Arc,
@@ -22,12 +24,16 @@ use crate::{
     ps2::{Command, CommandCtx},
 };
 
+/// IRQ line for i8042 keyboard.
 static IRQ_LINE: Once<MappedIrqLine> = Once::new();
 
+/// Registered device instance for event submission.
 static REGISTERED_DEVICE: Once<RegisteredInputDevice> = Once::new();
 
+/// ISA interrupt number for i8042 keyboard.
 const ISA_INTR_NUM: u8 = 1;
 
+/// Translation mode for keyboard scancodes.
 static TRANSLATION_MODE: AtomicU8 = AtomicU8::new(TranslationMode::Hardware as u8);
 
 pub(super) fn init(
@@ -40,10 +46,10 @@ pub(super) fn init(
 
     let mut init_ctx = InitCtx(controller);
 
-    if ATKBD_RESET.load(Ordering::Relaxed) {
-        if let Err(err) = init_ctx.reset() {
-            ostd::warn!("PS/2 keyboard reset failed: {:?}", err);
-        }
+    if ATKBD_RESET.load(Ordering::Relaxed)
+        && let Err(err) = init_ctx.reset()
+    {
+        ostd::warn!("PS/2 keyboard reset failed: {:?}", err);
     }
 
     match init_ctx.get_device_id() {
@@ -76,10 +82,13 @@ pub(super) fn init(
     Ok(())
 }
 
+/// How Scan Code Set 2 scancodes are translated to Set 1.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub(super) enum TranslationMode {
+    /// The i8042 controller translates Set 2 to Set 1 in hardware.
     Hardware = 0,
+    /// No hardware translation; the driver translates Set 2 to Set 1 in software.
     Software = 1,
 }
 
@@ -198,6 +207,7 @@ fn handle_keyboard_input(_trap_frame: &TrapFrame) {
 #[derive(Clone, Copy, Debug)]
 struct ScanCode(u8);
 
+/// Scancode value and relevant modifier states.
 #[derive(Clone, Debug)]
 struct ScancodeInfo {
     scancode: ScanCode,
@@ -206,6 +216,7 @@ struct ScancodeInfo {
 }
 
 impl ScancodeInfo {
+    /// Reads the keyboard scancode from the i8042 controller.
     fn read() -> Option<Self> {
         let Some(data) = I8042_CONTROLLER.get()?.lock().receive_data() else {
             ostd::warn!("PS/2 keyboard has no input data");
@@ -219,6 +230,7 @@ impl ScancodeInfo {
         }
     }
 
+    /// Interprets a byte as a Scan Code Set 1 scancode (hardware translation enabled).
     fn read_set1(data: u8) -> Option<Self> {
         static EXTENDED_KEY: AtomicBool = AtomicBool::new(false);
 
@@ -246,6 +258,7 @@ impl ScancodeInfo {
         })
     }
 
+    /// Interprets a byte as a Scan Code Set 2 scancode (no hardware translation).
     fn read_set2(data: u8) -> Option<Self> {
         static EXTENDED_KEY: AtomicBool = AtomicBool::new(false);
         static RELEASE_NEXT: AtomicBool = AtomicBool::new(false);
@@ -290,6 +303,7 @@ impl ScancodeInfo {
         })
     }
 
+    /// Maps the keyboard scancode to a [`KeyCode`] in the input subsystem.
     fn to_key_code(&self) -> Option<KeyCode> {
         let ScanCode(code) = self.scancode;
 
@@ -390,6 +404,9 @@ impl ScancodeInfo {
     }
 }
 
+/// A raw scan code byte in Scan Code Set 1.
+///
+/// Reference: <https://wiki.osdev.org/PS/2_Keyboard#Scan_Code_Set_1>.
 #[derive(Clone, Copy, Debug)]
 struct ScanCodeSet1(u8);
 
@@ -419,6 +436,9 @@ impl ScanCodeSet1 {
     }
 }
 
+/// A raw scan code byte in Scan Code Set 2.
+///
+/// Reference: <https://wiki.osdev.org/PS/2_Keyboard#Scan_Code_Set_2>.
 #[derive(Clone, Copy, Debug)]
 struct ScanCodeSet2(u8);
 
@@ -444,6 +464,9 @@ impl ScanCodeSet2 {
     }
 }
 
+/// Scan Code Set 2 to Set 1 translation table.
+///
+/// Reference: <https://www.win.tue.nl/~aeb/linux/kbd/scancodes-10.html#ss10.3>
 const SET2_TO_SET1: [u8; 256] = [
     0xff, 0x43, 0x41, 0x3f, 0x3d, 0x3b, 0x3c, 0x58, 0x64, 0x44, 0x42, 0x40, 0x3e, 0x0f, 0x29, 0x59,
     0x65, 0x38, 0x2a, 0x70, 0x1d, 0x10, 0x02, 0x5a, 0x66, 0x71, 0x2c, 0x1f, 0x1e, 0x11, 0x03, 0x5b,
@@ -463,6 +486,9 @@ const SET2_TO_SET1: [u8; 256] = [
     0xff, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8, 0xf9, 0xfa, 0xfb, 0xfc, 0xfd, 0xfe, 0xff,
 ];
 
+/// Whether to send the keyboard reset command during initialization.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v7.0/source/drivers/input/keyboard/atkbd.c#L40>
 static ATKBD_RESET: AtomicBool = AtomicBool::new(cfg_select! {
     any(target_arch = "x86_64", target_arch = "loongarch64") => false,
     _ => true,

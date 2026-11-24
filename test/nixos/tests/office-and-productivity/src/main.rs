@@ -1,21 +1,40 @@
+
+
+//! The test suite for office and productivity applications on Asterinas NixOS.
+//!
+//! See `test/nixos/README.md#documentation-maintenance` for sync requirements
+//! between this test suite and the corresponding "Verified Usage" book section.
+
 use nixos_test_framework::*;
 
 nixos_test_main!();
 
+
+
+
+
 #[nixos_test]
 fn mutool_inspect_convert_pdf(nixos_shell: &mut Session) -> Result<(), Error> {
+
     nixos_shell.run_cmd("curl -o /tmp/sample.pdf https://pdfobject.com/pdf/sample.pdf")?;
+
 
     nixos_shell.run_cmd_and_expect("mutool info /tmp/sample.pdf", "Info object")?;
 
+
     nixos_shell.run_cmd("mutool draw -F text -o /tmp/output.txt /tmp/sample.pdf")?;
     nixos_shell.run_cmd_and_expect("cat /tmp/output.txt", "Sample PDF")?;
+
 
     nixos_shell.run_cmd("mutool draw -F png -o /tmp/page-%03d.png /tmp/sample.pdf")?;
     nixos_shell.run_cmd_and_expect("ls /tmp/page-001.png", "page-001.png")?;
 
     Ok(())
 }
+
+
+
+
 
 #[nixos_test]
 fn pandoc_convert_markdown_to_html(nixos_shell: &mut Session) -> Result<(), Error> {

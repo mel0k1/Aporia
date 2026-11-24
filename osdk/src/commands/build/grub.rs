@@ -104,13 +104,16 @@ fn generate_grub_cfg(
     let grub_cfg = include_str!("grub.cfg.template").to_string();
 
     let grub_cfg = grub_cfg.lines().skip(2).collect::<Vec<&str>>().join("\n");
+
     let grub_cfg = grub_cfg
         .replace(
             "#GRUB_TIMEOUT_STYLE#",
             if skip_grub_menu { "hidden" } else { "menu" },
         )
         .replace("#GRUB_TIMEOUT#", if skip_grub_menu { "0" } else { "5" });
+
     let grub_cfg = grub_cfg.replace("#KERNEL_COMMAND_LINE#", kcmdline);
+
     let aster_bin_path_on_device = PathBuf::from("/boot")
         .join(target_name)
         .into_os_string()

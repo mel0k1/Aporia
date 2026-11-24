@@ -1,3 +1,33 @@
+//! Device uevents.
+//!
+//! A uevent notifies user space of a device change,
+//! carrying a [`UeventAction`], sysfs path, subsystem, sequence number,
+//! and `KEY=VALUE` environment entries ([`UeventVars`]).
+//! Events are serialized as `action@devpath\0` followed by NUL-separated `KEY=VALUE` entries
+//! and sent to user space through Netlink group 1.
+//!
+//! For bus and class devices, registration, removal, and driver binding or unbinding
+//! automatically emit `Add`, `Remove`, `Bind`, and `Unbind`.
+//! The other actions, such as `Change`, are never emitted automatically.
+//! Call [`emit`] to send an event with any action.
+//!
+//! The device model fills in `ACTION`, `DEVPATH`, `SUBSYSTEM`, and `SEQNUM`,
+//! as well as `MAJOR`, `MINOR`, `DEVNAME`, `DEVMODE`, `DEVTYPE`, and `DRIVER`
+//! from the device's number, node, type, and bound driver.
+//! Implementations of the `Bus` and `Class` traits can add entries to the uevents of their devices
+//! by implementing `append_uevent_vars`.
+//!
+//! Every registered bus or class device has a read-write `uevent` sysfs attribute.
+//! Reading it returns the device's `KEY=VALUE` entries as newline-separated lines
+//! without `ACTION`, `DEVPATH`, `SUBSYSTEM`, or `SEQNUM`.
+//! Writing to a bus or class device's `uevent` attribute requests a synthetic event.
+//! The request format is `<action> [<UUID> [<KEY=VALUE> ...]]`,
+//! following Linux's [`Documentation/ABI/testing/sysfs-uevent`].
+//!
+//! [`current_seqnum`] returns the latest allocated sequence number.
+//!
+//! [`Documentation/ABI/testing/sysfs-uevent`]: https://elixir.bootlin.com/linux/v6.14/source/Documentation/ABI/testing/sysfs-uevent
+
 use alloc::{string::String, vec::Vec};
 use core::{
     fmt::{self, Write},
@@ -6,10 +36,30 @@ use core::{
 
 use crate::common::{AnyDevice, Error, Result, node::SysTreeEdit};
 
+/// Maximum number of environment entries.
 const MAX_UEVENT_VARS: usize = 64;
+/// Maximum bytes in the encoded `KEY=VALUE\0` environment;
+/// the `action@devpath\0` prefix is not counted.
 const MAX_UEVENT_BYTES: usize = 2048;
+/// The most recently allocated sequence number.
 static CURRENT_SEQNUM: AtomicU64 = AtomicU64::new(0);
 
+/// Emits a device event with the specified action.
+///
+/// Returns `Ok(())` without emitting an event
+/// if the device has no bus or class subsystem.
+///
+/// Returns [`Error::NotAdded`] if the device is not registered
+/// or has already been removed.
+/// Returns [`Error::MemoryBudgetExhausted`]
+/// if the event exceeds the entry count or byte limit.
+/// Propagates errors from [`Bus::append_uevent_vars()`],
+/// [`Class::append_uevent_vars()`],
+/// and [`DeviceType::append_uevent_vars_fn`].
+///
+/// [`Bus::append_uevent_vars()`]: crate::bus::Bus::append_uevent_vars
+/// [`Class::append_uevent_vars()`]: crate::class::Class::append_uevent_vars
+/// [`DeviceType::append_uevent_vars_fn`]: crate::common::DeviceType::append_uevent_vars_fn
 pub fn emit(dev: &dyn AnyDevice, action: UeventAction) -> Result<()> {
     if !dev.base().is_added() {
         return Err(Error::NotAdded);
@@ -18,6 +68,11 @@ pub fn emit(dev: &dyn AnyDevice, action: UeventAction) -> Result<()> {
     emit_unchecked(dev, action, UeventVars::new())
 }
 
+/// Sends an event with `extra` entries appended after the device variables.
+///
+/// Lifecycle callers may use this while removing a device,
+/// before its directory and node metadata are detached.
+/// Explicit callers must first check that the device is registered.
 pub(crate) fn emit_unchecked(
     dev: &dyn AnyDevice,
     action: UeventAction,
@@ -33,23 +88,59 @@ pub(crate) fn emit_unchecked(
     Ok(())
 }
 
+/// Returns the most recently allocated sequence number.
+///
+/// This function reads the counter without incrementing it.
+/// A sequence number remains consumed
+/// even if the event later fails to finish construction
+/// or is not delivered.
+/// Therefore, a larger counter value does not mean
+/// that all earlier events were delivered.
 pub fn current_seqnum() -> u64 {
     CURRENT_SEQNUM.load(Ordering::Relaxed)
 }
 
+/// The device event being reported.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.14/source/include/linux/kobject.h#L53>.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UeventAction {
+    /// Indicates the addition of a new device to the system.
+    ///
+    /// Triggered when a device is discovered or registered.
     Add,
+    /// Signals the removal of a device from the system.
+    ///
+    /// Typically occurs during device disconnection or deregistration.
     Remove,
+    /// Denotes a modification to the device's properties or state.
+    ///
+    /// Used for attribute changes that don't involve structural modifications.
     Change,
+    /// Represents hierarchical relocation of a device.
+    ///
+    /// Occurs when a device moves within the device tree topology.
     Move,
+    /// Marks a device returning to operational status after being offlined.
+    ///
+    /// Common in hot-pluggable device scenarios.
     Online,
+    /// Indicates a device entering non-operational status.
+    ///
+    /// Typically precedes safe removal of hot-pluggable hardware.
     Offline,
+    /// Signifies successful driver-device binding.
+    ///
+    /// Occurs after successful driver probe sequence.
     Bind,
+    /// Indicates driver-device binding termination.
+    ///
+    /// Precedes driver unload or device removal.
     Unbind,
 }
 
 impl UeventAction {
+    /// Returns the lowercase name used in the datagram and in sysfs requests.
     pub const fn as_str(&self) -> &'static str {
         match self {
             Self::Add => "add",
@@ -84,6 +175,14 @@ impl fmt::Display for UeventAction {
     }
 }
 
+/// The ordered `KEY=VALUE` environment of a uevent.
+///
+/// Preserves append order and duplicate keys.
+/// Each entry costs `key.len() + value.len() + 2` bytes, including `=` and NUL.
+/// Limited to 64 entries and 2048 bytes,
+/// matching [Linux's uevent limits](https://elixir.bootlin.com/linux/v6.14/source/include/linux/kobject.h#L32-L33).
+/// Complete events reserve four entries for `ACTION`, `DEVPATH`, `SUBSYSTEM`, and `SEQNUM`,
+/// leaving at most 60 additional entries.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct UeventVars {
     entries: Vec<(String, String)>,
@@ -91,24 +190,37 @@ pub struct UeventVars {
 }
 
 impl UeventVars {
+    /// Creates an empty environment.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Returns the number of entries.
     fn len(&self) -> usize {
         self.entries.len()
     }
 
+    /// Returns the encoded size of all entries in bytes.
     pub fn total_bytes(&self) -> usize {
         self.total_bytes
     }
 
+    /// Iterates over the entries in append order.
     pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
         self.entries
             .iter()
             .map(|(key, value)| (key.as_str(), value.as_str()))
     }
 
+    /// Collects the device-provided uevent environment entries.
+    ///
+    /// Includes `MAJOR`, `MINOR`, and `DEVNAME` for a non-zero major number,
+    /// and `DEVMODE` for an explicit mode, including zero, as octal permission bits.
+    /// `DEVTYPE` and `DRIVER` reflect the current state.
+    /// Subsystem and device-type callbacks then append entries in that order.
+    ///
+    /// Excludes `ACTION`, `DEVPATH`, `SUBSYSTEM`, and `SEQNUM`,
+    /// which are added when constructing an event.
     pub(crate) fn from_dev(dev: &dyn AnyDevice) -> Result<Self> {
         let mut vars = Self::new();
         if let Some(devnum) = dev.devnum()
@@ -137,6 +249,7 @@ impl UeventVars {
         Ok(vars)
     }
 
+    /// Serializes all `KEY=VALUE\0` entries into the target buffer in order.
     fn serialize_into(&self, payload: &mut Vec<u8>) {
         for (key, value) in self.iter() {
             payload.extend_from_slice(key.as_bytes());
@@ -146,6 +259,14 @@ impl UeventVars {
         }
     }
 
+    /// Appends a `KEY=VALUE` entry.
+    ///
+    /// Returns [`Error::InvalidValue`] if the key is empty,
+    /// contains `=` or NUL,
+    /// or the formatted value contains NUL.
+    /// Returns [`Error::MemoryBudgetExhausted`]
+    /// if adding the entry would exceed the entry count or byte limit.
+    /// The environment is unchanged on failure.
     pub fn add(&mut self, key: &str, value: impl fmt::Display) -> Result<()> {
         if key.is_empty() || key.contains('=') || key.contains('\0') {
             return Err(Error::InvalidValue);
@@ -176,6 +297,10 @@ impl UeventVars {
         Ok(())
     }
 
+    /// Moves entries from another environment into this one in order.
+    ///
+    /// Returns [`Error::MemoryBudgetExhausted`] if the combined entry count
+    /// or byte size exceeds the limit, leaving this environment unchanged.
     fn append(&mut self, mut other: Self) -> Result<()> {
         debug_assert!(self.len() <= MAX_UEVENT_VARS);
         debug_assert!(self.total_bytes <= MAX_UEVENT_BYTES);
@@ -231,6 +356,7 @@ impl Write for ValueWriter {
     }
 }
 
+/// Validated event inputs awaiting capacity checks and a sequence number.
 pub(crate) struct UeventBuilder {
     action: UeventAction,
     devpath: String,
@@ -239,6 +365,9 @@ pub(crate) struct UeventBuilder {
 }
 
 impl UeventBuilder {
+    /// Prepares an event for `dev` if it belongs to a bus or class.
+    ///
+    /// Returns `Ok(None)` if the device has no subsystem.
     pub(crate) fn from_dev(dev: &dyn AnyDevice, action: UeventAction) -> Result<Option<Self>> {
         let subsystem = dev.subsystem();
         let Some(subsystem_name) = subsystem.name() else {
@@ -256,10 +385,16 @@ impl UeventBuilder {
         }))
     }
 
+    /// Appends additional environment entries by value.
     pub(crate) fn append_vars(&mut self, vars: UeventVars) -> Result<()> {
         self.vars.append(vars)
     }
 
+    /// Builds and serializes the event, allocating its sequence number.
+    ///
+    /// Checks preceding fields before allocating `SEQNUM`;
+    /// failure to append `SEQNUM` can still leave a sequence gap.
+    /// Returns [`Error::MemoryBudgetExhausted`] if the environment exceeds its limits.
     pub(crate) fn build(self) -> Result<Uevent> {
         let mut vars = UeventVars::new();
         vars.add("ACTION", self.action.as_str())?;
@@ -286,17 +421,41 @@ impl UeventBuilder {
     }
 }
 
+/// A serialized device event ready for broadcasting.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Uevent {
     payload: Vec<u8>,
 }
 
 impl Uevent {
+    /// Broadcasts the event, transferring ownership of its serialized payload.
     pub(crate) fn commit(self) {
         crate::hooks::broadcast_uevent(self.payload)
     }
 }
 
+/// Parses a request written to a device's sysfs `uevent` attribute.
+///
+/// The accepted syntax is `<action> [<UUID> [<KEY=VALUE> ...]]`.
+/// Exactly one ASCII space separates items;
+/// leading, trailing, or repeated spaces are rejected.
+/// One final `\n` or NUL is allowed.
+/// The optional UUID has the 36-character `8-4-4-4-12` form
+/// and is preserved verbatim as `SYNTH_UUID`;
+/// when it is absent, `SYNTH_UUID=0` is used.
+/// Each argument must be an ASCII alphanumeric `KEY=VALUE` pair,
+/// and becomes `SYNTH_ARG_KEY=VALUE` in input order.
+/// Duplicate keys are kept.
+///
+/// Malformed input and synthetic-environment overflow
+/// both return [`Error::InvalidValue`],
+/// which user space observes as `EINVAL`.
+///
+/// References:
+/// - Linux ABI document:
+///   [`Documentation/ABI/testing/sysfs-uevent`](https://elixir.bootlin.com/linux/v6.14/source/Documentation/ABI/testing/sysfs-uevent)
+/// - Linux implementation:
+///   [`lib/kobject_uevent.c`](https://elixir.bootlin.com/linux/v6.14/source/lib/kobject_uevent.c#L671-L717)
 pub(crate) fn parse_synthetic(input: &str) -> Result<(UeventAction, UeventVars)> {
     let request = input
         .strip_suffix('\n')
@@ -343,6 +502,7 @@ pub(crate) fn parse_synthetic(input: &str) -> Result<(UeventAction, UeventVars)>
     Ok((action, vars))
 }
 
+/// Returns whether `uuid` has the 36-character `8-4-4-4-12` hexadecimal form.
 fn is_valid_uuid(uuid: &str) -> bool {
     uuid.len() == 36
         && uuid.bytes().enumerate().all(|(index, byte)| {
@@ -354,6 +514,11 @@ fn is_valid_uuid(uuid: &str) -> bool {
         })
 }
 
+/// Writes the device's uevent environment as newline-separated `KEY=VALUE` entries.
+///
+/// Called for a sysfs `uevent` read.
+/// Omits event-only fields and does not broadcast or allocate a sequence number.
+/// Returns [`Error::NotAdded`] if the device is not registered or was removed.
 pub(crate) fn show(dev: &dyn AnyDevice, writer: &mut dyn Write) -> Result<()> {
     if !dev.base().is_added() {
         return Err(Error::NotAdded);
@@ -367,6 +532,11 @@ pub(crate) fn show(dev: &dyn AnyDevice, writer: &mut dyn Write) -> Result<()> {
     Ok(())
 }
 
+/// Parses and broadcasts a synthetic event for a sysfs `uevent` write.
+///
+/// Does not change device registration or binding.
+/// [`parse_synthetic`] errors map to `EINVAL`;
+/// capacity overflow after merging the device environment maps to `ENOMEM`.
 pub(crate) fn store(dev: &dyn AnyDevice, text: &str) -> Result<()> {
     if !dev.base().is_added() {
         return Err(Error::NotAdded);

@@ -10,6 +10,7 @@ pub(super) fn sys_getcpu(
     ctx: &Context,
 ) -> Result<SyscallReturn> {
     let current_cpu: u32 = CpuId::current_racy().into();
+
     let current_node = 0u32;
 
     debug!(

@@ -1,3 +1,16 @@
+//! Provides FUSE protocol definitions shared by in-kernel clients.
+//!
+//! This crate contains the transport-independent on-wire pieces of the FUSE
+//! protocol: request and reply headers, payload layouts, opcodes, flags, and
+//! common constants.
+//!
+//! The main entry points are:
+//!
+//! - [`FuseOperation`], which describes one typed FUSE request/reply pair.
+//! - [`FuseError`] and [`FuseResult`], which report encoding and decoding
+//!   failures.
+//! - POD-compatible protocol structs such as [`ReqHeader`] and [`ReplyHeader`].
+//! - Per-operation request and reply structs under [`mod@ops`].
 #![no_std]
 #![deny(unsafe_code)]
 
@@ -48,10 +61,17 @@ pub use self::{
     status::{FuseCompleteFn, FuseCompletion, FuseStatus},
 };
 
+/// The root inode ID used by the FUSE protocol.
 pub const FUSE_ROOT_ID: FuseNodeId = FuseNodeId::new(1);
 
+/// The major FUSE protocol version supported by this crate.
 pub const FUSE_KERNEL_VERSION: u32 = 7;
 
+/// The minor FUSE protocol version supported by this crate.
 pub const FUSE_KERNEL_MINOR_VERSION: u32 = 38;
 
+/// Minimum `max_write` value enforced by the client.
+///
+/// Even if the server reports a smaller `max_write` in `FUSE_INIT`, the client
+/// uses at least one page (4096 bytes) per write request.
 pub const MIN_MAX_WRITE: u32 = 4096;

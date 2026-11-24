@@ -18,6 +18,7 @@ pub(super) fn sys_getpeername(
     let socket = file.as_socket_or_err()?;
 
     let peer_addr = socket.peer_addr()?;
+
     write_socket_addr_to_user(&peer_addr, addr, addrlen_ptr)?;
 
     Ok(SyscallReturn::Return(0))

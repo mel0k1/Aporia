@@ -1,3 +1,5 @@
+//! The timer support.
+
 use core::{
     arch::asm,
     sync::atomic::{AtomicUsize, Ordering},
@@ -93,6 +95,8 @@ fn init_impl() -> Result<(), InitError> {
 
     unsafe {
         asm!(
+
+
             "mov {tmp}, #1",
             "msr cntv_ctl_el0, {tmp}",
             tmp = out(reg) _,

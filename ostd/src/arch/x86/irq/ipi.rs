@@ -1,7 +1,12 @@
+//! Inter-processor interrupts.
+
 use spin::Once;
 
 use crate::{cpu::PinCurrentCpu, irq::IrqLine, prelude::Result, smp};
 
+/// Hardware-specific, architecture-dependent CPU ID.
+///
+/// This is the Local APIC ID in the x86_64 architecture.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct HwCpuId(u32);
 
@@ -16,12 +21,15 @@ impl HwCpuId {
 
 static IPI_IRQ: Once<IrqLine> = Once::new();
 
+/// Initializes global IPI state.
 pub(in crate::arch) fn init() {
     let mut irq = IrqLine::alloc().unwrap();
+
     irq.on_active(|f| unsafe { smp::do_inter_processor_call(f) });
     IPI_IRQ.call_once(|| irq);
 }
 
+/// Sends a general inter-processor interrupt (IPI) to the specified CPU.
 pub(crate) fn send_ipi(hw_cpu_id: HwCpuId, guard: &dyn PinCurrentCpu) -> Result<()> {
     use crate::arch::kernel::apic::{self, Icr};
 
@@ -39,6 +47,7 @@ pub(crate) fn send_ipi(hw_cpu_id: HwCpuId, guard: &dyn PinCurrentCpu) -> Result<
     );
 
     let apic = apic::get_or_init(guard);
+
     unsafe { apic.send_ipi(icr) };
 
     Ok(())

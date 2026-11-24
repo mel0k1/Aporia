@@ -2,6 +2,10 @@ use alloc::sync::Weak;
 
 use super::worker_pool::{WorkerPool, WorkerScheduler};
 
+/// SimpleScheduler is the simplest scheduling implementation.
+/// Only when there is a liveness problem in the workerpool, increase the workers,
+/// set the upper limit of the workers, and do not actively reduce the workers.
+/// And it only adds one worker at a time for each scheduling.
 pub(crate) struct SimpleScheduler {
     worker_pool: Weak<WorkerPool>,
 }

@@ -33,6 +33,7 @@ impl SocketCred<ReadDupOp> {
 }
 
 impl<R: TRights> SocketCred<R> {
+    /// Converts to a [`CUserCred`] with the PID and the _effective_ UID/GID.
     #[require(R > Read)]
     pub(super) fn to_effective_c_cred(&self) -> CUserCred {
         CUserCred {
@@ -42,6 +43,7 @@ impl<R: TRights> SocketCred<R> {
         }
     }
 
+    /// Converts to a [`CUserCred`] with the PID and the _real_ UID/GID.
     #[require(R > Read)]
     pub(super) fn to_real_c_cred(&self) -> CUserCred {
         CUserCred {
@@ -74,6 +76,9 @@ impl<R: TRights> SocketCred<R> {
     }
 }
 
+/// `struct ucred` in Linux.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.15/source/include/linux/socket.h#L183>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Pod)]
 pub(crate) struct CUserCred {

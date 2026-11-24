@@ -1,9 +1,20 @@
+//! Writeback and reclaim for ext2 inodes.
+//!
+//! This module contains the inode paths that make in-memory state durable and
+//! reclaim deleted inodes. Writeback must keep xattrs, data pages, indirect
+//! metadata, and inode-table state ordered consistently; reclaim must release
+//! all storage owned by a zero-link inode exactly once.
+
 #![short_vis_path::add(ext2)]
 
 use super::{super::Ext2, Inode, InodeInner, RawInode};
 use crate::fs::ext2::{prelude::*, utils};
 
 impl Inode {
+    /// Flushes all dirty state owned by the inode.
+    ///
+    /// Writes xattrs, data pages, and indirect blocks back before staging dirty
+    /// inode metadata in the block group's inode-table page cache.
     pub(in ext2) fn sync_all(&self) -> Result<()> {
         if let Some(xattr) = &self.xattr {
             xattr.flush()?;
@@ -18,6 +29,11 @@ impl Inode {
         inner.write_back_inode_desc(&fs, self.ino)
     }
 
+    /// Flushes dirty file data and the metadata required to retrieve it.
+    ///
+    /// Writes data pages and indirect blocks back before staging dirty inode
+    /// metadata in the block group's inode-table page cache. This does not flush
+    /// xattrs.
     pub(in ext2) fn sync_data(&self) -> Result<()> {
         let fs = self.fs()?;
         let mut inner = self.inner.write();
@@ -29,6 +45,7 @@ impl Inode {
         inner.write_back_inode_desc(&fs, self.ino)
     }
 
+    /// Attempts final reclaim for a deleted inode.
     pub(super) fn try_reclaim_deleted_inode(&self) -> Result<bool> {
         if self.link_count() != 0 {
             return Ok(false);
@@ -66,6 +83,7 @@ impl Inode {
 }
 
 impl InodeInner {
+    /// Serializes the descriptor to inode-table page cache if dirty and clears dirty state.
     pub(super) fn write_back_inode_desc(&mut self, fs: &Ext2, ino: Ext2Ino) -> Result<()> {
         if !self.is_dirty() {
             return Ok(());

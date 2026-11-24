@@ -7,6 +7,7 @@ use crate::{
     prelude::*,
 };
 
+/// Identifies the `security.capability` xattr revision.
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, TryFromInt)]
 pub(crate) enum VfsCapRevision {
@@ -18,6 +19,7 @@ pub(crate) enum VfsCapRevision {
 impl VfsCapRevision {
     const MASK: u32 = 0xff00_0000;
 
+    /// Returns the xattr size for this revision.
     pub(crate) const fn xattr_size(self) -> usize {
         match self {
             Self::V1 => 3 * size_of::<u32>(),
@@ -38,17 +40,23 @@ impl VfsCapFlags {
     const MASK: u32 = 0x00ff_ffff;
 }
 
+/// File capabilities loaded from the `security.capability` xattr.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct FileCapabilities {
     permitted: CapSet,
     inheritable: CapSet,
     has_effective_flag: bool,
+    /// For a V3 xattr, `root_uid` is UID 0 of the writing process's user namespace,
+    /// mapped into the initial user namespace.
+    /// V1 and V2 xattrs do not store this UID.
     root_uid: Option<Uid>,
 }
 
 impl FileCapabilities {
+    /// The maximum serialized length of a file capability xattr.
     pub(crate) const MAX_XATTR_SIZE: usize = VfsCapRevision::V3.xattr_size();
 
+    /// Reads file capabilities from an inode's `security.capability` xattr.
     pub(in crate::process) fn read_from_inode(inode: &Arc<dyn Inode>) -> Result<Option<Self>> {
         let xattr_name =
             XattrName::try_from_full_name(xattr::SECURITY_CAPABILITY_XATTR_NAME).unwrap();
@@ -81,6 +89,7 @@ impl FileCapabilities {
         self.root_uid
     }
 
+    /// Parses and validates a `security.capability` xattr header.
     pub(crate) fn parse_header(raw_value: &[u8]) -> Result<(VfsCapRevision, VfsCapFlags)> {
         let header = Self::read_u32_le(raw_value, 0)?;
         let revision_bits = header & VfsCapRevision::MASK;
@@ -132,10 +141,12 @@ impl FileCapabilities {
         })
     }
 
+    /// Reads the root UID from a serialized V3 file-capability xattr.
     pub(crate) fn read_v3_uid(raw_value: &[u8]) -> Result<Uid> {
         Ok(Uid::new(Self::read_u32_le(raw_value, 5)?))
     }
 
+    /// Reads a little-endian word from a serialized file-capability xattr.
     fn read_u32_le(bytes: &[u8], word_index: usize) -> Result<u32> {
         let start = word_index * size_of::<u32>();
         let end = start + size_of::<u32>();

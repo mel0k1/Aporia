@@ -1,3 +1,5 @@
+//! Tasks are the unit of code execution.
+
 pub mod atomic_mode;
 mod kernel_stack;
 mod preempt;
@@ -33,14 +35,21 @@ static PRE_SCHEDULE_HANDLER: Once<fn(&DisabledLocalIrqGuard)> = Once::new();
 
 static POST_SCHEDULE_HANDLER: Once<fn()> = Once::new();
 
+/// Injects a handler to be executed before scheduling.
 pub fn inject_pre_schedule_handler(handler: fn(&DisabledLocalIrqGuard)) {
     PRE_SCHEDULE_HANDLER.call_once(|| handler);
 }
 
+/// Injects a handler to be executed after scheduling.
 pub fn inject_post_schedule_handler(handler: fn()) {
     POST_SCHEDULE_HANDLER.call_once(|| handler);
 }
 
+/// A task that executes a function to the end.
+///
+/// Each task is associated with per-task data and an optional user space.
+/// If having a user space, the task can switch to the user space to
+/// execute user code. Multiple tasks can share a single user space.
 #[derive(Debug)]
 pub struct Task {
     #[expect(clippy::type_complexity)]
@@ -50,14 +59,22 @@ pub struct Task {
     local_data: ForceSync<Box<dyn Any + Send>>,
 
     ctx: SyncUnsafeCell<TaskContext>,
+    /// kernel stack, note that the top is SyscallFrame/TrapFrame
     kstack: KernelStack,
 
+    /// If we have switched this task to a CPU.
+    ///
+    /// This is to enforce not context switching to an already running task.
+    /// See [`processor::switch_to_task`] for more details.
     switched_to_cpu: AtomicBool,
 
     schedule_info: TaskScheduleInfo,
 }
 
 impl Task {
+    /// Gets the current task.
+    ///
+    /// It returns `None` if the function is called in the bootstrap context.
     pub fn current() -> Option<CurrentTask> {
         let current_task = current_task()?;
 
@@ -68,29 +85,45 @@ impl Task {
         &self.ctx
     }
 
+    /// Returns whether we need to yield execution to another task.
+    ///
+    /// If the scheduler decides to preempt the current task in favor of
+    /// another (for example, if the current task has exhausted its runtime
+    /// budget or if the new task has a higher priority), this method will
+    /// return `true`.
     pub fn need_yield() -> bool {
         preempt::cpu_local::need_preempt()
     }
 
+    /// Yields execution so that another task may be scheduled.
+    ///
+    /// Note that this method cannot be simply named "yield" as the name is
+    /// a Rust keyword.
     #[track_caller]
     pub fn yield_now() {
         scheduler::yield_now()
     }
 
+    /// Kicks the task scheduler to run the task.
+    ///
+    /// BUG: This method highly depends on the current scheduling policy.
     #[track_caller]
     pub fn run(self: &Arc<Self>) {
         scheduler::run_new_task(self.clone());
     }
 
+    /// Returns the task data.
     pub fn data(&self) -> &Box<dyn Any + Send + Sync> {
         &self.data
     }
 
+    /// Get the attached scheduling information.
     pub fn schedule_info(&self) -> &TaskScheduleInfo {
         &self.schedule_info
     }
 }
 
+/// Options to create or spawn a new task.
 pub struct TaskOptions {
     func: Option<Box<dyn FnOnce() + Send>>,
     data: Option<Box<dyn Any + Send + Sync>>,
@@ -98,6 +131,7 @@ pub struct TaskOptions {
 }
 
 impl TaskOptions {
+    /// Creates a set of options for a task.
     pub fn new<F>(func: F) -> Self
     where
         F: FnOnce() + Send + 'static,
@@ -109,6 +143,7 @@ impl TaskOptions {
         }
     }
 
+    /// Sets the function that represents the entry point of the task.
     pub fn func<F>(mut self, func: F) -> Self
     where
         F: Fn() + Send + 'static,
@@ -117,6 +152,7 @@ impl TaskOptions {
         self
     }
 
+    /// Sets the data associated with the task.
     pub fn data<T>(mut self, data: T) -> Self
     where
         T: Any + Send + Sync,
@@ -125,6 +161,7 @@ impl TaskOptions {
         self
     }
 
+    /// Sets the local data associated with the task.
     pub fn local_data<T>(mut self, data: T) -> Self
     where
         T: Any + Send,
@@ -133,6 +170,7 @@ impl TaskOptions {
         self
     }
 
+    /// Builds a new task without running it immediately.
     pub fn build(self) -> Result<Task> {
         #[unsafe(no_mangle)]
         unsafe extern "C" fn kernel_task_entry() -> ! {
@@ -156,6 +194,7 @@ impl TaskOptions {
         ctx.set_instruction_pointer(
             crate::arch::task::kernel_task_entry_wrapper as *const () as usize,
         );
+
         ctx.set_stack_pointer(kstack.end_vaddr() - 16);
 
         let new_task = Task {
@@ -173,6 +212,7 @@ impl TaskOptions {
         Ok(new_task)
     }
 
+    /// Builds a new task and runs it immediately.
     #[track_caller]
     pub fn spawn(self) -> Result<Arc<Task>> {
         let task = Arc::new(self.build()?);
@@ -181,6 +221,11 @@ impl TaskOptions {
     }
 }
 
+/// The current task.
+///
+/// This type is not `Send`, so it cannot outlive the current task.
+///
+/// This type is also not `Sync`, so it can provide access to the local data of the current task.
 #[derive(Debug)]
 pub struct CurrentTask(NonNull<Task>);
 
@@ -188,10 +233,22 @@ impl !Send for CurrentTask {}
 impl !Sync for CurrentTask {}
 
 impl CurrentTask {
+    /// # Safety
+    ///
+    /// The caller must ensure that `task` is the current task.
     unsafe fn new(task: NonNull<Task>) -> Self {
         Self(task)
     }
 
+    /// Returns the local data of the current task.
+    ///
+    /// Note that the local data is only accessible in the task context. Although there is a
+    /// current task in the non-task context (e.g. IRQ handlers), access to the local data is
+    /// forbidden as it may cause soundness problems.
+    ///
+    /// # Panics
+    ///
+    /// This method will panic if called in a non-task context.
     pub fn local_data(&self) -> &(dyn Any + Send) {
         assert!(InterruptLevel::current().is_task_context());
 
@@ -200,6 +257,7 @@ impl CurrentTask {
         &**unsafe { local_data.get() }
     }
 
+    /// Returns a cloned `Arc<Task>`.
     pub fn cloned(&self) -> Arc<Task> {
         let ptr = self.0.as_ptr();
 
@@ -229,9 +287,12 @@ impl Borrow<Task> for CurrentTask {
     }
 }
 
+/// A trait that provides methods to manipulate the task context.
 pub(crate) trait TaskContextApi {
+    /// Sets the instruction pointer.
     fn set_instruction_pointer(&mut self, ip: usize);
 
+    /// Sets the stack pointer.
     fn set_stack_pointer(&mut self, sp: usize);
 }
 

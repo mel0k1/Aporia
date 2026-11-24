@@ -5,12 +5,18 @@ use ostd::{
 
 use crate::prelude::*;
 
+/// A kernel space I/O vector.
 #[derive(Clone, Copy, Debug)]
 struct IoVec {
     base: Vaddr,
     len: usize,
 }
 
+/// A user space I/O vector.
+///
+/// The difference between `IoVec` and `UserIoVec`
+/// is that `UserIoVec` uses `isize` as the length type,
+/// while `IoVec` uses `usize`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(crate) struct UserIoVec {
@@ -34,6 +40,7 @@ impl TryFrom<UserIoVec> for IoVec {
 }
 
 impl IoVec {
+    /// Returns whether the `IoVec` points to an empty user buffer.
     const fn is_empty(&self) -> bool {
         self.len == 0
     }
@@ -47,9 +54,26 @@ impl IoVec {
     }
 }
 
+/// The maximum number of buffers in the I/O vector.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.16/source/include/uapi/linux/uio.h#L46>.
 pub(super) const MAX_IO_VECTOR_LENGTH: usize = 1024;
+/// The maximum bytes of all buffers in the I/O vector.
+///
+/// According to man pages, the kernel should fail with [`Errno::EINVAL`] if the number of bytes in
+/// the I/O vector exceeds this threshold. See
+/// <https://man7.org/linux/man-pages/man2/writev.2.html>.
+///
+/// However, the actual Linux behavior is to truncate the buffer and ignore the remaining buffer
+/// space. See <https://elixir.bootlin.com/linux/v6.12.6/source/lib/iov_iter.c#L1463>.
+///
+/// Typical 64-bit architectures do not have 64-bit virtual address space, and the value of
+/// [`MAX_IO_VECTOR_LENGTH`] is relatively small. Therefore, userspace may not be able to supply a
+/// valid I/O vector containing so many bytes. Nevertheless, we should still check against this to
+/// prevent overflows in the future, e.g., when the virtual address space becomes larger.
 const MAX_TOTAL_IOV_BYTES: usize = isize::MAX as usize;
 
+/// The util function for create [`VmReader`]/[`VmWriter`]s.
 fn copy_iovs_and_convert<'a, T: 'a>(
     user_space: &'a CurrentUserSpace<'a>,
     start_addr: Vaddr,
@@ -92,11 +116,21 @@ fn copy_iovs_and_convert<'a, T: 'a>(
     Ok(v.into_boxed_slice())
 }
 
+/// A collection of [`VmReader`]s.
+///
+/// Such readers are built from user-provided buffer, so it's always fallible.
 pub(crate) struct VmReaderArray<'a>(Box<[VmReader<'a>]>);
 
+/// A collection of [`VmWriter`]s.
+///
+/// Such writers are built from user-provided buffer, so it's always fallible.
 pub(crate) struct VmWriterArray<'a>(Box<[VmWriter<'a>]>);
 
 impl<'a> VmReaderArray<'a> {
+    /// Creates a new `VmReaderArray` from user-provided I/O vector buffers.
+    ///
+    /// This ensures that empty buffers are filtered out, meaning that all of the returned readers
+    /// should be non-empty.
     pub(crate) fn from_user_io_vecs(
         user_space: &'a CurrentUserSpace<'a>,
         start_addr: Vaddr,
@@ -106,10 +140,12 @@ impl<'a> VmReaderArray<'a> {
         Ok(Self(readers))
     }
 
+    /// Returns mutable reference to [`VmReader`]s.
     pub(crate) fn readers_mut(&mut self) -> &mut [VmReader<'a>] {
         &mut self.0
     }
 
+    /// Creates a new `VmReaderArray`.
     #[cfg(ktest)]
     pub(crate) const fn new(readers: Box<[VmReader<'a>]>) -> Self {
         Self(readers)
@@ -117,6 +153,10 @@ impl<'a> VmReaderArray<'a> {
 }
 
 impl<'a> VmWriterArray<'a> {
+    /// Creates a new `VmWriterArray` from user-provided I/O vector buffers.
+    ///
+    /// This ensures that empty buffers are filtered out, meaning that all of the returned writers
+    /// should be non-empty.
     pub(crate) fn from_user_io_vecs(
         user_space: &'a CurrentUserSpace<'a>,
         start_addr: Vaddr,
@@ -126,33 +166,66 @@ impl<'a> VmWriterArray<'a> {
         Ok(Self(writers))
     }
 
+    /// Returns mutable reference to [`VmWriter`]s.
     pub(crate) fn writers_mut(&mut self) -> &mut [VmWriter<'a>] {
         &mut self.0
     }
 }
 
+/// Trait defining the read behavior for a collection of [`VmReader`]s.
 pub(crate) trait MultiRead: ReadCString {
+    /// Reads the exact number of bytes required to exhaust `self` or fill `writer`,
+    /// accumulating total bytes read.
+    ///
+    /// If the return value is `Ok(n)`,
+    /// then `n` should be `min(self.sum_lens(), writer.avail())`.
+    ///
+    /// # Errors
+    ///
+    /// This method returns [`OstdError::PageFault`] if a page fault occurs, along with
+    /// the number of bytes copied before the error occurs. When an error is returned,
+    /// both `self` and `writer` are advanced by the returned byte count.
     fn read(&mut self, writer: &mut VmWriter<'_, Infallible>) -> Result<usize, (OstdError, usize)>;
 
+    /// Calculates the total length of data remaining to read.
     fn sum_lens(&self) -> usize;
 
+    /// Checks if the data remaining to read is empty.
     fn is_empty(&self) -> bool {
         self.sum_lens() == 0
     }
 
+    /// Skips the first `nbytes` bytes of data, or skips to the end if the readers have
+    /// insufficient bytes.
     fn skip_some(&mut self, nbytes: usize);
 }
 
+/// Trait defining the write behavior for a collection of [`VmWriter`]s.
 pub(crate) trait MultiWrite {
+    /// Writes the exact number of bytes required to exhaust `writer` or fill `self`,
+    /// accumulating total bytes read.
+    ///
+    /// If the return value is `Ok(n)`,
+    /// then `n` should be `min(self.sum_lens(), reader.remain())`.
+    ///
+    /// # Errors
+    ///
+    /// This method returns [`OstdError::PageFault`] if a page fault occurs, along with
+    /// the number of bytes copied before the error occurs. When an error is returned,
+    /// both `self` and `reader` are advanced by the returned byte count.
     fn write(&mut self, reader: &mut VmReader<'_, Infallible>)
     -> Result<usize, (OstdError, usize)>;
 
+    /// Calculates the length of space available to write.
     fn sum_lens(&self) -> usize;
 
+    /// Checks if the space available to write is empty.
     fn is_empty(&self) -> bool {
         self.sum_lens() == 0
     }
 
+    /// Skips the first `nbytes` bytes of data, or skips to the end if the writers have
+    /// insufficient bytes.
     fn skip_some(&mut self, nbytes: usize);
 }
 
@@ -204,6 +277,7 @@ impl MultiRead for VmReader<'_> {
 }
 
 impl dyn MultiRead + '_ {
+    /// Reads a `T` value, returning a `None` if the readers have insufficient bytes.
     pub(crate) fn read_val_opt<T: Pod>(&mut self) -> Result<Option<T>> {
         let mut val = T::new_zeroed();
         let nbytes = self.read(&mut VmWriter::from(val.as_mut_bytes()))?;
@@ -270,6 +344,7 @@ impl MultiWrite for VmWriter<'_> {
 }
 
 impl dyn MultiWrite + '_ {
+    /// Writes a `T` value, truncating the value if the writers have insufficient bytes.
     pub(crate) fn write_val_trunc<T: Pod>(&mut self, val: &T) -> Result<()> {
         let _nbytes = self.write(&mut VmReader::from(val.as_bytes()))?;
 

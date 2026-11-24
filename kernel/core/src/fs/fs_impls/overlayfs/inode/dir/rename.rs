@@ -1,3 +1,20 @@
+//! The rename recipe: the one namespace mutation this module owns, entered only
+//! through [`OverlayInode::rename_impl`].
+//!
+//! A rename arrives as a request on the merged view, while every name it changes
+//! lives in the upper alone. The source name may still be held by a lower layer
+//! after the source leaves it, and the target name is one of three things:
+//! nothing the merged view can see, a name an upper whiteout keeps negative, or a
+//! visible object that this move overwrites or exchanges.
+//!
+//! Everything the move touches has to exist in the upper before the real rename
+//! can express it, so the objects involved are promoted first and the rename then
+//! runs on the upper alone. The upper has to hold the state the merged view
+//! expects afterwards: an upper whiteout at the old name wherever a lower layer
+//! would otherwise keep that name alive, a whiteout carried away from the target
+//! name by the exchange that takes a name there, and an opaque record on a moved
+//! directory whose new name meets a lower directory.
+
 use crate::{
     fs::{
         fs_impls::overlayfs::{
@@ -14,22 +31,39 @@ use crate::{
     prelude::*,
 };
 
+/// Records how the old name's visibility barrier is settled by the move, and what becomes of a
+/// whiteout standing at the target name.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum WhiteoutAction {
+    /// Sets no new barrier: no lower entry hides there, or the exchange keeps the name visible.
     None,
+    /// Creates a fresh whiteout at the old name, hiding the lower entry the source leaves behind.
     Create,
+    /// Exchanges the target's whiteout onto the old name, where it serves as the barrier.
     Exchange,
+    /// Exchanges the target's whiteout onto the old name and deletes it: nothing hides below.
     ExchangeThenDelete,
 }
 
+/// Classifies the target name once for one move: the merged view's answer for that name
+/// crossed with what the upper physically holds there.
 enum RenameTarget {
+    /// Applies where the name has no upper entry, a lower whiteout hiding it landing here too.
     Absent,
+    /// Applies where an upper whiteout alone holds the name, invisible yet physically taken.
     UpperWhiteout,
-    Visible { inode: Arc<OverlayInode> },
+    /// Applies where the name resolves in the merged view, to a directory or to anything else.
+    Visible {
+        /// Holds the object the name resolves to, which a move that overwrites this name displaces.
+        inode: Arc<OverlayInode>,
+    },
 }
 
+/// Holds one rename's whole input, settled in a single pass before the lock set is taken.
 struct RenameFacts<'x> {
+    /// Reports whether a lower layer holds the new name as a directory.
     lower_layer_holds_new_name_as_directory: bool,
+    /// Holds the mode the real rename is issued with: the physical form of the caller's request.
     mode: RenameMode,
     whiteout: WhiteoutAction,
     new_name: &'x str,
@@ -43,6 +77,8 @@ struct RenameFacts<'x> {
 }
 
 impl OverlayInode {
+    /// Serves as the rename entry the VFS calls: it freezes the facts of both names, decides the
+    /// move they allow, and performs it.
     pub(in super::super) fn rename_impl(
         &self,
         old_child_dentry: &Dentry,
@@ -74,6 +110,8 @@ impl OverlayInode {
 }
 
 impl<'x> RenameFacts<'x> {
+    /// Builds the facts of one rename — the target name classified once and the two answers the
+    /// lower layers give — together with the plan they decide.
     fn classify(
         old_parent: Arc<OverlayInode>,
         old_child_dentry: &'x Dentry,
@@ -152,6 +190,8 @@ impl<'x> RenameFacts<'x> {
         })
     }
 
+    /// Decides the rename plan the facts allow: the refusals taken before any lock, the mode the
+    /// real rename is issued with, and the old name's whiteout verdict.
     fn decide_rename_plan(
         request: RenameMode,
         source: &OverlayInode,
@@ -204,6 +244,7 @@ impl<'x> RenameFacts<'x> {
         } else {
             RenameMode::Replace
         };
+
         let whiteout = if request == RenameMode::Exchange {
             WhiteoutAction::None
         } else {
@@ -241,6 +282,8 @@ impl<'x> RenameFacts<'x> {
         Ok((mode, whiteout))
     }
 
+    /// Returns the emptiness verdict taken before the lock set: a directory source replacing a
+    /// visible directory must find it empty, the only gate when the target has no upper entry.
     fn probe_target_empty_early(&self) -> Result<()> {
         if !self.needs_empty_check() {
             return Ok(());
@@ -258,6 +301,10 @@ impl<'x> RenameFacts<'x> {
         ))
     }
 
+    /// Promotes the objects this move will touch — both parents, the source, and an exchange's
+    /// target without an upper.
+    ///
+    /// The real rename can be expressed on the upper alone.
     fn promote_members(&self) -> Result<()> {
         self.old_parent
             .writable_real_object(&self.old_parent_dentry)?;
@@ -275,6 +322,7 @@ impl<'x> RenameFacts<'x> {
         Ok(())
     }
 
+    /// Clears the whiteout residue out of the upper directory this move replaces.
     fn sweep_replaced_whiteouts_if_needed(&self, _locks: &mut RenameLocks<'_>) -> Result<()> {
         if self.mode == RenameMode::Exchange {
             return Ok(());
@@ -293,6 +341,9 @@ impl<'x> RenameFacts<'x> {
             .sweep_whiteouts(target_upper_dir.dentry())
     }
 
+    /// Writes the opaque record on the source's upper entry.
+    ///
+    /// The moved directory's new name stops merging a lower directory into it.
     fn set_opaque_marker_if_needed(&self, _locks: &mut RenameLocks<'_>) -> Result<()> {
         if !self.needs_opaque() {
             return Ok(());
@@ -303,6 +354,10 @@ impl<'x> RenameFacts<'x> {
         OverlayXattrType::Opaque.set_value_on(source_upper.dentry(), namespace, None)
     }
 
+    /// Writes the impure record on the new parent from either origin direction — the source's own
+    /// or, for an exchange, the target's.
+    ///
+    /// A failure here still stops the move before it commits.
     fn set_impure_marker_if_needed(&self) -> Result<()> {
         if !self.is_cross_parent() {
             return Ok(());
@@ -334,6 +389,11 @@ impl<'x> RenameFacts<'x> {
         OverlayXattrType::Impure.set_value_on(new_parent_upper, namespace, None)
     }
 
+    /// Commits the move: the real rename in the upper, then the old name's whiteout action.
+    ///
+    /// The consequences the rename already fixed — the displaced target's latch and each parent's
+    /// snapshot drop — hold whether or not the whiteout step succeeded; its error is reported, not
+    /// rolled back.
     fn commit(&self, locks: &mut RenameLocks<'_>) -> Result<()> {
         let old_name = self.source_dentry.name();
         let upper_parent = self.old_parent.writable_upper().dentry();
@@ -387,6 +447,9 @@ impl<'x> RenameFacts<'x> {
     }
 }
 
+/// Records the role a member plays in the lock set.
+///
+/// It makes the set readable by role and derives its key.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum LockRole {
     OldParent,
@@ -394,6 +457,8 @@ enum LockRole {
     Target,
 }
 
+/// Holds the lock set of one rename: both parents, plus the target of an overwrite, taken in one
+/// pass in ascending `(depth, address)` order, handed to a step inside it as a token, not a guard.
 struct RenameLocks<'a> {
     old_parent_guard: OverlayInodeLockGuard<'a>,
     new_parent_guard: Option<OverlayInodeLockGuard<'a>>,
@@ -405,6 +470,8 @@ struct RenameLocks<'a> {
 }
 
 impl<'a> RenameLocks<'a> {
+    /// Returns the key that orders one lock-set member: the depth of the directory that hosts the
+    /// object, then the object's own address.
     fn member_key(
         role: LockRole,
         old_parent_depth: usize,
@@ -419,6 +486,7 @@ impl<'a> RenameLocks<'a> {
         (depth, address)
     }
 
+    /// Counts the dcache parent steps from this dentry to the mount root.
     fn dentry_depth(dentry: &Dentry) -> usize {
         let mut depth = 0;
         let mut current = dentry.parent();
@@ -429,6 +497,9 @@ impl<'a> RenameLocks<'a> {
         depth
     }
 
+    /// Takes the lock set in ascending key order, then re-checks both name bindings under it.
+    ///
+    /// The facts predate the set, so `Ok(None)` is stale and the caller answers `ESTALE`.
     fn acquire(facts: &'a RenameFacts<'_>) -> Result<Option<Self>> {
         let fs = facts.old_parent.fs_arc();
         let old_parent_depth = Self::dentry_depth(&facts.old_parent_dentry);

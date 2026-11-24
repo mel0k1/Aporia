@@ -1,7 +1,20 @@
 use fdt::{node::FdtNode, standard_nodes::MemoryRegion};
 use ostd::io::IoMem;
 
+/// An extension trait that provides [`acquire_io_mems`] for [`FdtNode`].
+///
+/// [`acquire_io_mems`]: Self::acquire_io_mems
 pub trait AcquireIoMems {
+    /// Acquires `N` [`IoMem`]s according to the `reg` property of the device tree node.
+    ///
+    /// The caller is expected to pass an accurate value of `N`. This method will fail if the node
+    /// contains too many or too few memory regions in the `reg` property.
+    ///
+    /// The caller is expected to pass the required size of each `IoMem` in `min_sizes`. This method
+    /// will fail if a memory region in the `reg` property is smaller than the required size.
+    ///
+    /// This method will also fail if any memory region in the `reg` property is invalid or
+    /// unavailable.
     fn acquire_io_mems<const N: usize>(&self, min_sizes: [usize; N]) -> Option<[IoMem; N]>;
 }
 

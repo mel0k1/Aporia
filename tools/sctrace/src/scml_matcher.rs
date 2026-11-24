@@ -5,6 +5,7 @@ use crate::{
     strace_parser::{Syscall, SyscallArg, SyscallArray, SyscallFlagSet, SyscallStruct},
 };
 
+/// Matcher for syscalls against SCML patterns.
 pub(crate) struct Matcher<'a> {
     patterns: Patterns<'a>,
 }
@@ -14,6 +15,7 @@ impl<'a> Matcher<'a> {
         Self { patterns }
     }
 
+    /// Attempts to match a syscall against available patterns.
     pub(crate) fn match_syscall(&self, syscall: &Syscall) -> Option<&Pattern<'_>> {
         let related_patterns = self.patterns.get(syscall.name())?;
 
@@ -22,6 +24,7 @@ impl<'a> Matcher<'a> {
             .find(|pattern| Self::matches(self.patterns.ctx(), syscall, pattern))
     }
 
+    /// Matches a syscall against a specific pattern.
     fn matches(ctx: &ParserCtx, syscall: &Syscall, pattern: &Pattern) -> bool {
         assert_eq!(syscall.name(), pattern.name());
 
@@ -42,6 +45,7 @@ impl<'a> Matcher<'a> {
         true
     }
 
+    /// Matches a single syscall argument against a pattern argument.
     fn matches_arg(ctx: &ParserCtx, syscall_arg: &SyscallArg, pattern_arg: &PatternArg) -> bool {
         match pattern_arg {
             PatternArg::None => true,
@@ -52,6 +56,7 @@ impl<'a> Matcher<'a> {
 
             PatternArg::Flags(pattern_flags) => match syscall_arg {
                 SyscallArg::Integer(value) if *value == "0" => true,
+
                 SyscallArg::Flags(syscall_flags) => {
                     Self::matches_flags(ctx, syscall_flags, pattern_flags)
                 }
@@ -62,6 +67,7 @@ impl<'a> Matcher<'a> {
                 SyscallArg::Array(syscall_array) => {
                     Self::matches_array(ctx, syscall_array, pattern_array)
                 }
+
                 SyscallArg::Flags(flag_set) if flag_set.flags().len() == 1 => {
                     matches!(
                         flag_set.flags().first(),
@@ -75,6 +81,7 @@ impl<'a> Matcher<'a> {
                 SyscallArg::Struct(syscall_struct) => {
                     Self::matches_struct(ctx, syscall_struct, pattern_struct)
                 }
+
                 SyscallArg::Flags(flag_set) if flag_set.flags().len() == 1 => {
                     matches!(
                         flag_set.flags().first(),
@@ -94,6 +101,7 @@ impl<'a> Matcher<'a> {
                         }
                     })
                 }
+
                 SyscallArg::Flags(flag_set) if flag_set.flags().len() == 1 => {
                     matches!(
                         flag_set.flags().first(),
@@ -127,6 +135,7 @@ impl<'a> Matcher<'a> {
             .all(|syscall_flag| Self::matches_flag(ctx, syscall_flag, pattern_flags))
     }
 
+    /// Matches a single syscall flag against a pattern flag set.
     fn matches_flag(
         ctx: &ParserCtx,
         syscall_flag: &SyscallArg,

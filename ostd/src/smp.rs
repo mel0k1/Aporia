@@ -1,3 +1,12 @@
+//! Symmetric Multi-Processing (SMP) support.
+//!
+//! This module provides a way to execute code on other processors via inter-
+//! processor interrupts.
+//!
+//! Callers issue work with [`inter_processor_call`]. Remote calls are queued for
+//! interrupt-context execution and return a [`PendingIpis`] handle that can be
+//! waited on when the caller needs completion.
+
 use alloc::{boxed::Box, collections::VecDeque};
 use core::sync::atomic::{AtomicBool, Ordering};
 
@@ -11,11 +20,30 @@ use crate::{
     util::id_set::Id,
 };
 
+/// Executes a function on other processors.
+///
+/// The provided function `call_fn` will be executed on all target processors
+/// specified by `targets`. It can also be executed on the current processor.
+/// The function should be short and non-blocking, as it will be executed in
+/// interrupt context with interrupts disabled.
+///
+/// The function `call_fn` will be executed asynchronously on the target
+/// processors. However, if called on the current processor, it will be
+/// synchronous.
+///
+/// The returned [`PendingIpis`] can be used to wait until all remote target
+/// processors have handled IPIs for this call.
+///
+/// # Panics
+///
+/// This function will panic if a hardware error occurs while sending an IPI to
+/// a remote processor.
 pub fn inter_processor_call(targets: &CpuSet, call_fn: fn()) -> PendingIpis {
     let ipi_sender = IPI_SENDER.get().unwrap();
     ipi_sender.inter_processor_call(targets, call_fn)
 }
 
+/// Pending remote inter-processor calls.
 pub struct PendingIpis {
     cpus: CpuSet,
 }
@@ -37,6 +65,13 @@ impl PendingIpis {
         }
     }
 
+    /// Waits until all pending remote processors have handled their IPIs.
+    ///
+    /// # Panics
+    ///
+    /// This method panics if local IRQs are disabled. Waiting for remote IPIs
+    /// with local IRQs disabled can deadlock if one of the remote processors is
+    /// also waiting for this processor to handle an IPI.
     pub fn wait(&self) {
         assert!(
             crate::arch::irq::is_local_enabled(),
@@ -51,13 +86,23 @@ impl PendingIpis {
     }
 }
 
+/// A sender that carries necessary information to send inter-processor interrupts.
+///
+/// The purpose of exporting this type is to enable the users to check whether
+/// [`IPI_SENDER`] has been initialized.
 pub(crate) struct IpiSender {
     hw_cpu_ids: Box<[HwCpuId]>,
 }
 
+/// The [`IpiSender`] singleton.
 pub(crate) static IPI_SENDER: Once<IpiSender> = Once::new();
 
 impl IpiSender {
+    /// Executes a function on other processors.
+    ///
+    /// See [`inter_processor_call`] for details. The purpose of exporting this
+    /// method is to enable callers to check whether [`IPI_SENDER`] has been
+    /// initialized.
     pub(crate) fn inter_processor_call(&self, targets: &CpuSet, call_fn: fn()) -> PendingIpis {
         let irq_guard = irq::disable_local();
         let this_cpu_id = irq_guard.current_cpu();
@@ -71,6 +116,7 @@ impl IpiSender {
             }
             let mut call_queue = CALL_QUEUES.get_on_cpu(cpu_id).lock();
             call_queue.push_back(call_fn);
+
             HAS_PENDING_IPIS
                 .get_on_cpu(cpu_id)
                 .store(true, Ordering::Release);
@@ -96,6 +142,12 @@ cpu_local! {
     static HAS_PENDING_IPIS: AtomicBool = AtomicBool::new(false);
 }
 
+/// Handles inter-processor calls.
+///
+/// # Safety
+///
+/// This function must be called from an IRQ handler that can be triggered by
+/// inter-processor interrupts.
 pub(crate) unsafe fn do_inter_processor_call(_trapframe: &TrapFrame) {
     let this_cpu_id = crate::cpu::CpuId::current_racy();
 
@@ -108,6 +160,7 @@ pub(crate) unsafe fn do_inter_processor_call(_trapframe: &TrapFrame) {
         );
         call_fn();
     }
+
     HAS_PENDING_IPIS
         .get_on_cpu(this_cpu_id)
         .store(false, Ordering::Release);

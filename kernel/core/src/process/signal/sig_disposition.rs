@@ -27,6 +27,9 @@ impl SigDispositions {
         self.map[idx]
     }
 
+    /// Returns all signal dispositions in ascending signal-number order.
+    ///
+    /// The iterator covers standard and real-time signals.
     pub(crate) fn iter(&self) -> impl Iterator<Item = (SigNum, SigAction)> + '_ {
         self.map.iter().enumerate().map(|(idx, sig_action)| {
             let sig_num = MIN_STD_SIG_NUM + idx as u8;
@@ -46,6 +49,10 @@ impl SigDispositions {
         self.map[idx] = SigAction::Dfl;
     }
 
+    /// man 7 signal:
+    /// When execve, the handled signals are reset to the default; the dispositions of
+    /// ignored signals are left unchanged.
+    /// This function should be used when execve.
     pub(crate) fn inherit(&mut self) {
         for sigaction in &mut self.map {
             if let SigAction::User { .. } = sigaction {

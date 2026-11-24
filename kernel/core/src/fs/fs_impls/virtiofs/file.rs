@@ -1,3 +1,5 @@
+//! Open regular-file handles for `virtiofs`.
+
 use aster_fuse::{FsyncFlags, FuseOpenFlags, ops::init::FuseInitFlags2};
 use ostd::warn;
 
@@ -17,6 +19,14 @@ use crate::{
     vm::vmar::FileMmapRequest,
 };
 
+/// A per-open file object backed by a FUSE file handle.
+///
+/// Each instance owns one server-issued `fh` returned by `FUSE_OPEN`. Read,
+/// write, seek, and release requests carry this handle, while access rights
+/// are inherited from the VFS open path that created the object.
+///
+/// The handle also records whether I/O should use the page cache or bypass it,
+/// according to the flags returned by the server.
 pub(super) struct VirtioFsFile {
     inode: Arc<VirtioFsInode>,
     open_handle: Arc<VirtioFsOpenHandle>,
@@ -181,8 +191,12 @@ impl PerOpenFileOps for VirtioFsFile {
     }
 }
 
+/// The virtio-fs file I/O caching policy.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum CachePolicy {
+    /// I/O goes through the page cache.
     Cached,
+    /// I/O bypasses the page cache and hits the FUSE server directly, due to
+    /// either `O_DIRECT` or `FOPEN_DIRECT_IO`.
     Direct,
 }

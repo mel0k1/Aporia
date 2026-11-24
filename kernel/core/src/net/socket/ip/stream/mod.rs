@@ -66,8 +66,11 @@ pub(crate) struct StreamSocket {
 
 enum State {
     Init(InitStream),
+
     Connecting(ConnectingStream),
+
     Connected(ConnectedStream),
+
     Listen(ListenStream),
 }
 
@@ -148,6 +151,9 @@ impl StreamSocket {
         })
     }
 
+    /// Ensures that the socket state is up to date and obtains a read lock on it.
+    ///
+    /// For a description of what "up-to-date" means, see [`Self::write_updated_state`].
     fn read_updated_state(&self) -> RwLockReadGuard<'_, Takeable<State>, PreemptDisabled> {
         loop {
             let state = self.state.read();
@@ -161,6 +167,15 @@ impl StreamSocket {
         }
     }
 
+    /// Ensures that the socket state is up to date and obtains a write lock on it.
+    ///
+    /// A connecting socket can become obsolete because some network events can set the socket to
+    /// connected state (if the connection succeeds) or initial state (if the connection is
+    /// refused) in [`Self::check_io_events`], but the state transition is delayed until the user
+    /// operates on the socket to avoid too many locks in the interrupt handler.
+    ///
+    /// This method performs the delayed state transition to ensure that the state is up to date
+    /// and returns the guard of the write-locked state.
     fn write_updated_state(&self) -> RwLockWriteGuard<'_, Takeable<State>, PreemptDisabled> {
         let mut state = self.state.write();
 
@@ -487,10 +502,12 @@ impl Socket for StreamSocket {
                 connected_stream.shutdown(cmd, &self.pollee),
                 connected_stream.iface().clone(),
             ),
+
             _ => return Err(errno!(EINVAL, "cannot shutdown")),
         };
 
         drop(state);
+
         iface_to_poll.poll();
 
         result
@@ -600,6 +617,7 @@ impl Socket for StreamSocket {
             }
             tcp_maxseg @ MaxSegment => {
                 const DEFAULT_MAX_SEGMEMT: u32 = 536;
+
                 let maxseg = options.tcp.maxseg();
                 if maxseg == 0 {
                     tcp_maxseg.set(DEFAULT_MAX_SEGMEMT);
@@ -797,6 +815,10 @@ fn do_tcp_setsockopt(
 }
 
 impl State {
+    /// Calls `f` to set raw socket option.
+    ///
+    /// For listening sockets, socket options are inherited by new connections. However, they are
+    /// not updated for connections in the backlog queue.
     fn set_raw_option<R>(&self, set_option: impl FnOnce(&dyn RawTcpSetOption) -> R) -> Option<R> {
         match self {
             State::Init(_) => None,
@@ -828,6 +850,7 @@ impl State {
             }
             State::Connecting(connecting_stream) => connecting_stream.bound_port(),
             State::Connected(connected_stream) => connected_stream.bound_port(),
+
             State::Listen(_) => return,
         };
 

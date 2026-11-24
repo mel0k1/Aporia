@@ -27,6 +27,11 @@ mod dir;
 mod file;
 mod sym;
 
+/// Shared procfs inode state.
+///
+/// FIXME: Procfs permissions should be checked during each operation, not by relying on mutable
+/// inode ownership. See Linux comment:
+/// <https://elixir.bootlin.com/linux/v6.13/source/fs/proc/base.c#L107>.
 struct Common {
     metadata: RwLock<Metadata>,
     extension: Extension,
@@ -53,6 +58,7 @@ impl Common {
 
         let credentials = owner_thread.as_posix_thread().unwrap().credentials();
         let mut metadata = self.metadata.write();
+
         metadata.uid = credentials.euid();
         metadata.gid = credentials.egid();
         *metadata

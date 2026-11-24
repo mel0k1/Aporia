@@ -26,6 +26,7 @@ use crate::{
 
 pub(crate) struct VsockStreamSocket {
     state: Mutex<Takeable<State>>,
+
     pollee: Pollee,
     common: FileCommon,
 }
@@ -173,6 +174,12 @@ impl VsockStreamSocket {
         }
     }
 
+    /// Locks the state and updates it if needed.
+    ///
+    /// If the current state is [`State::Connecting`] and the connect attempt has finished, this
+    /// method transitions the state to the latest one before returning the lock guard.
+    ///
+    /// Callers should always use this method instead of locking the state directly.
     fn lock_updated_state(&self) -> MutexGuard<'_, Takeable<State>> {
         let mut state = self.state.lock();
 

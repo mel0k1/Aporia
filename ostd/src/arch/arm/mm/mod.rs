@@ -27,29 +27,48 @@ impl PagingConstsTrait for PagingConsts {
 }
 
 bitflags::bitflags! {
+    /// Possible flags for a page table entry.
     #[derive(Clone, Copy, Debug)]
     pub(crate) struct PteFlags: usize {
+        /// Specifies whether the mapped frame or page table is valid.
         const VALID           = 1 << 0;
+        /// Specifies whether the mapping does not point to a huge frame; this bit must also be set
+        /// for all the valid last-level entries.
         const NON_HUGE        = 1 << 1;
+        /// Controls whether accesses from userspace (i.e. EL0) are permitted.
         const USER            = 1 << 6;
+        /// Controls whether writes to the mapped frames are disallowed.
         const NO_WRITE        = 1 << 7;
+        /// Whether the memory area represented by this entry is accessed.
         const ACCESSED        = 1 << 10;
+        /// Indicates that the mapping isn't present in all address spaces, so it is flushed from
+        /// the TLB on an address space switch.
         const NON_GLOBAL      = 1 << 11;
 
+        /// Whether the memory area represented by this entry is modified.
         const DIRTY           = 1 << 51;
+        /// Forbid execute codes on the page from kernel space (i.e. EL1).
         const NO_EXECUTE_KERN = 1 << 53;
+        /// Forbid execute codes on the page from userspace (i.e. EL0).
         const NO_EXECUTE_USER = 1 << 54;
 
+        /// Ignored by the hardware. Free to use.
         const HIGH_IGN1       = 1 << 55;
+        /// Ignored by the hardware. Free to use.
         const HIGH_IGN2       = 1 << 56;
 
+
+
+        /// Bit 2-4: Device memory, nGnRnE.
         const ATTR_DEVICE     = 1 << 2;
+        /// Bit 8-9: Inner shareability (effective only for Normal memory).
         const SH_INNER        = 3 << 8;
     }
 }
 
 const SHARED_ASID: usize = 0;
 
+/// The bit offset of the ASID field in TTBR registers and TLBI operands.
 const ASID_SHIFT: u32 = 48;
 
 pub(crate) fn tlb_flush_addr(vaddr: Vaddr) {
@@ -92,6 +111,12 @@ pub(crate) fn can_sync_dma() -> bool {
     true
 }
 
+/// # Safety
+///
+/// The caller must ensure that
+///  - the virtual address range and DMA direction correspond correctly to a
+///    DMA region;
+///  - `can_sync_dma()` is `true`.
 pub(crate) unsafe fn sync_dma_range(mut range: Range<Vaddr>, is_from_device: bool) {
     use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -101,9 +126,12 @@ pub(crate) unsafe fn sync_dma_range(mut range: Range<Vaddr>, is_from_device: boo
     if cache_line_size == 0 {
         let dmin_line = {
             let ctr: usize;
+
             unsafe { asm!("mrs {}, ctr_el0", out(reg) ctr) };
+
             (ctr >> 16) & 0xf
         };
+
         cache_line_size = 4 << dmin_line;
         assert!(cache_line_size <= PAGE_SIZE);
         CACHE_LINE_SIZE.store(cache_line_size, Ordering::Relaxed);
@@ -122,6 +150,12 @@ pub(crate) unsafe fn sync_dma_range(mut range: Range<Vaddr>, is_from_device: boo
     }
 }
 
+/// Activates the given root-level page table.
+///
+/// # Safety
+///
+/// Changing the root-level page table is unsafe, because it's possible to violate memory safety by
+/// changing the page mapping.
 pub(crate) unsafe fn activate_page_table(root_paddr: Paddr) {
     debug_assert_eq!(root_paddr >> ASID_SHIFT, 0);
     let ttbr = root_paddr | (SHARED_ASID << ASID_SHIFT);
@@ -140,6 +174,7 @@ pub(crate) unsafe fn activate_page_table(root_paddr: Paddr) {
 
 pub(crate) fn current_page_table_paddr() -> Paddr {
     let ttbr: usize;
+
     unsafe {
         asm!(
             "mrs {ttbr}, ttbr0_el1",
@@ -155,6 +190,7 @@ pub(crate) fn current_page_table_paddr() -> Paddr {
 #[derive(Clone, Copy, Debug, Default, Pod)]
 pub(crate) struct PageTableEntry(usize);
 
+/// Parses a bit-flag bits `val` in the representation of `from` to `to` in bits.
 macro_rules! parse_flags {
     ($val:expr, $from:expr, $to:expr) => {
         (($val as usize & $from.bits() as usize) >> $from.bits().ilog2() << $to.bits().ilog2())

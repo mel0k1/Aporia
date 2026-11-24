@@ -1,3 +1,5 @@
+//! System call dispatch in the RISC-V architecture.
+
 #[path = "./generic.rs"]
 mod generic;
 

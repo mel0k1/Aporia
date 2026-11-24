@@ -23,7 +23,6 @@ fn test_open_syscall() {
             O_NONBLOCK |
             O_SYNC;
 
-        // Open an existing file
         open(
             path,
             flags = <access_mode> | <creation_flags> | <status_flags>,
@@ -34,7 +33,6 @@ fn test_open_syscall() {
             flags = <access_mode> | <creation_flags> | <status_flags>,
         );
 
-        // Create a new file
         open(
             path,
             flags = O_CREAT | <access_mode> | <creation_flags> | <status_flags>,
@@ -47,11 +45,8 @@ fn test_open_syscall() {
             mode
         );
 
-        // Status flags that are meaningful with O_PATH
         opath_valid_flags = O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW;
-        // All other flags are ignored with O_PATH
         opath_ignored_flags = O_CREAT | <creation_flags> | <status_flags>;
-        // Obtain a file descriptor to indicate a location in FS
         open(
             path,
             flags = O_PATH | <opath_valid_flags> | <opath_ignored_flags>
@@ -62,8 +57,6 @@ fn test_open_syscall() {
             flags = O_PATH | <opath_valid_flags> | <opath_ignored_flags>
         );
 
-        // Create an unnamed file
-        // open(path, flags = O_TMPFILE | <creation_flags> | <status_flags>)
     "#;
 
     let log_lines = r#"
@@ -88,7 +81,6 @@ fn test_timer_create_syscall() {
     let scml_content = r#"
         opt_notify_methods = SIGEV_NONE | SIGEV_SIGNAL | SIGEV_THREAD_ID;
 
-        // Create a timer with predefined clock source
         timer_create(
             clockid = CLOCK_PROCESS_CPUTIME_ID | CLOCK_THREAD_CPUTIME_ID | CLOCK_REALTIME | CLOCK_MONOTONIC | CLOCK_BOOTTIME,
             sevp = {
@@ -98,7 +90,6 @@ fn test_timer_create_syscall() {
             timerid
         );
 
-        // Create a timer based on a per-process or per-thread clock
         timer_create(
             clockid = <INTEGER>,
             sevp = {
@@ -138,7 +129,6 @@ fn test_multiple_struct_with_same_name() {
             ..
         };
 
-        // Rule for message header, which refers to the rules for control message header
         struct msghdr = {
             msg_control = [ <cmsghdr> ],
             ..
@@ -177,38 +167,21 @@ fn test_clone_syscall() {
                SIGURG | SIGXFSZ | SIGSYS | SIGRTMIN;
 
         opt_flags =
-            // Optional flags
-            //
-            // Share the parent's virtual memory
             CLONE_VM |
-            // Share the parent's filesystem
             CLONE_FS |
-            // Share the parent's file descriptor table
             CLONE_FILES |
-            // Share the parent's signal handlers
             CLONE_SIGHAND |
-            // Place child in the same thread group as parent
             CLONE_THREAD |
-            // Share the parent's System V semaphore adjustments
             CLONE_SYSVSEM |
-            // Suspend parent until the child exits or calls `execve`
             CLONE_VFORK |
-            // Create a new mount namespace for the child
             CLONE_NEWNS |
-            // Write child `TID` to parent's memory
             CLONE_PARENT_SETTID |
-            // Allocate a `PID` file descriptor for the child
             CLONE_PIDFD |
-            // Set thread-local storage for the child
             CLONE_SETTLS |
-            // Write child `TID` to child's memory
             CLONE_CHILD_SETTID |
-            // Clear child `TID` in child's memory on exit
             CLONE_CHILD_CLEARTID |
-            // Make the child's parent the same as the caller's parent
             CLONE_PARENT;
 
-        // Create a thread or process
         clone(
             fn, stack,
             flags = <opt_flags> | <signal_flags>,

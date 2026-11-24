@@ -176,6 +176,7 @@ inherit_sys_branch_node!(MockBranchNode, fields, {
         if !attr.perms().can_write() {
             return Err(SysTreeError::PermissionDenied);
         }
+
         Err(SysTreeError::AttributeError)
     }
 
@@ -275,6 +276,7 @@ impl SysNode for MockMutableAttrNode {
     }
 }
 
+/// Creates a sysfs view of the given node tree and returns its root dentry.
 fn init_sysfs(root_node: Arc<dyn SysBranchNode>) -> Arc<Dentry> {
     time_init_for_ktest();
     init_for_ktest();
@@ -282,6 +284,7 @@ fn init_sysfs(root_node: Arc<dyn SysBranchNode>) -> Arc<Dentry> {
     Dentry::new_root(SysFsInode::new_root(root_node, &sysfs.sb()))
 }
 
+/// Creates a mock node tree with branches, leaves, and a symlink, returning its root node.
 fn create_mock_systree() -> Arc<MockBranchNode> {
     let root = MockBranchNode::new("root");
     let branch1 = MockBranchNode::new("branch1");
@@ -326,6 +329,7 @@ fn root_lookup() {
 fn branch_lookup() {
     let root_dentry = init_sysfs(create_mock_systree());
     let root_inode = root_dentry.inode();
+
     let branch1_inode = root_inode.lookup("branch1").unwrap();
 
     let leaf1_inode = branch1_inode.lookup("leaf1").expect("Lookup leaf1 failed");
@@ -350,6 +354,7 @@ fn branch_lookup() {
 fn leaf_lookup() {
     let root_dentry = init_sysfs(create_mock_systree());
     let root_inode = root_dentry.inode();
+
     let leaf1_inode = root_inode
         .lookup("branch1")
         .unwrap()
@@ -384,6 +389,7 @@ fn read_attr() {
         .unwrap()
         .lookup("leaf1")
         .unwrap();
+
     let r_attr_inode = leaf1_dir_inode.lookup("r_attr1").unwrap();
 
     let mut buf = [0u8; 64];
@@ -410,6 +416,7 @@ fn write_attr() {
         .unwrap()
         .lookup("leaf1")
         .unwrap();
+
     let rw_attr_inode = leaf1_dir_inode.lookup("rw_attr1").unwrap();
     let r_attr_inode = leaf1_dir_inode.lookup("r_attr1").unwrap();
 
@@ -443,6 +450,7 @@ fn read_link() {
 
     let root_dentry = init_sysfs(create_mock_systree());
     let root_inode = root_dentry.inode();
+
     let link1_inode = root_inode.lookup("link1").unwrap();
 
     let target = link1_inode.read_link().expect("read_link failed");
@@ -556,6 +564,7 @@ fn cached_child_lookup_observes_tree_changes() {
     branch.add_child(MockLeafNode::new("child".into(), &[], &[]));
     let leaf = dir.lookup_child("child").unwrap();
     assert_eq!(leaf.inode().type_(), InodeType::Dir);
+
     assert!(Arc::ptr_eq(&leaf, &dir.lookup_child("child").unwrap()));
 
     branch.fields.remove_child("child").unwrap();
@@ -608,6 +617,7 @@ fn cached_attr_lookup_observes_snapshot_changes() {
     *node.attrs.write() = attrs.clone();
     let attr = dir.lookup_child("status").unwrap();
     assert_eq!(attr.inode().type_(), InodeType::File);
+
     assert!(Arc::ptr_eq(&attr, &dir.lookup_child("status").unwrap()));
 
     *node.attrs.write() = SysAttrSet::empty().clone();

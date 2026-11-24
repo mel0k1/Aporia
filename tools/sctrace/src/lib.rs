@@ -1,3 +1,27 @@
+//! # Sctrace - Syscall Compatibility Tracer
+//!
+//! `sctrace` is a library for analyzing `strace` logs against SCML (Syscall Matching Language)
+//! patterns to determine syscall compatibility. It provides APIs for parsing `strace` output,
+//! matching syscalls against pattern specifications, and reporting compatibility results.
+//!
+//! ## Examples
+//!
+//! ```no_run
+//! use sctrace::{CliReporterBuilder, Patterns, SctraceBuilder, StraceLogStream};
+//!
+//! fn main() -> Result<(), String> {
+//!     let scml_files = vec!["patterns1.scml", "patterns2.scml"];
+//!
+//!     let sctrace = SctraceBuilder::new()
+//!         .strace(StraceLogStream::open_file("strace.log")?)
+//!         .patterns(Patterns::from_scml_files(&scml_files)?)
+//!         .reporter(CliReporterBuilder::new().quiet().build())
+//!         .build();
+//!
+//!     let _ = sctrace.run();
+//!     Ok(())
+//! }
+//! ```
 mod scml_matcher;
 mod scml_parser;
 mod strace_parser;
@@ -10,6 +34,7 @@ pub use scml_parser::Patterns;
 use strace_parser::{StraceParseError, Syscall};
 pub use trace::StraceLogStream;
 
+/// Builder for creating an `Sctrace` instance.
 pub struct SctraceBuilder<'a> {
     log_stream: Option<StraceLogStream>,
     patterns: Option<Patterns<'a>>,
@@ -17,6 +42,7 @@ pub struct SctraceBuilder<'a> {
 }
 
 impl<'a> SctraceBuilder<'a> {
+    /// Creates a new `SctraceBuilder` instance.
     pub fn new() -> Self {
         Self {
             log_stream: None,
@@ -25,21 +51,25 @@ impl<'a> SctraceBuilder<'a> {
         }
     }
 
+    /// Sets the strace log stream for the tracer.
     pub fn strace(mut self, stream: StraceLogStream) -> Self {
         self.log_stream = Some(stream);
         self
     }
 
+    /// Sets the SCML patterns for the tracer.
     pub fn patterns(mut self, patterns: Patterns<'a>) -> Self {
         self.patterns = Some(patterns);
         self
     }
 
+    /// Sets the reporter for the tracer.
     pub fn reporter(mut self, reporter: CliReporter) -> Self {
         self.reporter = Some(reporter);
         self
     }
 
+    /// Builds the `Sctrace` instance with the specified components.
     pub fn build(self) -> Sctrace<'a> {
         Sctrace {
             strace_iter: self.log_stream.expect("`log_stream` is required").lines(),
@@ -55,6 +85,7 @@ impl Default for SctraceBuilder<'_> {
     }
 }
 
+/// The high-level API of syscall compatibility tracer.
 pub struct Sctrace<'a> {
     strace_iter: Lines<StraceLogStream>,
     patterns: Patterns<'a>,
@@ -62,6 +93,7 @@ pub struct Sctrace<'a> {
 }
 
 impl Sctrace<'_> {
+    /// Runs the syscall trace analysis.
     pub fn run(mut self) -> Result<Option<Vec<String>>, String> {
         let matcher = Matcher::new(self.patterns.clone());
 
@@ -99,12 +131,14 @@ impl Sctrace<'_> {
     }
 }
 
+/// Builder for creating a `CliReporter` with customizable settings.
 pub struct CliReporterBuilder {
     quiet: bool,
     collect: bool,
 }
 
 impl CliReporterBuilder {
+    /// Creates a new `CliReporterBuilder` instance.
     pub fn new() -> Self {
         Self {
             quiet: false,
@@ -112,26 +146,31 @@ impl CliReporterBuilder {
         }
     }
 
+    /// Enables quiet mode, suppressing supported syscall output.
     pub fn quiet(mut self) -> Self {
         self.quiet = true;
         self
     }
 
+    /// Sets quiet mode.
     pub fn set_quiet(mut self, quiet: bool) -> Self {
         self.quiet = quiet;
         self
     }
 
+    /// Enables collection of output strings instead of printing to stdout/stderr.
     pub fn collect(mut self) -> Self {
         self.collect = true;
         self
     }
 
+    /// Sets collection mode.
     pub fn set_collect(mut self, collect: bool) -> Self {
         self.collect = collect;
         self
     }
 
+    /// Builds the `CliReporter` instance with the specified settings.
     pub fn build(self) -> CliReporter {
         CliReporter::new(
             self.quiet,
@@ -146,6 +185,7 @@ impl Default for CliReporterBuilder {
     }
 }
 
+/// Reporter for outputting syscall trace analysis results.
 pub struct CliReporter {
     quiet: bool,
     outputs: Option<Vec<String>>,

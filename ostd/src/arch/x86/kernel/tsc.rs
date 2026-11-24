@@ -10,6 +10,7 @@ use crate::{
     timer::TIMER_FREQ,
 };
 
+/// The frequency in Hz of the Time Stamp Counter (TSC).
 pub(in crate::arch) static TSC_FREQ: AtomicU64 = AtomicU64::new(0);
 
 pub(in crate::arch) fn init_tsc_freq() {
@@ -23,6 +24,10 @@ pub(in crate::arch) fn init_tsc_freq() {
     info!("TSC frequency: {:?} Hz", tsc_freq);
 }
 
+/// Determines the TSC frequency with the help of the Programmable Interval Timer (PIT).
+///
+/// When the TSC frequency is not enumerated in the results of the CPUID instruction, it can
+/// leverage the PIT to calculate the TSC frequency.
 pub(super) fn determine_tsc_freq_via_pit() -> u64 {
     let mut irq = IrqLine::alloc().unwrap();
     irq.on_active(pit_callback);
@@ -50,6 +55,7 @@ pub(super) fn determine_tsc_freq_via_pit() -> u64 {
     fn pit_callback(_trap_frame: &TrapFrame) {
         static IN_TIME: AtomicU64 = AtomicU64::new(0);
         static TSC_FIRST_COUNT: AtomicU64 = AtomicU64::new(0);
+
         const CALLBACK_TIMES: u64 = TIMER_FREQ / 10;
 
         let tsc_current_count = crate::arch::read_tsc();

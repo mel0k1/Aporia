@@ -1,3 +1,8 @@
+//! `FUSE_LOOKUP` resolves a child name under a parent directory node.
+//!
+//! The request body contains only the null-terminated child name. The reply
+//! body contains [`EntryReply`] for the resolved inode.
+
 use ostd::mm::{Infallible, VmReader, VmWriter};
 
 use super::util;

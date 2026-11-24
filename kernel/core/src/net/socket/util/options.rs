@@ -58,6 +58,7 @@ impl Default for SocketOptionSet {
 }
 
 impl SocketOptionSet {
+    /// Returns the default socket level options for tcp socket.
     pub(in crate::net) fn new_tcp() -> Self {
         Self {
             send_buf: TCP_SEND_BUF_LEN as u32,
@@ -66,6 +67,7 @@ impl SocketOptionSet {
         }
     }
 
+    /// Returns the default socket level options for udp socket.
     pub(in crate::net) fn new_udp() -> Self {
         Self {
             send_buf: UDP_SEND_PAYLOAD_LEN as u32,
@@ -74,6 +76,7 @@ impl SocketOptionSet {
         }
     }
 
+    /// Returns the default socket level options for unix stream socket.
     pub(in crate::net) fn new_unix_stream() -> Self {
         Self {
             send_buf: UNIX_STREAM_DEFAULT_BUF_SIZE as u32,
@@ -82,6 +85,7 @@ impl SocketOptionSet {
         }
     }
 
+    /// Returns the default socket level options for unix datagram socket.
     pub(in crate::net) fn new_unix_datagram() -> Self {
         Self {
             send_buf: UNIX_DATAGRAM_DEFAULT_BUF_SIZE as u32,
@@ -90,6 +94,7 @@ impl SocketOptionSet {
         }
     }
 
+    /// Returns the default socket level options for netlink socket.
     pub(in crate::net) fn new_netlink() -> Self {
         Self {
             send_buf: NETLINK_DEFAULT_BUF_SIZE as u32,
@@ -98,6 +103,10 @@ impl SocketOptionSet {
         }
     }
 
+    /// Gets socket-level options.
+    ///
+    /// Note that the socket error has to be handled separately. This method does not handle it
+    /// because it is automatically cleared after reading.
     pub(crate) fn get_option(
         &self,
         option: &mut dyn SocketOption,
@@ -175,6 +184,7 @@ impl SocketOptionSet {
         Ok(())
     }
 
+    /// Sets socket-level options.
     pub(crate) fn set_option(
         &mut self,
         option: &dyn SocketOption,
@@ -288,6 +298,7 @@ struct DurationCell {
 }
 
 impl DurationCell {
+    /// Creates a new duration cell.
     fn new(duration: Duration) -> Self {
         Self {
             seconds: AtomicU64::new(duration.as_secs()),
@@ -295,6 +306,9 @@ impl DurationCell {
         }
     }
 
+    /// Loads the current duration.
+    ///
+    /// The returned value is not guaranteed to be a snapshot of a single previous `store` call.
     fn load(&self) -> Duration {
         Duration::new(
             self.seconds.load(Ordering::Relaxed),
@@ -302,6 +316,7 @@ impl DurationCell {
         )
     }
 
+    /// Stores a new duration.
     fn store(&self, duration: Duration) {
         self.seconds.store(duration.as_secs(), Ordering::Relaxed);
         self.nanoseconds
@@ -356,44 +371,57 @@ fn check_priority(priority: i32) -> Result<()> {
 pub(crate) const MIN_SENDBUF: u32 = 2304;
 pub(crate) const MIN_RECVBUF: u32 = 2304;
 
+/// A trait used for getting socket level options on actual sockets.
 pub(in crate::net) trait GetSocketLevelOption {
+    /// Returns the socket type.
     fn socket_type(&self) -> SockType;
 
+    /// Returns whether the socket is in listening state.
     fn is_listening(&self) -> bool;
 
+    /// Returns timeout values for blocking socket operations.
     fn socket_timeouts(&self) -> Option<&SocketTimeouts> {
         None
     }
 
+    /// Returns the receive timeout.
     fn recv_timeout(&self) -> Option<Duration> {
         self.socket_timeouts()
             .and_then(SocketTimeouts::recv_timeout)
     }
 
+    /// Returns the send timeout.
     fn send_timeout(&self) -> Option<Duration> {
         self.socket_timeouts()
             .and_then(SocketTimeouts::send_timeout)
     }
 }
 
+/// A trait used for setting socket level options on actual sockets.
 pub(in crate::net) trait SetSocketLevelOption {
+    /// Sets whether the socket address can be reused.
     fn set_reuse_addr(&self, _reuse_addr: bool) {}
 
+    /// Sets whether keepalive messages are enabled.
     fn set_keep_alive(&self, _keep_alive: bool) -> NeedIfacePoll {
         NeedIfacePoll::FALSE
     }
+    /// Sets whether receipt of the credentials of the sending process is enabled.
     fn set_pass_cred(&self, _pass_cred: bool) {}
 
+    /// Returns timeout values for blocking socket operations.
     fn socket_timeouts(&self) -> Option<&SocketTimeouts> {
         None
     }
 
+    /// Sets the receive timeout.
     fn set_recv_timeout(&self, recv_timeout: Option<Duration>) {
         if let Some(timeouts) = self.socket_timeouts() {
             timeouts.set_recv_timeout(recv_timeout);
         }
     }
 
+    /// Sets the send timeout.
     fn set_send_timeout(&self, send_timeout: Option<Duration>) {
         if let Some(timeouts) = self.socket_timeouts() {
             timeouts.set_send_timeout(send_timeout);

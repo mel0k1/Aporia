@@ -1,3 +1,76 @@
+//! Dev/ino identity: the pair an overlay object publishes, and how a mount projects it.
+//!
+//! # Overlay identity projection
+//!
+//! Overlayfs exposes files from different underlying filesystems in one visible filesystem. Within
+//! one filesystem an inode should keep its identity (the `st_dev`/`st_ino` pair that a `stat` or the
+//! like reports) unique and stable, that is:
+//! - the identity of one inode does not change within one mount;
+//! - no two inodes share one inode number; and
+//! - the identity of one inode ideally also survives a remount, because some overlayfs features
+//!   durably record an inode's identity.
+//!
+//! Filesystems, however, do not coordinate identities among themselves, so passing an underlying
+//! identity through as it is can break the properties above. Overlayfs therefore keeps an identity
+//! system of its own: it maps the real identities taken from the different underlying filesystems
+//! onto one identity space by an encoding of its own, which is called projection.
+//!
+//! Overlayfs has two ways to project an identity, resolved once at mount time into the mount's
+//! [`IdentityPolicy`]:
+//! - `SameFs` — every layer really lives on one underlying filesystem, so that filesystem already
+//!   provides the identity guarantees and overlayfs may pass its identities through.
+//!   - To decide whether the layers share one filesystem, the mount checks the filesystem instance
+//!   each real layer belongs to and assigns one `fsid` per instance, topmost layer first; when all
+//!   layers belong to one filesystem, only `fsid = 0` is assigned.
+//! - `Xino` — overlayfs provides the identity guarantees itself, in particular when the layers live
+//!   on several filesystem instances (a single-instance mount can force it too).
+//!   - Overlayfs takes an anonymous device ID of its own, distinct from every existing
+//!     filesystem, so that device numbers cannot collide.
+//!   - Each overlayfs inode is given an inode number assembled from the `fsid` of the real filesystem
+//!     the inode lives on and the inode number it has there, `real_ino`:
+//! ```text
+//!  63         x   x-1                   0
+//!  +----------+---+---------------------+
+//!  |   fsid   |0/1|      real_ino       |
+//!  +----------+---+---------------------+
+//! ```
+//! - - The width of the `fsid` field follows the largest `fsid` the mount assigned.
+//! - - The `0/1` bit marks whether the number is a fallback number (see below).
+//!
+//! `Xino` is the default (`xino=auto`); overlayfs falls back in the following cases:
+//! - Per object: while the xino is in use, a real inode whose `real_ino` may be too long for the
+//!   field. Overlayfs then falls back on its own: The `0/1` bit is set on at fallback, so it cannot
+//!   collide with an encoded one.
+//! - Mount-wide, in either of two cases:
+//!   - the mount was asked for `xino=off`; or
+//!   - the mount keeps `xino=auto` and can neither stay read-only nor store a private record on its
+//!     upper. A read-only mount never copies up, so an inode's real identity cannot change under it;
+//!     a mount whose upper can store private xattrs keeps the origin record across a copy-up, so
+//!     the identity stays stable there too. Either case can hold an encoded number for an object's
+//!     whole life, which is what xino needs. When neither holds, the whole mount falls back.
+//!
+//! In `Fallback` mode, every directory allocates a unique inode number from the mount, and uses the
+//! mount's anonymous device ID as its device ID. The allocation is done by a monotonic `u64`
+//! allocator. A non-directory keeps its real identity (both device and inode number) as it is.
+//!
+//! A directory's number is allocated by this mount alone, so a directory's identity does not survive
+//! a remount: another mount of the same layers has its own numbers. A non-directory keeps its
+//! layer's own pair, so a non-directory's identity does survive a remount. A directory's pair and a
+//! non-directory's cannot collide, because they uses different devices. Two non-directories can
+//! share a pair when two of the layers live on filesystems that report one device number. That means
+//! two instances of one device, which is rarely seen.
+//!
+//! # Public types
+//!
+//! - [`IdentityPolicy`]: the mount's resolved way of projecting identities.
+//! - [`ObjectRealId`]: `(fsid, real_ino)`, which can be used to build a visible ID.
+//! - [`ObjectVisibleId`]: `(st_dev, st_ino)`. Because fallback allocates from a monotonic allocator, a
+//!   visible ID cannot in general be decoded back into a real ID. Once set for an inode, it will not
+//!   change during the mount lifecycle.
+//! - [`ObjectOriginRecord`]: `(magic, container_dev_id, root_ino, real_ino)`, which durably records
+//!   the original lower inode of an upper inode that a copy-up produced, so that the identity
+//!   survives across mounts.
+
 #![short_vis_path::add(overlayfs)]
 
 use core::sync::atomic::{AtomicU64, Ordering};
@@ -22,22 +95,37 @@ use crate::{
     prelude::*,
 };
 
+/// The mount's resolved way of projecting identities.
 #[derive(Debug)]
 pub(in overlayfs) struct IdentityPolicy {
+    /// The form this mount resolved to.
     mode: IdentityMode,
+    /// The device the mount publishes for the numbers it allocates itself.
     overlay_device: AnonDeviceId,
+    /// The numbers this mount allocates; absent when the resolved form allocates none.
     fallback_ino: Option<AtomicU64>,
     upper_numbers: Option<LayerNumbers>,
+    /// The numbers of every lower, topmost first — the layers an origin record can name.
     lower_numbers: Vec<LayerNumbers>,
 }
 
+/// How this mount projects the dev/ino pair an object publishes.
 #[derive(Debug)]
 enum IdentityMode {
+    /// Every layer is on one filesystem, where a layer's own numbers are already unique.
     SameFs,
+    /// A directory takes a number this mount allocates; anything else keeps its layer's numbers.
     Fallback,
+    /// The overlay's own device publishes one number per object, unique across every layer.
+    ///
+    /// The layer's `fsid` occupies the high bits of that number.
     Xino { xino_shift: u32 },
 }
 
+/// The real ID of one real object inside this mount.
+///
+/// It stays the same as long as that layer numbers its inodes stably, and it is the key the
+/// identity-reuse cache files an object under.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(super) struct ObjectRealId {
     fsid: u64,
@@ -45,6 +133,10 @@ pub(super) struct ObjectRealId {
 }
 
 impl ObjectRealId {
+    /// Encodes this ID into one published inode number, or `None` when its real inode number does
+    /// not fit the payload.
+    ///
+    /// The layer's `fsid` sits above the lowest bit, which the mount keeps clear.
     fn encode_xino(&self, xino_shift: u32) -> Option<u64> {
         if self.real_ino >> xino_shift != 0 {
             return None;
@@ -54,12 +146,17 @@ impl ObjectRealId {
     }
 }
 
+/// The published identity of one overlay object.
+///
+/// The mount projects it once for the object's life, and the ids behind it cannot be read back out
+/// of it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct ObjectVisibleId {
     pub(super) dev: DeviceId,
     pub(super) ino: u64,
 }
 
+/// The numbers the ID system keeps for one layer — what a durable layer name resolves to.
 #[derive(Clone, Copy, Debug)]
 struct LayerNumbers {
     fsid: u64,
@@ -67,18 +164,27 @@ struct LayerNumbers {
     root_ino: u64,
 }
 
+/// The durable form of a real ID.
+///
+/// It names its layer the way any mount can resolve it.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 struct ObjectOriginRecord {
+    /// The word that marks these bytes as an origin record.
     magic: u64,
+    /// The layer's backing device, in the encoded form of a device number.
     container_dev_id: u64,
+    /// The inode number of the layer's pinned root.
     root_ino: u64,
+    /// The inode number of the object in that layer.
     real_ino: u64,
 }
 
 impl ObjectOriginRecord {
+    /// The word an origin record starts with.
     const MAGIC: u64 = 0x0000_00fb;
 
+    /// Reads one record back, or `None` when the bytes are not a record this mount wrote.
     fn decode(bytes: &[u8]) -> Option<Self> {
         if bytes.len() != size_of::<Self>() {
             return None;
@@ -94,6 +200,15 @@ impl ObjectOriginRecord {
 }
 
 impl IdentityPolicy {
+    /// Assembles the way of projecting identities from the facts a mount resolved.
+    ///
+    /// The `xino=auto` degradation follows Linux `ovl_lower_dir` and `ovl_make_workdir`, which turn
+    /// `xino=auto` into `xino=off` when the mount can keep no persistent identity for an object that
+    /// a copy-up replaces.
+    ///
+    /// Reference:
+    /// <https://elixir.bootlin.com/linux/v7.2/source/fs/overlayfs/super.c#L437-L446>,
+    /// <https://elixir.bootlin.com/linux/v7.2/source/fs/overlayfs/super.c#L745-L755>.
     fn assemble(
         overlay_device: AnonDeviceId,
         xino_mode: XinoMode,
@@ -128,6 +243,7 @@ impl IdentityPolicy {
         }
     }
 
+    /// Projects the pair one object publishes; the object keeps it for life.
     pub(super) fn project(&self, real_id: ObjectRealId, is_directory: bool) -> ObjectVisibleId {
         let layer_pair = ObjectVisibleId {
             dev: self.device_of_fsid(real_id.fsid),
@@ -159,6 +275,7 @@ impl IdentityPolicy {
         }
     }
 
+    /// Returns the real ID of one real object inside this mount.
     pub(super) fn real_id_of(&self, real: &RealObject) -> ObjectRealId {
         ObjectRealId {
             fsid: self.layer(real.layer_index()).fsid,
@@ -166,6 +283,7 @@ impl IdentityPolicy {
         }
     }
 
+    /// Builds the durable record of one object, naming its layer the way any mount can read.
     fn origin_record_of(&self, source: &RealObject) -> ObjectOriginRecord {
         let layer = self.layer(source.layer_index());
         ObjectOriginRecord {
@@ -176,10 +294,14 @@ impl IdentityPolicy {
         }
     }
 
+    /// Whether the published pairs are the layers' own numbers.
     pub(super) fn is_same_fs_passthrough(&self) -> bool {
         matches!(self.mode, IdentityMode::SameFs)
     }
 
+    /// Returns the layer `layer_index` selects.
+    ///
+    /// Index 0 is the upper; index `i` is the `i`-th lower, topmost first.
     fn layer(&self, layer_index: usize) -> &LayerNumbers {
         match layer_index {
             0 => self
@@ -193,6 +315,7 @@ impl IdentityPolicy {
         }
     }
 
+    /// Returns the device the layers of one `fsid` are on.
     fn device_of_fsid(&self, fsid: u64) -> DeviceId {
         self.upper_numbers
             .iter()
@@ -202,6 +325,9 @@ impl IdentityPolicy {
             .container_dev_id
     }
 
+    /// Returns the `fsid` of the layer an origin record points at.
+    ///
+    /// `None` means no single lower of this mount matches the record.
     fn fsid_of_origin(&self, origin: &ObjectOriginRecord) -> Option<u64> {
         let mut matched: Option<u64> = None;
         for layer in self.lower_numbers.iter() {
@@ -219,6 +345,15 @@ impl IdentityPolicy {
         matched
     }
 
+    /// Returns the next number this mount allocates.
+    ///
+    /// A self-allocated number has to stay distinguishable from an encoded one, so
+    /// `xino_fallback_ino` sets the lowest encoding bit on it — the bit `encode_xino` keeps clear.
+    /// Linux marks a self-allocated number the same way with `ovl_map_dev_ino` and `ovl_map_ino`.
+    ///
+    /// Reference:
+    /// <https://elixir.bootlin.com/linux/v7.2/source/fs/overlayfs/inode.c#L120-L121>,
+    /// <https://elixir.bootlin.com/linux/v7.2/source/fs/overlayfs/inode.c#L867-L870>.
     fn allocate_fallback_ino(&self) -> u64 {
         let range = self
             .fallback_ino
@@ -227,6 +362,7 @@ impl IdentityPolicy {
         range.fetch_add(1, Ordering::Relaxed)
     }
 
+    /// Returns a number this mount allocates with the bit the encoding keeps clear set on it.
     fn xino_fallback_ino(&self, xino_shift: u32) -> u64 {
         let cleared_bit = 1 << xino_shift;
         let ino = self.allocate_fallback_ino();
@@ -235,6 +371,8 @@ impl IdentityPolicy {
 }
 
 impl OverlayFs {
+    /// Resolves one mount's way of projecting identities; `xino=auto` resolves to the encoding only
+    /// on a read-only mount or one whose upper stores a private record.
     pub(in overlayfs) fn new_identity_policy(
         overlay_device: AnonDeviceId,
         layers: &LayerStack,
@@ -244,6 +382,7 @@ impl OverlayFs {
     ) -> IdentityPolicy {
         let mut fses: Vec<Arc<dyn FileSystem>> = Vec::new();
         let mut fsid_by_address: HashMap<usize, u64> = HashMap::new();
+
         let mut assign_fsid = |layer: &Layer, fses: &mut Vec<Arc<dyn FileSystem>>| -> u64 {
             let address = Arc::as_ptr(layer.fs()) as *const () as usize;
             if let Some(fsid) = fsid_by_address.get(&address) {
@@ -279,6 +418,11 @@ impl OverlayFs {
         )
     }
 
+    /// Returns the real ID recorded in the upper's durable origin record, resolved onto a lower of this
+    /// mount.
+    ///
+    /// `None` covers an absent, undecodable, or unreadable record — the unreadable one warns once — and
+    /// a record that matches no single lower.
     pub(super) fn origin_of(&self, upper: &Dentry) -> Option<ObjectRealId> {
         let mut value = [0u8; size_of::<ObjectOriginRecord>()];
         let read = OverlayXattrType::Origin.get_value_from(
@@ -288,6 +432,7 @@ impl OverlayFs {
         );
         let record = match read {
             Ok(written) => ObjectOriginRecord::decode(&value[..written])?,
+
             Err(err)
                 if matches!(
                     err.error(),
@@ -311,6 +456,11 @@ impl OverlayFs {
         })
     }
 
+    /// Returns the real ID one projected stack resolves to: the ID of its visible source.
+    ///
+    /// Two kinds of object answer differently: a directory takes its topmost retained lower's number
+    /// — the one its identity must survive a copy-up as — and a non-directory upper takes the durable
+    /// record it carries.
     pub(super) fn real_id_of_stack(&self, facts: &RealObjectStack) -> ObjectRealId {
         let visible = facts.visible_source();
         let is_directory = visible.real_inode().type_().is_directory();
@@ -328,6 +478,8 @@ impl OverlayFs {
         }
     }
 
+    /// Writes `source`'s real ID onto the staged temp as the object's durable record: `Ok(true)` when
+    /// it landed, `Ok(false)` when the mount cannot hold private records or the filesystem refused one.
     pub(super) fn record_origin(&self, temp: &WorkdirTemp, source: &RealObject) -> Result<bool> {
         if !self.policy().can_store_private_xattr() {
             return Ok(false);
@@ -347,6 +499,8 @@ impl OverlayFs {
 
 #[cfg(ktest)]
 mod test {
+    //! Unit tests for the pure mapping this module owns: the mount's form, the layers' numbers,
+    //! the published pairs, and the record's wire form.
 
     use ostd::prelude::ktest;
 
@@ -507,6 +661,7 @@ mod test {
             None,
             vec![numbers(3, dev(1, 1), 200)],
         );
+
         let auto_encoded = auto_policy.project(real_id(3, 0x1234), false);
         assert_eq!(auto_encoded.ino, encoded.ino);
         assert_eq!(auto_encoded.dev, auto_policy.overlay_device.id());
@@ -640,6 +795,7 @@ mod test {
         let mut word = valid_wire();
         word[0] ^= 0xff;
         assert!(ObjectOriginRecord::decode(&word).is_none());
+
         let mut versioned = valid_wire();
         versioned[4] = 3;
         assert!(ObjectOriginRecord::decode(&versioned).is_none());

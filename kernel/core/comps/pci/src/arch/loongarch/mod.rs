@@ -1,3 +1,5 @@
+//! PCI bus access
+
 use core::{alloc::Layout, ops::RangeInclusive};
 
 use align_ext::AlignExt;
@@ -32,18 +34,23 @@ pub(crate) fn read32(location: &PciDeviceLocation, offset: u32) -> Result<u32, E
         .read_once((encode_as_address_offset(location) | offset) as usize)
 }
 
+/// The maximum offset in the 12-bit configuration space when using [`encode_as_address_offset`].
 const PCI_ECAM_MAX_OFFSET: u32 = 0xffc;
 
 const PCI_ECAM_BUS_SHIFT: u32 = 20;
 const PCI_ECAM_DEVICE_SHIFT: u32 = 15;
 const PCI_ECAM_FUNCTION_SHIFT: u32 = 12;
 
+/// Encodes the bus, device, and function into an address offset in the PCI MMIO region.
 fn encode_as_address_offset(location: &PciDeviceLocation) -> u32 {
     ((location.bus as u32) << PCI_ECAM_BUS_SHIFT)
         | ((location.device as u32) << PCI_ECAM_DEVICE_SHIFT)
         | ((location.function as u32) << PCI_ECAM_FUNCTION_SHIFT)
 }
 
+/// Initializes the platform-specific module for accessing the PCI configuration space.
+///
+/// Returns a range for the PCI bus number, or [`None`] if there is no PCI bus.
 pub(crate) fn init() -> Option<RangeInclusive<u8>> {
     let Some(pci) = DEVICE_TREE
         .get()
@@ -84,6 +91,10 @@ pub(crate) fn init() -> Option<RangeInclusive<u8>> {
     Some(bus_range)
 }
 
+/// A simple MMIO allocator managing a linear region.
+///
+/// In loongarch, the starting address of the memory bar of the PCI device
+/// needs to be allocated within the specified range
 struct MmioAllocator {
     base: Paddr,
     size: Paddr,
@@ -91,6 +102,7 @@ struct MmioAllocator {
 }
 
 impl MmioAllocator {
+    /// Creates a new MMIO allocator with a given base and size.
     const fn new(base: Paddr, size: Paddr) -> Self {
         MmioAllocator {
             base,
@@ -99,6 +111,7 @@ impl MmioAllocator {
         }
     }
 
+    /// Allocates a physical address range with the specified alignment and size.
     fn allocate(&mut self, layout: Layout) -> Option<Paddr> {
         let align = layout.align();
         let size = layout.size();
@@ -117,6 +130,7 @@ impl MmioAllocator {
 
 static MMIO_ALLOCATOR: Once<SpinLock<MmioAllocator>> = Once::new();
 
+/// Initializes the MMIO allocator from the PCIe node's "ranges" property.
 fn init_mmio_allocator_from_fdt(node: &FdtNode) {
     let ranges = node
         .property("ranges")
@@ -142,6 +156,7 @@ fn init_mmio_allocator_from_fdt(node: &FdtNode) {
     }
 }
 
+/// Allocates an MMIO address range using the global allocator.
 pub(crate) fn alloc_mmio(layout: Layout) -> Option<Paddr> {
     MMIO_ALLOCATOR.get().unwrap().lock().allocate(layout)
 }

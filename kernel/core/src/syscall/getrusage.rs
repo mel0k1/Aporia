@@ -61,20 +61,36 @@ pub(super) fn sys_getrusage(
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod)]
 pub(super) struct rusage_t {
+    /// user time used
     pub ru_utime: timeval_t,
+    /// system time used
     pub ru_stime: timeval_t,
+    /// maximum resident set size
     pub ru_maxrss: u64,
+    /// integral shared memory size
     pub ru_ixrss: u64,
+    /// integral unshared data size
     pub ru_idrss: u64,
+    /// integral unshared stack size
     pub ru_isrss: u64,
+    /// page reclaims
     pub ru_minflt: u64,
+    /// page faults
     pub ru_majflt: u64,
+    /// swaps
     pub ru_nswap: u64,
+    /// block input operations
     pub ru_inblock: u64,
+    /// block output operations
     pub ru_oublock: u64,
+    /// messages sent
     pub ru_msgsnd: u64,
+    /// messages received
     pub ru_msgrcv: u64,
+    /// signals received
     pub ru_nsignals: u64,
+    /// voluntary ctx switches
     pub ru_nvcsw: u64,
+    /// involuntary
     pub ru_nivcsw: u64,
 }

@@ -1,3 +1,5 @@
+//! A fixed-size local cache for frame allocation.
+
 use core::{alloc::Layout, cell::RefCell};
 
 use ostd::{
@@ -17,6 +19,10 @@ struct CacheOfSizes {
     cache4: CacheArray<4, 6>,
 }
 
+/// A fixed-size local cache for frame allocation.
+///
+/// Each cache array contains at most `COUNT` segments. Each segment contains
+/// `NR_CONT_FRAMES` contiguous frames.
 struct CacheArray<const NR_CONT_FRAMES: usize, const COUNT: usize> {
     inner: [Paddr; COUNT],
     size: usize,
@@ -30,10 +36,15 @@ impl<const NR_CONT_FRAMES: usize, const COUNT: usize> CacheArray<NR_CONT_FRAMES,
         }
     }
 
+    /// The size of the segments that this cache manages.
     const fn segment_size() -> usize {
         NR_CONT_FRAMES * PAGE_SIZE
     }
 
+    /// Allocates a segment of frames.
+    ///
+    /// It may allocate directly from this cache. If the cache is empty, it
+    /// will fill the cache.
     fn alloc(&mut self, guard: &DisabledLocalIrqGuard) -> Option<Paddr> {
         if let Some(frame) = self.pop_front() {
             return Some(frame);
@@ -52,6 +63,10 @@ impl<const NR_CONT_FRAMES: usize, const COUNT: usize> CacheArray<NR_CONT_FRAMES,
         Some(allocated)
     }
 
+    /// Deallocates a segment of frames.
+    ///
+    /// It may deallocate directly to this cache. If the cache is full, it will
+    /// deallocate to the global pool.
     fn dealloc(&mut self, guard: &DisabledLocalIrqGuard, addr: Paddr) {
         if self.push_front(addr).is_none() {
             let nr_to_dealloc = COUNT * 2 / 3 + 1;

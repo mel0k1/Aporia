@@ -1,3 +1,8 @@
+//! This module offers `/proc/stat` file support, which provides
+//! information about kernel system statistics.
+//!
+//! Reference: <https://man7.org/linux/man-pages/man5/proc_stat.5.html>
+
 use aster_softirq::{
     iter_irq_counts_across_all_cpus, iter_softirq_counts_across_all_cpus, softirq_id::*,
 };
@@ -18,6 +23,7 @@ use crate::{
     time::cpu_time_stats::CpuTimeStatsManager,
 };
 
+/// Represents the inode at `/proc/stat`.
 pub(super) struct StatFileOps;
 
 impl StatFileOps {

@@ -7,6 +7,12 @@ use crate::utils::DrmSize;
 
 const DRM_DISPLAY_MODE_NAME_LEN: usize = 32;
 
+/// The kernel-internal representation of a display mode.
+///
+/// It describes the logical scanout timing, synchronization flags,
+/// mode origin, and userspace-visible name.
+/// Unlike [`DrmModeInfo`], its Rust layout is not part of the userspace ABI.
+/// It is converted to or from the UAPI representation when crossing the ioctl boundary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DrmDisplayMode {
     pixel_clock_khz: u32,
@@ -21,6 +27,7 @@ pub struct DrmDisplayMode {
 }
 
 impl DrmDisplayMode {
+    /// Creates a simple fixed-refresh display mode.
     pub fn from_size(size: DrmSize, vrefresh_hz: u32) -> Result<Self> {
         if size.is_empty() {
             return Err(errno!(EINVAL, "the display mode size must not be empty"));
@@ -95,6 +102,7 @@ impl DrmDisplayMode {
     }
 }
 
+/// Timing parameters along one axis of a display mode.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct DrmModeTiming {
     active: u32,
@@ -128,12 +136,22 @@ impl DrmModeTiming {
 }
 
 bitflags::bitflags! {
+    /// Mode origin and preference flags exposed through the DRM mode UAPI.
+    ///
+    /// These flags are stored in `drm_mode_modeinfo::type`.
+    /// Their bit values are part of the userspace ABI and must remain compatible with Linux.
+    ///
+    /// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm_mode.h#L49-L59>.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub struct DrmModeType: u32 {
+        /// Deprecated by Linux; retained for UAPI compatibility.
         const BUILTIN   = 1 << 0;
+        /// Deprecated by Linux; retained for UAPI compatibility.
         const CLOCK_C   = (1 << 1) | Self::BUILTIN.bits();
+        /// Deprecated by Linux; retained for UAPI compatibility.
         const CRTC_C    = (1 << 2) | Self::BUILTIN.bits();
         const PREFERRED = 1 << 3;
+        /// Deprecated by Linux; retained for UAPI compatibility.
         const DEFAULT   = 1 << 4;
         const USERDEF   = 1 << 5;
         const DRIVER    = 1 << 6;
@@ -141,6 +159,13 @@ bitflags::bitflags! {
 }
 
 bitflags::bitflags! {
+    /// Display timing and synchronization flags exposed through the DRM mode UAPI.
+    ///
+    /// These flags are stored in `drm_mode_modeinfo::flags`.
+    /// Bits 0 through 13 are ABI-compatible with the corresponding XRandR mode flags
+    /// and must not be changed or reused.
+    ///
+    /// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm_mode.h#L61-L84>.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub struct DrmModeFlag: u32 {
         const PHSYNC    = 1 << 0;
@@ -153,13 +178,18 @@ bitflags::bitflags! {
         const PCSYNC    = 1 << 7;
         const NCSYNC    = 1 << 8;
         const HSKEW     = 1 << 9;
+        /// Deprecated by Linux; retained for UAPI compatibility.
         const BCAST     = 1 << 10;
+        /// Deprecated by Linux; retained for UAPI compatibility.
         const PIXMUX    = 1 << 11;
         const DBLCLK    = 1 << 12;
         const CLKDIV2   = 1 << 13;
     }
 }
 
+/// DRM display mode.
+///
+/// Reference: <https://elixir.bootlin.com/linux/v6.17/source/include/uapi/drm/drm_mode.h#L221-L260>.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub struct DrmModeInfo {

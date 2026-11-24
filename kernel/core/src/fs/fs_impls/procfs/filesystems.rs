@@ -9,6 +9,7 @@ use crate::{
     prelude::*,
 };
 
+/// Represents the inode at /proc/filesystems.
 pub(super) struct FileSystemsFileOps;
 
 impl FileSystemsFileOps {
