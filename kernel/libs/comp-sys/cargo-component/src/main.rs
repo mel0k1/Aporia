@@ -1,8 +1,3 @@
-
-
-
-
-
 use std::{
     env,
     path::PathBuf,
@@ -27,7 +22,6 @@ fn show_version() {
 }
 
 pub fn main() {
-
     if env::args().any(|a| a == "--help" || a == "-h") {
         show_help();
         return;

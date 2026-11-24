@@ -1,8 +1,3 @@
-
-
-
-
-
 #![feature(rustc_private)]
 
 extern crate rustc_driver_impl;
@@ -45,18 +40,13 @@ fn arg_value<'a, T: Deref<Target = str>>(
 fn track_files(sess: &Session, conf_path_string: Option<String>) {
     let mut file_depinfo = sess.file_depinfo.borrow_mut();
 
-
-
     if Path::new("Cargo.toml").exists() {
         file_depinfo.insert(Symbol::intern("Cargo.toml"));
     }
 
-
     if let Some(path) = conf_path_string {
         file_depinfo.insert(Symbol::intern(&path));
     }
-
-
 
     if cfg!(debug_assertions) {
         if let Ok(current_exe) = env::current_exe() {
@@ -72,7 +62,6 @@ impl rustc_driver_impl::Callbacks for DefaultCallbacks {}
 
 struct ComponentCallbacks;
 impl rustc_driver_impl::Callbacks for ComponentCallbacks {
-
     #[expect(rustc::bad_opt_access)]
     fn config(&mut self, config: &mut interface::Config) {
         let conf_path = analysis::lookup_conf_file();
@@ -135,9 +124,6 @@ pub fn main() -> ExitCode {
             };
         };
 
-
-
-
         if let Some(pos) = orig_args.iter().position(|arg| arg == "--rustc") {
             orig_args.remove(pos);
             orig_args[0] = "rustc".to_string();
@@ -155,13 +141,10 @@ pub fn main() -> ExitCode {
             return;
         }
 
-
-
         let wrapper_mode =
             orig_args.get(1).map(Path::new).and_then(Path::file_stem) == Some("rustc".as_ref());
 
         if wrapper_mode {
-
             orig_args.remove(1);
         }
 

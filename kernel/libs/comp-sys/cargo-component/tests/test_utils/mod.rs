@@ -1,6 +1,3 @@
-
-
-
 #![expect(unused)]
 
 use std::{
@@ -20,9 +17,8 @@ macro_rules! run_cargo_component_cmd {
     }};
 }
 
-static CARGO_COMPONENT_PATH: LazyLock<PathBuf> = LazyLock::new(|| {
-    PathBuf::from(env!("CARGO_BIN_EXE_cargo-component"))
-});
+static CARGO_COMPONENT_PATH: LazyLock<PathBuf> =
+    LazyLock::new(|| PathBuf::from(env!("CARGO_BIN_EXE_cargo-component")));
 
 pub fn run_cargo_component(test_name: &str) -> String {
     let root_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

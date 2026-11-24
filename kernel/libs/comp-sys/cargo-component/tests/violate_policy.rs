@@ -1,6 +1,3 @@
-
-
-
 //! This test checks that if controlled resource not in whitelist is visited, cargo-component will
 //! report warning message.
 

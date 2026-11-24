@@ -1,6 +1,3 @@
-
-
-
 //! This test checks that if two components have same name, the compiler will panic.
 
 mod test_utils;

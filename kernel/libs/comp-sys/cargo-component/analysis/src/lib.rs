@@ -1,6 +1,3 @@
-
-
-
 #![feature(rustc_private)]
 
 extern crate rustc_driver;
@@ -38,15 +35,10 @@ pub fn enter_analysis<'tcx>(tcx: TyCtxt<'tcx>) {
 }
 
 fn check_body_mir(mir_key: LocalDefId, tcx: TyCtxt<'_>) {
-
-
     let body = tcx.instance_mir(InstanceKind::Item(mir_key.to_def_id()));
 
     let mut checked_def_ids = HashSet::new();
     for basic_block_data in body.basic_blocks.iter() {
-
-
-
         for statement in &basic_block_data.statements {
             check_statement(statement, tcx, &mut checked_def_ids);
         }
@@ -56,16 +48,12 @@ fn check_body_mir(mir_key: LocalDefId, tcx: TyCtxt<'_>) {
         }
     }
 
-
-
-
     for local_decl in body.local_decls.iter() {
         check_local_decl(local_decl, tcx, &checked_def_ids)
     }
 }
 
 fn check_statement(statement: &Statement, tcx: TyCtxt<'_>, checked_def_ids: &mut HashSet<DefId>) {
-
     let mut def_paths = Vec::new();
     if let StatementKind::Assign(assignment) = &statement.kind {
         let rvalue = &assignment.1;
@@ -126,7 +114,6 @@ fn check_terminator(
 fn check_local_decl(local_decl: &LocalDecl<'_>, tcx: TyCtxt<'_>, checked_def_ids: &HashSet<DefId>) {
     let ty = local_decl.ty;
     let def_id = if let TyKind::FnDef(def_id, ..) = ty.kind() {
-
         *def_id
     } else {
         return;
@@ -187,14 +174,11 @@ fn check_constant(
     def_paths: &mut Vec<String>,
     checked_def_ids: &mut HashSet<DefId>,
 ) {
-
     let def_id = if let Some(def_id) = constant.check_static_ptr(tcx) {
-
         def_id
     } else {
         let ty = constant.const_.ty();
         if let TyKind::FnDef(def_id, ..) = ty.kind() {
-
             *def_id
         } else {
             return;
@@ -253,7 +237,6 @@ fn def_path_for_def_id(tcx: TyCtxt<'_>, def_id: DefId) -> String {
 
 /// def path for function, type, static variables and trait methods
 fn common_def_path_str(tcx: TyCtxt<'_>, def_id: DefId) -> String {
-
     let def_path = tcx.def_path(def_id);
     let crate_name = tcx.crate_name(def_path.krate);
     format!("{}{}", crate_name, def_path.to_string_no_crate_verbose())

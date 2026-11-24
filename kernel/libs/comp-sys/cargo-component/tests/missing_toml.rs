@@ -1,6 +1,3 @@
-
-
-
 //! This test checks that if Components.toml is missed, the compiler will panic.
 
 mod test_utils;
