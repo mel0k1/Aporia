@@ -293,7 +293,7 @@ unsafe fn efi_phase_runtime(boot_params: &mut BootParams) -> ! {
     populate_e820_from_memory_map(boot_params, &memory_map);
 
     crate::println!(
-        "[EFI stub] Entering the Asterinas entry point at {:p}",
+        "[EFI stub] Entering the Aporia entry point at {:p}",
         super::ASTER_ENTRY_POINT,
     );
     unsafe { super::call_aster_entrypoint(super::ASTER_ENTRY_POINT, boot_params) }

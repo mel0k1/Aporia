@@ -271,7 +271,7 @@ endif
 CARGO_OSDK_VIRTIOFSD := ./tools/run_virtiofsd.sh --cache-mode $(VIRTIOFS_CACHE) --work-dir
 ifeq ($(VIRTIOFS),on)
 # Each Make invocation gets an isolated virtio-fs work directory under /tmp.
-VIRTIOFS_WORK_DIR := $(shell mktemp -d -p /tmp asterinas-virtiofs-XXXXXX)
+VIRTIOFS_WORK_DIR := $(shell mktemp -d -p /tmp aporia-virtiofs-XXXXXX)
 CARGO_OSDK_COMMON_ARGS += --qemu-with-daemon="$(CARGO_OSDK_VIRTIOFSD) $(VIRTIOFS_WORK_DIR)"
 endif
 ifeq ($(VIRTIOFS_SCRATCH),on)
@@ -320,8 +320,8 @@ check_vdso:
 	@if [ -z "$(VDSO_LIBRARY_DIR)" ]; then \
 		echo "Error: the VDSO_LIBRARY_DIR environment variable must be given."; \
 		echo "    This variable points to a directory that provides Linux's vDSO files,"; \
-		echo "    which is required to build Asterinas. Search for VDSO_LIBRARY_DIR"; \
-		echo "    in Asterinas's Dockerfile for more information."; \
+		echo "    which is required to build Aporia. Search for VDSO_LIBRARY_DIR"; \
+		echo "    in the Aporia build image documentation for more information."; \
 		exit 1; \
 	fi
 

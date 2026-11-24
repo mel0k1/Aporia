@@ -33,7 +33,7 @@ impl<'a> CapableContext<'a> {
 
     #[expect(
         dead_code,
-        reason = "Asterinas currently has only the initial user namespace"
+        reason = "Aporia currently has only the initial user namespace"
     )]
     pub(crate) const fn target_user_ns(&self) -> &UserNamespace {
         self.target_user_ns

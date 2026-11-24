@@ -164,7 +164,7 @@ mod test {
         let strs = {
             let str1 = CString::new("hello").unwrap();
             let str2 = CString::new("world!").unwrap();
-            let str3 = CString::new("asterinas").unwrap();
+            let str3 = CString::new("aporia").unwrap();
             vec![str1, str2, str3]
         };
 
