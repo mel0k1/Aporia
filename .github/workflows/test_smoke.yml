@@ -1,0 +1,99 @@
+name: Test smoke
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  boot-test:
+    runs-on: ubuntu-latest
+    container:
+      image: asterinas/kernel-dev:0.19.0-20261012
+      options: -v /dev:/dev --privileged
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run boot test
+        uses: ./.github/actions/test
+        with:
+          auto_test: 'boot'
+          smp: 4
+          boot_protocol: 'multiboot'
+          restore_osdk_from_cache: true
+          restore_kernel_from_cache: true
+
+  regression-test:
+    runs-on: ubuntu-latest
+    container:
+      image: asterinas/kernel-dev:0.19.0-20261012
+      options: -v /dev:/dev --privileged
+      volumes:
+        - /usr/lib/google-cloud-sdk:/usr/lib/google-cloud-sdk
+        - /usr/local/lib/android:/usr/local/lib/android
+        - /usr/share/dotnet:/usr/share/dotnet
+    steps:
+      - name: Free disk space
+        run: rm -rf /usr/lib/google-cloud-sdk/* /usr/local/lib/android/* /usr/share/dotnet/*
+      - uses: actions/checkout@v4
+      - name: Run regression test
+        uses: ./.github/actions/test
+        with:
+          auto_test: 'regression'
+          boot_protocol: 'linux-efi-handover64'
+          restore_osdk_from_cache: true
+          restore_kernel_from_cache: true
+
+  xfstests:
+    name: xfstests (ext2)
+    runs-on: ubuntu-latest
+    container:
+      image: asterinas/kernel-dev:0.19.0-20261012
+      options: -v /dev:/dev --privileged
+      volumes:
+        - /usr/lib/google-cloud-sdk:/usr/lib/google-cloud-sdk
+        - /usr/local/lib/android:/usr/local/lib/android
+        - /usr/share/dotnet:/usr/share/dotnet
+    timeout-minutes: 30
+    steps:
+      - name: Free disk space
+        run: rm -rf /usr/lib/google-cloud-sdk/* /usr/local/lib/android/* /usr/share/dotnet/*
+      - uses: actions/checkout@v4
+      - name: Run xfstests (ext2)
+        uses: ./.github/actions/test
+        with:
+          auto_test: 'conformance'
+          conformance_test_suite: 'xfstests'
+          release: true
+          mem: '12G'
+          xfstests_fs_type: 'ext2'
+          xfstests_runlist: 'short.list'
+          xfstests_disk_size: '2G'
+          restore_osdk_from_cache: true
+          restore_kernel_from_cache: true
+
+  pjdfstest:
+    name: pjdfstest (ext2)
+    runs-on: ubuntu-latest
+    container:
+      image: asterinas/kernel-dev:0.19.0-20261012
+      options: -v /dev:/dev --privileged
+      volumes:
+        - /usr/lib/google-cloud-sdk:/usr/lib/google-cloud-sdk
+        - /usr/local/lib/android:/usr/local/lib/android
+        - /usr/share/dotnet:/usr/share/dotnet
+    timeout-minutes: 30
+    steps:
+      - name: Free disk space
+        run: rm -rf /usr/lib/google-cloud-sdk/* /usr/local/lib/android/* /usr/share/dotnet/*
+      - uses: actions/checkout@v4
+      - name: Run pjdfstest (ext2)
+        uses: ./.github/actions/test
+        with:
+          auto_test: 'conformance'
+          conformance_test_suite: 'pjdfstest'
+          release: true
+          pjdfstest_fs_type: 'ext2'
+          restore_osdk_from_cache: true
+          restore_kernel_from_cache: true

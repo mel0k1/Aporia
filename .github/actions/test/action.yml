@@ -188,7 +188,7 @@ runs:
 
     - name: Save OSDK build cache
       if: >-
-        ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+        ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' &&
             inputs.save_builds_to_cache == 'true' && inputs.restore_osdk_from_cache == 'true' &&
             steps.osdk-cache.outputs.cache-hit != 'true' }}
       uses: actions/cache/save@v6
@@ -291,7 +291,7 @@ runs:
 
     - name: Save kernel build cache
       if: >-
-        ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+        ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' &&
             inputs.save_builds_to_cache == 'true' && inputs.restore_kernel_from_cache == 'true' &&
             steps.kernel-cache.outputs.cache-hit != 'true' }}
       uses: actions/cache/save@v6
