@@ -2,6 +2,8 @@
 
 [Introduction](README.md)
 
+* [Aporia и upstream](aporia.md)
+
 # Asterinas NixOS
 
 * [Getting Started](distro/README.md)
