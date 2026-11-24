@@ -31,10 +31,14 @@ jobs:
       - name: collect artifacts
         run: |
           mkdir dist
-          find target/osdk -maxdepth 1 -name "*.iso" -type f | head -1 | xargs -I{} cp {} dist/aporia-x86_64.iso
-          find target/osdk/iso_root/boot -name "asterinas" -type f | head -1 | xargs -I{} cp {} dist/aporia-x86_64.elf
-          test -f dist/aporia-x86_64.iso
-          test -f dist/aporia-x86_64.elf
+          iso=$(find target -name "*.iso" -type f | head -1)
+          elf=$(find target/osdk -name "*.elf" -type f | grep -v "osdk-bin" | head -1)
+          echo "iso=$iso"
+          echo "elf=$elf"
+          test -n "$iso"
+          test -n "$elf"
+          cp "$iso" dist/aporia-x86_64.iso
+          cp "$elf" dist/aporia-x86_64.elf
           sha256sum dist/* > dist/SHA256SUMS
           ls -la dist
       - uses: actions/upload-artifact@v4
