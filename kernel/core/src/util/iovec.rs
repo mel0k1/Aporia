@@ -57,7 +57,7 @@ impl IoVec {
 /// The maximum number of buffers in the I/O vector.
 ///
 /// Reference: <https://elixir.bootlin.com/linux/v6.16/source/include/uapi/linux/uio.h#L46>.
-pub(super) const MAX_IO_VECTOR_LENGTH: usize = 1024;
+pub(crate) const MAX_IO_VECTOR_LENGTH: usize = 1024;
 /// The maximum bytes of all buffers in the I/O vector.
 ///
 /// According to man pages, the kernel should fail with [`Errno::EINVAL`] if the number of bytes in

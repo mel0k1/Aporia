@@ -100,6 +100,7 @@ use super::{
     pread64::sys_pread64,
     preadv::{sys_preadv, sys_preadv2, sys_readv},
     prlimit64::{sys_getrlimit, sys_prlimit64, sys_setrlimit},
+    process_vm::{sys_process_vm_readv, sys_process_vm_writev},
     pselect6::sys_pselect6,
     ptrace::sys_ptrace,
     pwrite64::sys_pwrite64,
@@ -164,6 +165,7 @@ use super::{
     sigqueueinfo::{sys_rt_sigqueueinfo, sys_rt_tgsigqueueinfo},
     socket::sys_socket,
     socketpair::sys_socketpair,
+    splice::{sys_splice, sys_tee, sys_vmsplice},
     stat::{sys_fstat, sys_fstatat, sys_lstat, sys_stat},
     statfs::{sys_fstatfs, sys_statfs},
     statx::sys_statx,
@@ -400,6 +402,9 @@ impl_syscall_nums_and_dispatch_fn! {
     SYS_UNSHARE = 272          => sys_unshare(args[..1]);
     SYS_SET_ROBUST_LIST = 273  => sys_set_robust_list(args[..2]);
     SYS_GET_ROBUST_LIST = 274  => sys_get_robust_list(args[..3]);
+    SYS_SPLICE = 275           => sys_splice(args[..6]);
+    SYS_TEE = 276              => sys_tee(args[..4]);
+    SYS_VMSPLICE = 278         => sys_vmsplice(args[..4]);
     SYS_UTIMENSAT = 280        => sys_utimensat(args[..4]);
     SYS_EPOLL_PWAIT = 281      => sys_epoll_pwait(args[..6]);
     SYS_SIGNALFD = 282         => sys_signalfd(args[..3]);
@@ -424,6 +429,8 @@ impl_syscall_nums_and_dispatch_fn! {
     SYS_SENDMMSG = 307         => sys_sendmmsg(args[..4]);
     SYS_SETNS = 308            => sys_setns(args[..2]);
     SYS_GETCPU = 309           => sys_getcpu(args[..3]);
+    SYS_PROCESS_VM_READV = 310  => sys_process_vm_readv(args[..6]);
+    SYS_PROCESS_VM_WRITEV = 311 => sys_process_vm_writev(args[..6]);
     SYS_SCHED_SETATTR = 314    => sys_sched_setattr(args[..3]);
     SYS_SCHED_GETATTR = 315    => sys_sched_getattr(args[..4]);
     SYS_RENAMEAT2 = 316        => sys_renameat2(args[..5]);

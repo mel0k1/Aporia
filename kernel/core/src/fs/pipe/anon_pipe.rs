@@ -53,6 +53,11 @@ impl AnonPipeInode {
 
         Self { pipe, pseudo_inode }
     }
+
+    /// Returns a reference to the underlying pipe backend.
+    pub(crate) fn pipe(&self) -> &Pipe {
+        &self.pipe
+    }
 }
 
 #[inherit_methods(from = "self.pseudo_inode")]

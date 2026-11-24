@@ -23,6 +23,7 @@
 - [x] Восстановлены док-комментарии из базы после чистки: `make check` (fmt, clippy, udeps) проходит целиком
 - [x] Партия syscalls: `copy_file_range`, `recvmmsg`, `clock_getres`, `times`, `get_robust_list`, `rt_sigqueueinfo`, `rt_tgsigqueueinfo` с регрессионными тестами в initramfs
 - [x] Семейство mlock (mlock, mlock2, munlock, mlockall, munlockall): populate страниц через синтез page fault, флаг VM_LOCKED на маппингах, учёт в RLIMIT_MEMLOCK, MCL_FUTURE/MCL_ONFAULT, регрессионный тест memory/mlock
+- [x] Партия syscalls: `process_vm_readv`/`process_vm_writev` (доступ к чужой памяти через read_alien/write_alien + проверка ptrace-пермишеней) и `splice`/`vmsplice`/`tee` (tee — через peek ring buffer без потребления); регрессионные тесты ipc/pipe/splice и process/process_vm
 
 ## Ближайшие шаги
 

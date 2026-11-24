@@ -24,7 +24,9 @@ use crate::{
     },
     util::{
         ioctl::RawIoctl,
-        ring_buffer::{ConsumerU8Ext, ProducerU8Ext, RbConsumer, RbProducer, RingBuffer},
+        ring_buffer::{
+            ConsumerU8Ext, ProducerU8Ext, RbConsumer, RbProducer, RingBuffer, RingBufferU8Ext,
+        },
     },
 };
 
@@ -165,7 +167,7 @@ impl PerOpenFileOps for PipeHandle {
 ///
 /// A `Pipe` will maintain exactly one **pipe object** that provides actual pipe
 /// functionalities when there is at least one handle opened on it.
-pub(in crate::fs) struct Pipe {
+pub(crate) struct Pipe {
     pipe: Mutex<PipeInner>,
     wait_queue: WaitQueue,
 }
@@ -177,6 +179,87 @@ impl Pipe {
             pipe: Mutex::new(PipeInner::default()),
             wait_queue: WaitQueue::new(),
         }
+    }
+
+    /// Copies up to `max_len` bytes from the data buffered in `self` to `dst`
+    /// without consuming the buffered data (`tee`).
+    ///
+    /// This method does not block. It copies as many bytes as currently
+    /// possible and returns the number of bytes copied.
+    ///
+    /// On error, both the error and the number of bytes copied so far are
+    /// discarded; the data buffered in `self` remains intact either way.
+    pub(crate) fn try_tee_to(&self, dst: &Pipe, max_len: usize) -> Result<usize> {
+        const BOUNCE_LEN: usize = PAGE_SIZE;
+
+        let mut src_pipe = self.pipe.lock();
+        let mut dst_pipe = dst.pipe.lock();
+
+        let src_obj = src_pipe.get_or_create_pipe_obj();
+        let dst_obj = dst_pipe.get_or_create_pipe_obj();
+
+        let src_reader = &src_obj.reader;
+        let dst_writer = &dst_obj.writer;
+
+        // The endpoint state wrappers map the "nothing to copy" cases to
+        // `EAGAIN` (or to EOF/`EPIPE` when the corresponding side is shut
+        // down), so that callers can use this method in a blocking loop.
+        let copied = dst_writer.state.write_with(|| {
+            src_reader.state.read_with(|| {
+                let consumer = src_reader.consumer.lock();
+                let mut producer = dst_writer.producer.lock();
+
+                let mut total = 0;
+                while total < max_len {
+                    let chunk = (max_len - total)
+                        .min(consumer.len() - total)
+                        .min(producer.free_len())
+                        .min(BOUNCE_LEN);
+                    if chunk == 0 {
+                        break;
+                    }
+
+                    // Pick data from the source ring buffer without consuming
+                    // it, then write the picked data into the destination one.
+                    let mut bounce_buf = vec![0u8; chunk];
+                    let head = consumer.head() + Wrapping(total);
+                    let picked = consumer.ring_buffer().pick_fallible(
+                        head..head + Wrapping(chunk),
+                        &mut VmWriter::from(bounce_buf.as_mut_slice()).to_fallible(),
+                    )?;
+                    if picked == 0 {
+                        break;
+                    }
+
+                    let written = producer
+                        .write_fallible(&mut VmReader::from(&bounce_buf[..picked]).to_fallible())?;
+                    total += written;
+                    if written < picked {
+                        break;
+                    }
+                }
+
+                Ok(total)
+            })
+        });
+
+        if let Ok(copied_len) = &copied
+            && *copied_len > 0
+        {
+            dst_writer.state.notify_write();
+        }
+
+        copied
+    }
+
+    /// Returns the number of bytes currently buffered in the pipe.
+    pub(crate) fn buffered_len(&self) -> usize {
+        self.pipe
+            .lock()
+            .pipe_obj
+            .upgrade()
+            .map(|pipe_obj| pipe_obj.reader.buffer_len())
+            .unwrap_or(0)
     }
 
     /// Opens the named pipe with the specified access mode and status flags.

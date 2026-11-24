@@ -12,6 +12,7 @@ SUBDIRS := \
 	personality \
 	prctl \
 	pthread \
+	process_vm \
 	ptrace \
 	sched \
 	signal \

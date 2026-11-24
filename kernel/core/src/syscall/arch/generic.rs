@@ -98,6 +98,7 @@ macro_rules! import_generic_syscall_entries {
             pread64::sys_pread64,
             preadv::{sys_preadv, sys_preadv2, sys_readv},
             prlimit64::{sys_getrlimit, sys_prlimit64, sys_setrlimit},
+            process_vm::{sys_process_vm_readv, sys_process_vm_writev},
             pselect6::sys_pselect6,
             ptrace::sys_ptrace,
             pwrite64::sys_pwrite64,
@@ -160,6 +161,7 @@ macro_rules! import_generic_syscall_entries {
             sigqueueinfo::{sys_rt_sigqueueinfo, sys_rt_tgsigqueueinfo},
             socket::sys_socket,
             socketpair::sys_socketpair,
+            splice::{sys_splice, sys_tee, sys_vmsplice},
             stat::{sys_fstat, sys_fstatat},
             statfs::{sys_fstatfs, sys_statfs},
             statx::sys_statx,
@@ -278,6 +280,9 @@ macro_rules! define_syscalls_with_generic_syscall_table {
             SYS_PSELECT6 = 72                => sys_pselect6(args[..6]);
             SYS_PPOLL = 73                   => sys_ppoll(args[..5]);
             SYS_SIGNALFD4 = 74               => sys_signalfd4(args[..4]);
+            SYS_VMSPLICE = 75                => sys_vmsplice(args[..4]);
+            SYS_SPLICE = 76                  => sys_splice(args[..6]);
+            SYS_TEE = 77                     => sys_tee(args[..4]);
             SYS_READLINKAT = 78              => sys_readlinkat(args[..4]);
             SYS_NEWFSTATAT = 79              => sys_fstatat(args[..4]);
             SYS_NEWFSTAT = 80                => sys_fstat(args[..2]);
@@ -409,6 +414,8 @@ macro_rules! define_syscalls_with_generic_syscall_table {
             SYS_SYNCFS = 267                 => sys_syncfs(args[..1]);
             SYS_SETNS = 268                  => sys_setns(args[..2]);
             SYS_SENDMMSG = 269               => sys_sendmmsg(args[..4]);
+            SYS_PROCESS_VM_READV = 270        => sys_process_vm_readv(args[..6]);
+            SYS_PROCESS_VM_WRITEV = 271       => sys_process_vm_writev(args[..6]);
             SYS_SCHED_SETATTR = 274          => sys_sched_setattr(args[..3]);
             SYS_SCHED_GETATTR = 275          => sys_sched_getattr(args[..4]);
             SYS_RENAMEAT2 = 276              => sys_renameat2(args[..5]);
