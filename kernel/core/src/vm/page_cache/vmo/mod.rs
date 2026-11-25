@@ -443,6 +443,43 @@ impl Vmo {
         self.size.load(Ordering::Acquire)
     }
 
+    /// Counts the pages in the specified byte range that are currently
+    /// present in the page cache.
+    ///
+    /// Returns `(cached, dirty)` where `cached` is the number of pages whose
+    /// contents are usable (up to date or dirty) and `dirty` is the number of
+    /// dirty pages among them.
+    pub(crate) fn cached_page_count(&self, byte_range: &Range<usize>) -> (usize, usize) {
+        let idx_range = get_page_idx_range(byte_range);
+        let guard = disable_preempt();
+        let mut cursor = self.pages.cursor(&guard, idx_range.start as u64);
+        let mut cached = 0;
+        let mut dirty = 0;
+        for _ in idx_range {
+            if let Some(page) = cursor.load() {
+                match page.state() {
+                    PageState::UpToDate | PageState::Dirty => cached += 1,
+                    _ => (),
+                }
+                if matches!(page.state(), PageState::Dirty) {
+                    dirty += 1;
+                }
+            }
+            cursor.next();
+        }
+        (cached, dirty)
+    }
+
+    /// Writes back the dirty pages within the specified byte range.
+    ///
+    /// This is a no-op for VMOs without a storage backend.
+    pub(crate) fn flush_dirty_range(&self, range: &Range<usize>) -> Result<()> {
+        let Some(backed_vmo) = self.as_backed_vmo() else {
+            return Ok(());
+        };
+        backed_vmo.flush_dirty_pages(range)
+    }
+
     /// Returns the status of writable mappings of the VMO.
     pub(crate) fn writable_mapping_status(&self) -> &WritableMappingStatus {
         debug_assert!(!self.has_backend());

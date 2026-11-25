@@ -2,6 +2,7 @@ mod access_alien;
 mod fork;
 mod lock;
 pub(super) mod map;
+mod mincore;
 pub(super) mod page_fault;
 mod protect;
 mod query;

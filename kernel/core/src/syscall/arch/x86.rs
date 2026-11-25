@@ -75,6 +75,7 @@ use super::{
     madvise::sys_madvise,
     membarrier::sys_membarrier,
     memfd_create::sys_memfd_create,
+    mincore::sys_mincore,
     mkdir::{sys_mkdir, sys_mkdirat},
     mknod::{sys_mknod, sys_mknodat},
     mlock::{sys_mlock, sys_mlock2, sys_mlockall, sys_munlock, sys_munlockall},
@@ -87,6 +88,7 @@ use super::{
     munmap::sys_munmap,
     nanosleep::{sys_clock_nanosleep, sys_nanosleep},
     open::{sys_creat, sys_open, sys_openat},
+    page_cache_sys::{sys_cachestat, sys_readahead, sys_sync_file_range},
     pause::sys_pause,
     personality::sys_personality,
     pidfd_getfd::sys_pidfd_getfd,
@@ -221,6 +223,7 @@ impl_syscall_nums_and_dispatch_fn! {
     SYS_MSYNC = 26             => sys_msync(args[..3]);
     SYS_SCHED_YIELD = 24       => sys_sched_yield(args[..0]);
     SYS_MADVISE = 28           => sys_madvise(args[..3]);
+    SYS_MINCORE = 27           => sys_mincore(args[..3]);
     SYS_DUP = 32               => sys_dup(args[..1]);
     SYS_DUP2 = 33              => sys_dup2(args[..2]);
     SYS_PAUSE = 34             => sys_pause(args[..0]);
@@ -344,6 +347,7 @@ impl_syscall_nums_and_dispatch_fn! {
     SYS_SETHOSTNAME = 170      => sys_sethostname(args[..2]);
     SYS_SETDOMAINNAME = 171    => sys_setdomainname(args[..2]);
     SYS_GETTID = 186           => sys_gettid(args[..0]);
+    SYS_READAHEAD = 187        => sys_readahead(args[..3]);
     SYS_SETXATTR = 188         => sys_setxattr(args[..5]);
     SYS_LSETXATTR = 189        => sys_lsetxattr(args[..5]);
     SYS_FSETXATTR = 190        => sys_fsetxattr(args[..5]);
@@ -404,6 +408,7 @@ impl_syscall_nums_and_dispatch_fn! {
     SYS_GET_ROBUST_LIST = 274  => sys_get_robust_list(args[..3]);
     SYS_SPLICE = 275           => sys_splice(args[..6]);
     SYS_TEE = 276              => sys_tee(args[..4]);
+    SYS_SYNC_FILE_RANGE = 277 => sys_sync_file_range(args[..4]);
     SYS_VMSPLICE = 278         => sys_vmsplice(args[..4]);
     SYS_UTIMENSAT = 280        => sys_utimensat(args[..4]);
     SYS_EPOLL_PWAIT = 281      => sys_epoll_pwait(args[..6]);
@@ -454,6 +459,7 @@ impl_syscall_nums_and_dispatch_fn! {
     SYS_PIDFD_GETFD = 438      => sys_pidfd_getfd(args[..3]);
     SYS_FACCESSAT2 = 439       => sys_faccessat2(args[..4]);
     SYS_EPOLL_PWAIT2 = 441     => sys_epoll_pwait2(args[..6]);
+    SYS_CACHESTAT = 451        => sys_cachestat(args[..4]);
     SYS_FCHMODAT2 = 452        => sys_fchmodat2(args[..4]);
     SYS_LISTMOUNT = 458        => sys_listmount(args[..4]);
 }

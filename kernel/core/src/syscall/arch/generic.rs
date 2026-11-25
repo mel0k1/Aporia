@@ -75,6 +75,7 @@ macro_rules! import_generic_syscall_entries {
             madvise::sys_madvise,
             membarrier::sys_membarrier,
             memfd_create::sys_memfd_create,
+            mincore::sys_mincore,
             mkdir::sys_mkdirat,
             mknod::sys_mknodat,
             mlock::{sys_mlock, sys_mlock2, sys_mlockall, sys_munlock, sys_munlockall},
@@ -87,6 +88,7 @@ macro_rules! import_generic_syscall_entries {
             munmap::sys_munmap,
             nanosleep::{sys_clock_nanosleep, sys_nanosleep},
             open::sys_openat,
+            page_cache_sys::{sys_cachestat, sys_readahead, sys_sync_file_range},
             personality::sys_personality,
             pidfd_getfd::sys_pidfd_getfd,
             pidfd_open::sys_pidfd_open,
@@ -289,6 +291,7 @@ macro_rules! define_syscalls_with_generic_syscall_table {
             SYS_SYNC = 81                    => sys_sync(args[..0]);
             SYS_FSYNC = 82                   => sys_fsync(args[..1]);
             SYS_FDATASYNC = 83               => sys_fdatasync(args[..1]);
+            SYS_SYNC_FILE_RANGE = 84         => sys_sync_file_range(args[..4]);
             SYS_TIMERFD_CREATE = 85          => sys_timerfd_create(args[..2]);
             SYS_TIMERFD_SETTIME = 86         => sys_timerfd_settime(args[..4]);
             SYS_TIMERFD_GETTIME = 87         => sys_timerfd_gettime(args[..2]);
@@ -392,6 +395,7 @@ macro_rules! define_syscalls_with_generic_syscall_table {
             SYS_SHUTDOWN = 210               => sys_shutdown(args[..2]);
             SYS_SENDMSG = 211                => sys_sendmsg(args[..3]);
             SYS_RECVMSG = 212                => sys_recvmsg(args[..3]);
+            SYS_READAHEAD = 213              => sys_readahead(args[..3]);
             SYS_BRK = 214                    => sys_brk(args[..1]);
             SYS_MUNMAP = 215                 => sys_munmap(args[..2]);
             SYS_MREMAP = 216                 => sys_mremap(args[..5]);
@@ -405,6 +409,7 @@ macro_rules! define_syscalls_with_generic_syscall_table {
             SYS_MUNLOCK = 229                => sys_munlock(args[..2]);
             SYS_MLOCKALL = 230               => sys_mlockall(args[..1]);
             SYS_MUNLOCKALL = 231             => sys_munlockall(args[..0]);
+            SYS_MINCORE = 232                => sys_mincore(args[..3]);
             SYS_MADVISE = 233                => sys_madvise(args[..3]);
             SYS_RT_TGSIGQUEUEINFO = 240      => sys_rt_tgsigqueueinfo(args[..4]);
             SYS_ACCEPT4 = 242                => sys_accept4(args[..4]);
@@ -439,6 +444,7 @@ macro_rules! define_syscalls_with_generic_syscall_table {
             SYS_PIDFD_GETFD = 438            => sys_pidfd_getfd(args[..3]);
             SYS_FACCESSAT2 = 439             => sys_faccessat2(args[..4]);
             SYS_EPOLL_PWAIT2 = 441           => sys_epoll_pwait2(args[..6]);
+            SYS_CACHESTAT = 451              => sys_cachestat(args[..4]);
             SYS_FCHMODAT2 = 452              => sys_fchmodat2(args[..4]);
             SYS_LISTMOUNT = 458              => sys_listmount(args[..4]);
 
